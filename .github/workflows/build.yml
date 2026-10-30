@@ -92,7 +92,9 @@ jobs:
           LINLIAO_UPDATE_REPO: ${{ github.repository }}
         run: |
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$LINLIAO_UPDATER_PUBKEY" ]; then
-            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":true}}'
+            # CLI 签名后会用配置里的公钥校验，因此公钥也要写进本次构建的配置。
+            config=$(node -e 'console.log(JSON.stringify({ bundle: { createUpdaterArtifacts: true }, plugins: { updater: { pubkey: process.env.LINLIAO_UPDATER_PUBKEY } } }))')
+            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$config"
           else
             unset LINLIAO_UPDATER_PUBKEY
             npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
