@@ -422,6 +422,14 @@ button.message-read-status.is-read { color: var(--text-1); }
 .form-description { margin: 6px 0 16px; font-size: 13px; line-height: 20px; color: var(--text-2); }
 .success-icon { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-bottom: 14px; border-radius: 50%; background: rgba(48, 209, 88, .16); color: var(--online); }
 
+/* 系统材质：窗口背景透明，侧栏与引导页直接透出系统玻璃；会话区保持实色，浮在其上的胶囊仍用页面玻璃。 */
+:root[data-material], :root[data-material] body { background: transparent; }
+:root[data-material] .app, :root[data-material] .onboarding, :root[data-material] .startup-state { background: transparent; }
+:root[data-material] .app::before { display: none; }
+:root[data-material] .sidebar.glass { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
+:root[data-material] .conversation-body { background: var(--canvas); border-left: 1px solid var(--line); }
+:root[data-material] .chat-main { padding-left: calc(var(--sidebar) + 8px); }
+
 /* 窄屏：列表与会话主从切换 */
 @media (max-width: 760px) {
   .sidebar { right: 8px; width: auto; }

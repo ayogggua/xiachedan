@@ -22,6 +22,8 @@
   Object.defineProperty(window, '__linliaoDesktopEmit', { value: event => { for (const listener of listeners) { try { listener(event); } catch {} } } });
   window.desktop = Object.freeze({
     platform: '/*PLATFORM*/',
+    material: '/*MATERIAL*/' || null,
+    setAppearance: theme => invoke('desktop_appearance', { theme }),
     connect: async (invitation, identity) => {
       const { addresses, inviteCode } = parseInvitation(invitation);
       if (!addresses.length) throw new Error('这只有邀请码，请复制包含内网地址的完整邀请');

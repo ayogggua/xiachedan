@@ -417,26 +417,67 @@ fn desktop_notification_settings(app: AppHandle, webview: Webview, desktop: Shar
   Ok(true)
 }
 
-fn bridge_script() -> String {
+// 系统材质：macOS 26 起用液态玻璃（更早版本由 Tauri 回退到侧栏毛玻璃），Windows 11 用 Mica、Windows 10 用 Acrylic。
+// Windows 不会自动回退，必须按系统版本选择，否则透明窗口会是空白。
+fn os_major_build() -> Option<(u32, u32)> {
+  #[cfg(target_os = "macos")]
+  let text = std::process::Command::new("sw_vers").arg("-productVersion").output().ok()?.stdout;
+  #[cfg(windows)]
+  let text = {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("cmd").args(["/c", "ver"]).creation_flags(0x0800_0000).output().ok()?.stdout
+  };
+  #[cfg(not(any(target_os = "macos", windows)))]
+  let text: Vec<u8> = Vec::new();
+  let text = String::from_utf8_lossy(&text);
+  let version = text.split(|c: char| !(c.is_ascii_digit() || c == '.')).find(|part| part.contains('.'))?;
+  let numbers: Vec<u32> = version.split('.').filter_map(|n| n.parse().ok()).collect();
+  Some((*numbers.first()?, numbers.get(2).copied().unwrap_or(0)))
+}
+
+fn material() -> (&'static str, Option<tauri::utils::config::WindowEffectsConfig>) {
+  use tauri::window::Effect;
+  let effects = |list: Vec<Effect>| Some(tauri::utils::config::WindowEffectsConfig { effects: list, ..Default::default() });
+  match os_major_build() {
+    Some((major, _)) if cfg!(target_os = "macos") && major >= 26 => ("liquid-glass", effects(vec![Effect::LiquidGlassRegular, Effect::Sidebar])),
+    Some(_) if cfg!(target_os = "macos") => ("vibrancy", effects(vec![Effect::Sidebar])),
+    Some((10, build)) if cfg!(windows) && build >= 22000 => ("mica", effects(vec![Effect::Mica])),
+    Some((10, build)) if cfg!(windows) && build >= 17763 => ("acrylic", effects(vec![Effect::Acrylic])),
+    _ => ("", None),
+  }
+}
+
+#[tauri::command]
+fn desktop_appearance(app: AppHandle, webview: Webview, desktop: Shared<'_>, theme: String) -> Result<bool, String> {
+  require_trusted(&webview, &desktop)?;
+  let theme = match theme.as_str() { "light" => Some(tauri::Theme::Light), "dark" => Some(tauri::Theme::Dark), "system" => None, _ => return Err("外观无效".into()) };
+  main_window(&app).ok_or("窗口不可用")?.set_theme(theme).map_err(|error| error.to_string())?;
+  Ok(true)
+}
+
+fn bridge_script(material: &str) -> String {
   let invitation = include_str!("../../shared/invitation.js").replace("export function", "function");
   let platform = if cfg!(target_os = "windows") { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
-  include_str!("bridge.js").replace("/*INVITATION*/", &invitation).replace("/*PLATFORM*/", platform)
+  include_str!("bridge.js").replace("/*INVITATION*/", &invitation).replace("/*PLATFORM*/", platform).replace("/*MATERIAL*/", material)
 }
 
 fn create_window(app: &AppHandle, desktop: Arc<Desktop>, start: Url) -> tauri::Result<WebviewWindow> {
   let navigation = desktop.clone();
+  let (material, effects) = material();
   let builder = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::External(start))
     .title("虾扯蛋")
     .inner_size(1260.0, 830.0)
     .min_inner_size(800.0, 650.0)
-    .background_color(tauri::window::Color(28, 28, 30, 255))
-    .initialization_script(bridge_script())
+    .background_color(if effects.is_some() { tauri::window::Color(0, 0, 0, 0) } else { tauri::window::Color(28, 28, 30, 255) })
+    .transparent(effects.is_some())
+    .initialization_script(bridge_script(material))
     // 只允许停留在当前空间的地址上，其他跳转一律拦截。
     .on_navigation(move |url| {
       let origin = navigation.session.lock().unwrap().active_origin.clone();
       probe::same_origin(url.as_str(), &origin)
     })
     .visible(false);
+  let builder = match effects { Some(effects) => builder.effects(effects), None => builder };
   #[cfg(target_os = "macos")]
   let builder = builder
     .title_bar_style(tauri::TitleBarStyle::Overlay)
@@ -465,7 +506,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       desktop_connect, desktop_home, desktop_copy, desktop_ready, desktop_state, desktop_settings, desktop_activity,
-      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings
+      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance
     ])
     .setup(|app| {
       let handle = app.handle().clone();

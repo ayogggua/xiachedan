@@ -13,6 +13,8 @@ export function applyTheme(theme) {
   const light = theme === 'light' || (theme === 'system' && systemLight.matches);
   document.documentElement.dataset.theme = light ? 'light' : 'dark';
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', light ? '#f7f6f4' : '#1c1c1e');
+  // 让窗口的系统材质与界面深浅一致（跟随系统时交还给系统）。
+  window.desktop?.setAppearance?.(theme).catch(() => {});
 }
 
 export default function useTheme() {
