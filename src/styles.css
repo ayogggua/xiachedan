@@ -85,7 +85,6 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border: 3px solid transparent; border-radius: 10px; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
-button, input, textarea, a, label { -webkit-app-region: no-drag; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -147,11 +146,14 @@ textarea { resize: none; line-height: 20px; }
   background: radial-gradient(480px 360px at 90px 92%, var(--glow-1), transparent 70%), radial-gradient(420px 300px at 200px 10%, var(--glow-2), transparent 70%); }
 .sidebar { position: absolute; z-index: 4; top: 8px; bottom: 8px; left: 8px; width: var(--sidebar); display: flex; flex-direction: column; border-radius: 16px; padding-top: 8px; }
 .native .sidebar { padding-top: 40px; }
-.native .sidebar::before { content: ""; position: absolute; inset: 0 0 auto; height: 40px; -webkit-app-region: drag; }
+/* 窗口拖动区（data-drag-region）由桌面端注入脚本处理 */
+.sidebar-drag, .drag-strip { display: none; }
+.native .sidebar-drag { display: block; position: absolute; inset: 0 0 auto; height: 40px; }
+.drag-strip { position: fixed; z-index: 5; inset: 0 0 auto; height: 32px; }
+.onboarding.native .drag-strip { display: block; }
 .chat-main { position: absolute; inset: 0; display: flex; padding-left: calc(var(--sidebar) + 16px); }
 
 .space-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 12px 14px; }
-.native .space-heading { -webkit-app-region: drag; }
 .space-copy { min-width: 0; }
 .space-copy h1 { font: 600 15px/20px var(--font-rounded); letter-spacing: -.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .space-copy p { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 11px; line-height: 14px; color: var(--text-2); }
@@ -195,7 +197,7 @@ textarea { resize: none; line-height: 20px; }
 .chat-column::before { top: 0; height: 64px; background: linear-gradient(var(--canvas) 30%, transparent); }
 .chat-column::after { bottom: 0; height: 72px; background: linear-gradient(transparent, var(--canvas) 70%); }
 .chat-toolbar { position: absolute; z-index: 3; top: 8px; left: 8px; right: 8px; display: flex; align-items: center; gap: 8px; pointer-events: none; }
-.native .chat-toolbar { -webkit-app-region: drag; }
+.native .chat-toolbar { pointer-events: auto; }
 .chat-toolbar > * { pointer-events: auto; }
 .back-button { display: none; width: 36px; height: 36px; border-radius: 50%; color: var(--text-1); }
 .toolbar-title { display: flex; align-items: center; gap: 8px; min-width: 0; height: 36px; padding: 0 14px 0 8px; border-radius: 999px; }
@@ -410,7 +412,6 @@ button.message-read-status.is-read { color: var(--text-1); }
 .startup-actions { display: flex; gap: 8px; margin-top: 4px; }
 .onboarding { position: relative; height: 100dvh; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 440px); align-items: center; gap: 56px; padding: 40px clamp(24px, 6vw, 96px);
   background: radial-gradient(560px 420px at 12% 88%, var(--glow-1), transparent 70%), radial-gradient(480px 360px at 30% 12%, var(--glow-2), transparent 70%), var(--canvas); }
-.onboarding.native::before { content: ""; position: fixed; inset: 0 0 auto; height: 32px; -webkit-app-region: drag; }
 .welcome-brand { display: flex; align-items: center; gap: 10px; }
 .welcome-brand .logo-mark { width: 36px; height: 36px; }
 .welcome-brand span { font: 600 17px/22px var(--font-rounded); }

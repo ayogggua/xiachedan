@@ -18,6 +18,13 @@
   }
   const invoke = (command, args = {}) => window.__TAURI_INTERNALS__.invoke(command, args)
     .catch(error => { throw new Error(typeof error === 'string' ? error : error?.message || '操作失败'); });
+  // 标题区拖动窗口、双击缩放：新界面用 data-drag-region 标记，旧版主机页面沿用 .window-bar。
+  addEventListener('mousedown', event => {
+    if (event.button !== 0 || !event.target.closest?.('[data-drag-region], .window-bar')) return;
+    if (event.target.closest('button, a, input, textarea, select, label, summary, [role="button"], [contenteditable="true"]')) return;
+    event.preventDefault();
+    invoke(event.detail === 2 ? 'desktop_zoom' : 'desktop_drag').catch(() => {});
+  }, true);
   const listeners = new Set();
   Object.defineProperty(window, '__linliaoDesktopEmit', { value: event => { for (const listener of listeners) { try { listener(event); } catch {} } } });
   window.desktop = Object.freeze({

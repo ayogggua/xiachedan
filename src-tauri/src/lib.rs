@@ -447,6 +447,23 @@ fn material() -> (&'static str, Option<tauri::utils::config::WindowEffectsConfig
   }
 }
 
+// 系统 WebView 不支持 -webkit-app-region，拖动与双击标题区由注入脚本转到这里。
+#[tauri::command]
+fn desktop_drag(app: AppHandle, webview: Webview, desktop: Shared<'_>) -> Result<bool, String> {
+  require_trusted(&webview, &desktop)?;
+  main_window(&app).ok_or("窗口不可用")?.start_dragging().map_err(|error| error.to_string())?;
+  Ok(true)
+}
+
+#[tauri::command]
+fn desktop_zoom(app: AppHandle, webview: Webview, desktop: Shared<'_>) -> Result<bool, String> {
+  require_trusted(&webview, &desktop)?;
+  let window = main_window(&app).ok_or("窗口不可用")?;
+  let result = if window.is_maximized().unwrap_or(false) { window.unmaximize() } else { window.maximize() };
+  result.map_err(|error| error.to_string())?;
+  Ok(true)
+}
+
 #[tauri::command]
 fn desktop_appearance(app: AppHandle, webview: Webview, desktop: Shared<'_>, theme: String) -> Result<bool, String> {
   require_trusted(&webview, &desktop)?;
@@ -506,7 +523,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       desktop_connect, desktop_home, desktop_copy, desktop_ready, desktop_state, desktop_settings, desktop_activity,
-      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance
+      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom
     ])
     .setup(|app| {
       let handle = app.handle().clone();

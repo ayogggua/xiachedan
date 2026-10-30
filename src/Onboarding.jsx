@@ -21,6 +21,7 @@ export default function Onboarding({ bootstrap, onJoined, notify }) {
     } catch (error) { setError(error.message); } finally { setBusy(false); }
   }
   return <div className={`onboarding ${nativeTitlebar ? 'native' : ''}`} data-screen-label="欢迎使用虾扯蛋">
+    {nativeTitlebar && <div className="drag-strip" data-drag-region aria-hidden="true" />}
     <section className="welcome-story"><div className="welcome-brand"><Logo /><span>虾扯蛋</span></div>
       <h1>有事说事，<br />没事虾扯蛋。</h1><p className="story-description">发个想法，丢张照片，和同一个网络里的朋友扯两句。</p>
       <p className="story-footer"><Radio size={14} />通过局域网连接，无需外网</p>

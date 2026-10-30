@@ -130,7 +130,8 @@ export default function App() {
     new Date(previous.createdAt).toDateString() === new Date(message.createdAt).toDateString() && message.createdAt - previous.createdAt < 5 * 60000;
   return <div className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''}`} data-screen-label="虾扯蛋聊天空间">
     <aside className="sidebar glass" aria-label="会话列表">
-      <div className="space-heading"><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></div>
+      <div className="sidebar-drag" data-drag-region aria-hidden="true" />
+      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></div>
       <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话" placeholder="搜索" value={search} onChange={event => setSearch(event.target.value)} />{search && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} />}</label>
       <nav className="conversation-scroll" aria-label="会话">
         <div className="section-label"><span>群聊</span><IconButton icon={Plus} label="新建群聊" size={15} onClick={() => setModal('group')} /></div>{filtered.filter(room => room.kind !== 'direct').map(roomButton)}
@@ -141,7 +142,7 @@ export default function App() {
     </aside>
     <main className="chat-main">
       <div className="conversation-body"><section className="chat-column">
-        <header className="chat-toolbar">
+        <header className="chat-toolbar" data-drag-region>
           <IconButton icon={ChevronLeft} label="返回会话列表" className="back-button glass" onClick={() => setMobileChat(false)} />
           <div className="toolbar-title glass"><span className="toolbar-icon">{room.kind === 'public' ? <Hash size={15} /> : room.kind === 'group' ? <Users size={15} /> : <Avatar user={peer} size={20} online={peer?.online} />}</span><h2>{room.name}</h2><span className="toolbar-subtitle">{subtitle}</span></div>
           <div className="toolbar-actions">

@@ -23,6 +23,8 @@
     "allow-desktop-history-cleared",
     "allow-desktop-test-notification",
     "allow-desktop-notification-settings",
-    "allow-desktop-appearance"
+    "allow-desktop-appearance",
+    "allow-desktop-drag",
+    "allow-desktop-zoom"
   ]
 }
