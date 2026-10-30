@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-appearance"
+description = "Enables the desktop_appearance command without any pre-configured scope."
+commands.allow = ["desktop_appearance"]
+
+[[permission]]
+identifier = "deny-desktop-appearance"
+description = "Denies the desktop_appearance command without any pre-configured scope."
+commands.deny = ["desktop_appearance"]

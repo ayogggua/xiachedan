@@ -3,7 +3,7 @@ import multer from 'multer';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore, serializeMessage as baseMessage } from './store.js';
@@ -340,6 +340,18 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
   });
+  // 只读检索当前会话的文字与附件文件名；撤回与已清空的消息不会命中。
+  app.get('/api/search', (req, res) => {
+    const room = requireRoom(req.query.roomId, req.user.id);
+    const query = textValue(req.query.q, 100);
+    if (!query) return res.json({ messages: [] });
+    rateLimit(req, 'search', 120);
+    const pattern = `%${query.replace(/[\\%_]/g, char => `\\${char}`)}%`;
+    const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls)
+      AND (text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(messages.attachments) WHERE json_extract(value, '$.name') LIKE ? ESCAPE '\\'))
+      ORDER BY seq DESC LIMIT 50`).all(room.id, clearedThroughSeq(), pattern, pattern);
+    res.json({ messages: rows.map(serializeMessage) });
+  });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
   app.post('/api/uploads', (req, res, next) => {
     rateLimit(req, 'upload', 30);
@@ -459,8 +471,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   } };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Node 以真实路径加载入口模块，经符号链接（如 macOS 的 /tmp）启动时 argv[1] 需先解析再比较。
+const entryPath = value => { try { return realpathSync(value); } catch { return path.resolve(value); } };
+if (process.argv[1] && entryPath(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const running = await startServer({ port: Number(process.env.PORT) || 4318, dataDir: process.env.CHAT_DATA_DIR || path.join(root, '.data') });
   console.log(`虾扯蛋已启动：${running.setupUrl}`);
-  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => { await running.close(); process.exit(0); });
+  const shutdown = async () => { await running.close(); process.exit(0); };
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, shutdown);
+  // 桌面端以子进程启动时，父进程退出（包括崩溃）会关闭标准输入，此时随之退出，避免遗留进程占用端口。
+  if (process.env.LINLIAO_EXIT_WITH_STDIN === '1') { process.stdin.on('end', shutdown); process.stdin.resume(); }
 }

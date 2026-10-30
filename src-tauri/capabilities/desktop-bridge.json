@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/remote-schema.json",
+  "identifier": "desktop-bridge",
+  "description": "window.desktop 契约：主窗口中的空间页面（本机或局域网同事主机）可调用的桌面命令；命令内部再校验来源是否为当前空间",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://*:*"
+    ]
+  },
+  "permissions": [
+    "allow-desktop-connect",
+    "allow-desktop-home",
+    "allow-desktop-copy",
+    "allow-desktop-ready",
+    "allow-desktop-state",
+    "allow-desktop-settings",
+    "allow-desktop-activity",
+    "allow-desktop-message",
+    "allow-desktop-recalled",
+    "allow-desktop-history-cleared",
+    "allow-desktop-test-notification",
+    "allow-desktop-notification-settings",
+    "allow-desktop-appearance",
+    "allow-desktop-drag",
+    "allow-desktop-zoom",
+    "allow-desktop-update-check",
+    "allow-desktop-update-install"
+  ]
+}
