@@ -29,7 +29,7 @@ jobs:
       - run: npm ci
       - name: Check JavaScript syntax
         run: |
-          for file in server/*.js shared/*.js desktop/*.cjs desktop/*.mjs; do
+          for file in server/*.js shared/*.js scripts/*.mjs; do
             node --check "$file"
           done
       - name: Verify release tag matches package version
@@ -43,8 +43,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  mac:
-    name: Package macOS (${{ matrix.arch }})
+  desktop:
+    name: Package ${{ matrix.name }}
     needs: build
     if: github.event_name != 'pull_request'
     strategy:
@@ -52,35 +52,51 @@ jobs:
       matrix:
         include:
           - runner: macos-15
-            arch: arm64
+            name: macOS arm64
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+            artifact: xiachedan-mac-arm64
+            files: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           - runner: macos-15-intel
-            arch: x64
+            name: macOS x64
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+            artifact: xiachedan-mac-x64
+            files: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+          - runner: windows-latest
+            name: Windows x64
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            artifact: xiachedan-windows-x64
+            files: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
           cache: npm
+      - name: Install Rust toolchain
+        shell: bash
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
       - run: npm ci
-      - name: Build app, DMG and ZIP
-        run: npm run package:mac
-        env:
-          MAC_ARCH: ${{ matrix.arch }}
+      - run: npm run build
+      - name: Prepare Node sidecar and local server
+        run: node scripts/prepare-desktop.mjs ${{ matrix.target }}
+      - name: Build installer
+        run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: xiachedan-mac-${{ matrix.arch }}
-          path: |
-            release/*.dmg
-            release/*.zip
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.files }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
 
   release:
     name: Publish GitHub Release
-    needs: mac
+    needs: desktop
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -89,7 +105,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          pattern: xiachedan-mac-*
+          pattern: xiachedan-*
           merge-multiple: true
           path: release
       - name: Publish installers
@@ -101,5 +117,5 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --verify-tag --title "虾扯蛋 $RELEASE_TAG" --generate-notes --draft
           fi
-          gh release upload "$RELEASE_TAG" release/*.dmg release/*.zip --clobber
+          gh release upload "$RELEASE_TAG" release/*.dmg release/*.exe --clobber
           gh release edit "$RELEASE_TAG" --draft=false
