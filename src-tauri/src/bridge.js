@@ -3,10 +3,10 @@
   if (window.desktop) return;
   /*INVITATION*/
   // 加入同事空间：#join= 由桌面端带来，在对方页面里完成加入（新旧版本主机通用），成功后重新载入。
+  const headers = { 'Content-Type': 'application/json', 'X-Linliao': '1' };
   const join = new URLSearchParams(location.hash.slice(1)).get('join');
   if (join) {
     history.replaceState(null, '', location.pathname);
-    const headers = { 'Content-Type': 'application/json', 'X-Linliao': '1' };
     fetch('/api/bootstrap', { headers }).then(response => response.json()).then(async bootstrap => {
       if (bootstrap.me || !bootstrap.configured) return;
       const response = await fetch('/api/join', { method: 'POST', headers, body: join });
@@ -18,6 +18,16 @@
   }
   const invoke = (command, args = {}) => window.__TAURI_INTERNALS__.invoke(command, args)
     .catch(error => { throw new Error(typeof error === 'string' ? error : error?.message || '操作失败'); });
+  // 按电脑认身份：新版主机提供不随 IP 变化的 spaceId，用本机为该空间保存的凭证登录或绑定当前身份；旧版 Electron 的会话只迁移一次。
+  if (!join) fetch('/api/bootstrap', { headers }).then(response => response.json()).then(async ({ spaceId }) => {
+    if (!spaceId) return;
+    const { device, legacy } = await invoke('desktop_identity', { spaceId, migrated: false });
+    const response = await fetch('/api/device', { method: 'POST', headers, body: JSON.stringify({ device, legacy: legacy || '' }) });
+    if (!response.ok) return;
+    const { switched } = await response.json();
+    if (legacy) await invoke('desktop_identity', { spaceId, migrated: true });
+    if (switched) location.reload();
+  }).catch(() => {});
   // 标题区拖动窗口、双击缩放：新界面用 data-drag-region 标记，旧版主机页面沿用 .window-bar。
   addEventListener('mousedown', event => {
     if (event.button !== 0 || !event.target.closest?.('[data-drag-region], .window-bar')) return;
