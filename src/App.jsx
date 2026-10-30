@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageCircle, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw } from 'lucide-react';
 import { api, formatTime, mediaUrl } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, MessageContextMenu, ReadDetail } from './components';
 import Onboarding from './Onboarding';
@@ -9,6 +9,7 @@ import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
+import HistorySearch from './HistorySearch';
 import { previewText, readStorage } from './history';
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
   const [recalling, setRecalling] = useState(null);
   const [removing, setRemoving] = useState(null);
   const [showMembers, setShowMembers] = useState(false);
+  const [panelView, setPanelView] = useState('members');
   const [preview, setPreview] = useState(null);
   const [toast, setToast] = useState('');
   const [scrolledUp, setScrolledUp] = useState(false);
@@ -41,7 +43,7 @@ export default function App() {
     setPreview(null); setContextMenu(null); setRecalling(null); setReadDetail(null);
   }, []);
   const { bootstrap, state, startupError, start, refresh, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, updateMe } = useChatSession({ selected, notify, privacyRef, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe } = useChatSession({ selected, notify, privacyRef, onHistoryChanged });
   useEffect(() => {
     if (!state?.me.id) return;
     firstLoad.current = true; sticky.current = true; setScrolledUp(false);
@@ -81,6 +83,16 @@ export default function App() {
     const previousHeight = messageList.current.scrollHeight;
     if (await fetchOlder()) requestAnimationFrame(() => { if (messageList.current) messageList.current.scrollTop += messageList.current.scrollHeight - previousHeight; });
   }
+  async function jumpToMessage(target) {
+    try { await loadThrough(target.roomId, target.seq); } catch (error) { return notify(error.message); }
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const row = messageList.current?.querySelector(`[data-message-id="${CSS.escape(target.id)}"]`);
+    if (!row) return notify('这条消息已不在聊天记录中');
+    sticky.current = false;
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
+    if (matchMedia('(max-width: 760px)').matches) setShowMembers(false);
+  }
   async function directMessage(user) {
     if (user.id === state.me.id) return setModal('profile');
     try { const result = await api('rooms', { userId: user.id }); await refresh(); setSelected(result.id); setMobileChat(true); setModal(null); }
@@ -102,7 +114,7 @@ export default function App() {
   const peer = room.kind === 'direct' ? peerOf(room) : null;
   const isOwner = state.workspace.ownerId === state.me.id;
   const roomIcon = (target, size = 32) => target.kind === 'direct' ? <Avatar user={peerOf(target)} size={size} online={peerOf(target)?.online} /> : <span className="room-avatar">{target.kind === 'public' ? <Hash size={16} /> : <Users size={16} />}</span>;
-  const openRoom = id => { setSelected(id); setMobileChat(true); setReadDetail(null); };
+  const openRoom = id => { setSelected(id); setMobileChat(true); setReadDetail(null); setPanelView('members'); };
   const roomButton = target => {
     const status = unread[target.id];
     const label = status?.exact ? `${status.count} 条未读消息` : '有新消息';
@@ -134,7 +146,7 @@ export default function App() {
           <div className="toolbar-title glass"><span className="toolbar-icon">{room.kind === 'public' ? <Hash size={15} /> : room.kind === 'group' ? <Users size={15} /> : <Avatar user={peer} size={20} online={peer?.online} />}</span><h2>{room.name}</h2><span className="toolbar-subtitle">{subtitle}</span></div>
           <div className="toolbar-actions">
             <button className={`toolbar-button glass privacy-toggle ${privateMode ? 'enabled' : ''}`} onClick={() => changePrivacy(value => !value)} role="switch" aria-checked={privateMode} aria-label="隐私模式" title="隐私模式 · ⌘⇧P · 悬停消息查看内容">{privateMode ? <EyeOff size={16} /> : <Eye size={16} />}<kbd>⌘⇧P</kbd></button>
-            <button className={`toolbar-button glass member-count ${showMembers ? 'selected' : ''}`} onClick={() => setShowMembers(value => !value)} aria-pressed={showMembers} aria-label={`会话成员，${groupMembers.length} 人`} title="会话成员"><span className="avatar-stack">{groupMembers.slice(0, 3).map(user => <Avatar key={user.id} user={user} size={20} />)}</span><span>{groupMembers.length}</span></button>
+            <button className={`toolbar-button glass member-count ${showMembers ? 'selected' : ''}`} onClick={() => { setShowMembers(value => !value); setPanelView('members'); }} aria-pressed={showMembers} aria-label={`会话成员，${groupMembers.length} 人`} title="会话成员"><span className="avatar-stack">{groupMembers.slice(0, 3).map(user => <Avatar key={user.id} user={user} size={20} />)}</span><span>{groupMembers.length}</span></button>
           </div>
         </header>
         {!connected && <div className="offline-pill glass" role="status"><WifiOff size={14} />正在重新连接，草稿会保留</div>}
@@ -145,7 +157,9 @@ export default function App() {
         {currentMessages.map((message, index) => { const previous = currentMessages[index - 1]; const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString(); return <React.Fragment key={message.id}>{newDay && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={(event, message) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, message }); }} message={message} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
       </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />回到最新消息</button>}
       <Composer room={room} connected={connected} onSent={message => { sticky.current = true; receive(message); }} notify={notify} /></section>
-      {showMembers && <aside className="members-panel glass" aria-label="会话成员"><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<div className="members-list">{groupMembers.map(user => memberRow(user, 30))}</div></aside>}</div>
+      {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : '会话成员'}>{panelView === 'history'
+        ? <HistorySearch room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
+        : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><div className="members-list">{groupMembers.map(user => memberRow(user, 30))}</div></>}</aside>}</div>
     </main>
     {modal === 'profile' && <ProfileDialog me={state.me} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
     {modal === 'invite' && <InviteDialog onClose={() => setModal(null)} notify={notify} />}

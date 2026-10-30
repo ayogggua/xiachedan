@@ -17,9 +17,11 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
   const reconnect = useRef();
   const activeRoom = useRef(selected);
   const stateRef = useRef(state);
+  const messagesRef = useRef(messages);
   const historyChanged = useRef(onHistoryChanged);
   activeRoom.current = selected;
   stateRef.current = state;
+  messagesRef.current = messages;
   historyChanged.current = onHistoryChanged;
   const syncHistory = useCallback((recalls = [], throughSeq = 0) => {
     const history = historyRef.current;
@@ -136,7 +138,23 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
       return true;
     } catch (error) { notify(error.message); return false; } finally { setLoading(false); }
   }
+  // 向前补齐历史直到包含指定消息，供聊天记录搜索跳转。
+  const loadThrough = useCallback(async (roomId, seq) => {
+    let oldest = (messagesRef.current[roomId] || [])[0]?.seq ?? Number.MAX_SAFE_INTEGER;
+    const pages = [];
+    let more = true;
+    while (oldest > seq && more) {
+      const result = await api(`messages?roomId=${encodeURIComponent(roomId)}&before=${oldest}`);
+      if (!result.messages.length) { more = false; break; }
+      pages.push(...result.messages);
+      more = result.hasMore;
+      oldest = result.messages[0].seq;
+    }
+    if (!pages.length) return;
+    setMessages(previous => ({ ...previous, [roomId]: merge(pages, previous[roomId] || [], historyRef.current) }));
+    setHasMore(previous => ({ ...previous, [roomId]: more }));
+  }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, updateMe };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe };
 }

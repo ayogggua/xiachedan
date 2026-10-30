@@ -340,6 +340,18 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
   });
+  // 只读检索当前会话的文字与附件文件名；撤回与已清空的消息不会命中。
+  app.get('/api/search', (req, res) => {
+    const room = requireRoom(req.query.roomId, req.user.id);
+    const query = textValue(req.query.q, 100);
+    if (!query) return res.json({ messages: [] });
+    rateLimit(req, 'search', 120);
+    const pattern = `%${query.replace(/[\\%_]/g, char => `\\${char}`)}%`;
+    const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls)
+      AND (text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(messages.attachments) WHERE json_extract(value, '$.name') LIKE ? ESCAPE '\\'))
+      ORDER BY seq DESC LIMIT 50`).all(room.id, clearedThroughSeq(), pattern, pattern);
+    res.json({ messages: rows.map(serializeMessage) });
+  });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
   app.post('/api/uploads', (req, res, next) => {
     rateLimit(req, 'upload', 30);

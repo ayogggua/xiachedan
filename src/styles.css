@@ -300,6 +300,21 @@ button.message-read-status.is-read { color: var(--text-1); }
 .members-panel-heading small { margin-left: 4px; color: var(--text-2); font-weight: 500; font-variant-numeric: tabular-nums; }
 .add-member-button { display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; margin: 0 10px 6px; border-radius: 999px; background: var(--fill-2); font-weight: 500; }
 .members-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 8px; }
+.history-entry { display: flex; align-items: center; gap: 10px; margin: 0 6px 6px; padding: 8px; border-radius: 10px; text-align: left; color: var(--text-2); }
+.history-entry span { flex: 1; color: var(--text-1); font-weight: 500; }
+.history-title { flex: 1; }
+.members-panel-heading:has(.history-title) { justify-content: flex-start; gap: 4px; padding-left: 6px; }
+.history-search { margin: 0 10px 8px; }
+.history-results { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 8px; }
+.history-empty { display: flex; align-items: center; gap: 6px; padding: 8px; font-size: 12px; line-height: 18px; color: var(--text-2); }
+.history-result { display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 8px; border-radius: 10px; text-align: left; }
+.history-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.history-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.history-meta time { flex: none; font-size: 10px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.history-text { font-size: 12px; line-height: 17px; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.history-text mark { background: rgba(232, 120, 79, .3); color: var(--text-1); border-radius: 3px; padding: 0 1px; }
+.message-row.flash .message-bubble { animation: flash 1.6s var(--ease-out); }
+@keyframes flash { 0%, 45% { box-shadow: 0 0 0 2px var(--accent-bright); } 100% { box-shadow: 0 0 0 2px transparent; } }
 .managed-member { display: flex; align-items: center; gap: 2px; }
 .member-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px; text-align: left; color: var(--text-2); }
 .member-row > small { flex: none; font-size: 11px; }
@@ -310,6 +325,7 @@ button.message-read-status.is-read { color: var(--text-1); }
   .member-row:hover { background: var(--fill-1); }
   .remove-member:hover { background: rgba(255, 105, 97, .12); }
   .add-member-button:hover, .load-older:hover { background: var(--fill-3); }
+  .history-entry:hover, .history-result:hover { background: var(--fill-1); }
 }
 
 /* 弹窗 */
