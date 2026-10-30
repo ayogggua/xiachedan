@@ -3,8 +3,6 @@ if (setup) {
   sessionStorage.setItem('linliao.setup', setup);
   history.replaceState(null, '', location.pathname);
 }
-// macOS 隐藏标题栏后需给红绿灯留位；Windows 使用系统标题栏。
-export const nativeTitlebar = Boolean(window.desktop) && window.desktop.platform !== 'windows';
 
 export async function api(route, body, options = {}) {
   const response = await fetch(`/api/${route}`, {

@@ -14,8 +14,3 @@ release/
 *.pem
 *.key
 designs/**/_d_meta.json
-src-tauri/target/
-src-tauri/gen/
-src-tauri/binaries/
-src-tauri/resources/
-.cache/

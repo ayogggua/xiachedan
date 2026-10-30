@@ -29,7 +29,7 @@ jobs:
       - run: npm ci
       - name: Check JavaScript syntax
         run: |
-          for file in server/*.js shared/*.js scripts/*.mjs; do
+          for file in server/*.js shared/*.js desktop/*.cjs desktop/*.mjs; do
             node --check "$file"
           done
       - name: Verify release tag matches package version
@@ -43,8 +43,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  desktop:
-    name: Package ${{ matrix.name }}
+  mac:
+    name: Package macOS (${{ matrix.arch }})
     needs: build
     if: github.event_name != 'pull_request'
     strategy:
@@ -52,91 +52,44 @@ jobs:
       matrix:
         include:
           - runner: macos-15
-            name: macOS arm64
-            target: aarch64-apple-darwin
-            bundles: app,dmg
-            artifact: xiachedan-mac-arm64
+            arch: arm64
           - runner: macos-15-intel
-            name: macOS x64
-            target: x86_64-apple-darwin
-            bundles: app,dmg
-            artifact: xiachedan-mac-x64
-          - runner: windows-latest
-            name: Windows x64
-            target: x86_64-pc-windows-msvc
-            bundles: nsis
-            artifact: xiachedan-windows-x64
+            arch: x64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
           cache: npm
-      - name: Install Rust toolchain
-        shell: bash
-        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
       - run: npm ci
-      - run: npm run build
-      - name: Prepare Node sidecar and local server
-        run: node scripts/prepare-desktop.mjs ${{ matrix.target }}
-      # 仓库配置了更新签名密钥（secrets.TAURI_SIGNING_PRIVATE_KEY 与 vars.TAURI_UPDATER_PUBKEY）时，
-      # 同时生成已签名的更新包并在客户端启用自动更新；未配置时照常打包、不启用更新。
-      - name: Build installer
-        shell: bash
+      - name: Build app, DMG and ZIP
+        run: npm run package:mac
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          LINLIAO_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
-          LINLIAO_UPDATE_REPO: ${{ github.repository }}
-        run: |
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$LINLIAO_UPDATER_PUBKEY" ]; then
-            # CLI 签名后会用配置里的公钥校验，因此公钥也要写进本次构建的配置。
-            config=$(node -e 'console.log(JSON.stringify({ bundle: { createUpdaterArtifacts: true }, plugins: { updater: { pubkey: process.env.LINLIAO_UPDATER_PUBKEY } } }))')
-            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$config"
-          else
-            unset LINLIAO_UPDATER_PUBKEY
-            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
-          fi
-      - name: Stage release files
-        shell: bash
-        run: |
-          version=$(node -p "require('./package.json').version")
-          bundle=src-tauri/target/${{ matrix.target }}/release/bundle
-          mkdir -p out
-          case "${{ matrix.target }}" in
-            aarch64-apple-darwin) arch=aarch64 ;;
-            x86_64-apple-darwin) arch=x64 ;;
-            *) arch=x64 ;;
-          esac
-          # 统一改成 ASCII 文件名，避免下载地址里的中文编码问题；更新包与签名同名配对。
-          copy() { for file in $1; do [ -f "$file" ] && cp "$file" "out/$2" && { [ -f "$file.sig" ] && cp "$file.sig" "out/$2.sig" || true; }; done; return 0; }
-          copy "$bundle/dmg/*.dmg" "Xiachedan_${version}_${arch}.dmg"
-          copy "$bundle/macos/*.app.tar.gz" "Xiachedan_${version}_${arch}.app.tar.gz"
-          copy "$bundle/nsis/*-setup.exe" "Xiachedan_${version}_${arch}-setup.exe"
-          ls -la out
+          MAC_ARCH: ${{ matrix.arch }}
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: ${{ matrix.artifact }}
-          path: out/*
+          name: xiachedan-mac-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/*.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
 
   release:
     name: Publish GitHub Release
-    needs: desktop
+    needs: mac
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          pattern: xiachedan-*
+          pattern: xiachedan-mac-*
           merge-multiple: true
           path: release
       - name: Publish installers
@@ -148,6 +101,5 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --verify-tag --title "虾扯蛋 $RELEASE_TAG" --generate-notes --draft
           fi
-          RELEASE_NOTES=$(gh release view "$RELEASE_TAG" --json body --jq .body) node scripts/update-manifest.mjs release "$RELEASE_TAG" "$GH_REPO"
-          gh release upload "$RELEASE_TAG" release/* --clobber
+          gh release upload "$RELEASE_TAG" release/*.dmg release/*.zip --clobber
           gh release edit "$RELEASE_TAG" --draft=false

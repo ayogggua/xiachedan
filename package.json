@@ -5,16 +5,15 @@
   "license": "MIT",
   "description": "虾扯蛋 · 有事说事，没事虾扯蛋。",
   "type": "module",
+  "main": "desktop/main.cjs",
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
     "build": "vite build",
     "start": "node server/index.js",
-    "desktop": "npm run build && node scripts/prepare-desktop.mjs && tauri dev --no-watch",
-    "package:mac": "npm run build && node scripts/prepare-desktop.mjs && CI=true tauri build --bundles app,dmg",
-    "package:win": "npm run build && node scripts/prepare-desktop.mjs && tauri build --bundles nsis",
-    "tauri": "tauri"
+    "desktop": "npm run build && install-electron && electron .",
+    "package:mac": "npm run build && node desktop/package.mjs"
   },
   "dependencies": {
     "express": "5.3.0",
@@ -22,7 +21,8 @@
     "ws": "8.22.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.4",
+    "@electron/packager": "20.3.0",
+    "electron": "45.0.0",
     "lucide-react": "^0.468.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",

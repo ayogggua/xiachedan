@@ -25,7 +25,7 @@ export function InvitationShare({ invite, notify }) {
         <span>邀请码：{invite.code}</span>
       </details>
     </> : <p className="inline-note">尚未检测到可用的局域网地址，请连接 Wi-Fi 或有线网络。</p>}
-    <p className="host-note"><Laptop size={16} />创建空间的电脑需要保持虾扯蛋运行。</p>
+    <p className="host-note"><Laptop size={16} />创建空间的 Mac 需要保持虾扯蛋运行。</p>
   </div>;
 }
 
@@ -52,9 +52,9 @@ export function JoinSpaceForm({ identity, onJoined, allowCodeOnly = false, autoF
       } else if (window.desktop) {
         throw new Error('请复制包含内网地址的完整邀请');
       } else {
-        throw new Error('请先在浏览器打开邀请中的内网地址，或在虾扯蛋桌面应用中粘贴完整邀请');
+        throw new Error('请先在浏览器打开邀请中的内网地址，或在 Mac 应用中粘贴完整邀请');
       }
-    } catch (error) { setError(error.message); }
+    } catch (error) { setError(error.message.replace(/^Error invoking remote method '[^']+': Error: /, '')); }
     finally { pending.current = false; setBusy(false); }
   }
   function paste(event) {

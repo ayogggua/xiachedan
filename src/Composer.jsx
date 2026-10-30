@@ -1,10 +1,10 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Image as ImageIcon, Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Image as ImageIcon, Film, Send, X, LoaderCircle, RotateCcw, Paperclip, ShieldCheck } from 'lucide-react';
 import { api, upload, uid, formatSize } from './api';
 import { IconButton } from './components';
 
 const empty = { text: '', files: [] };
-export default function Composer({ room, connected, onSent, notify }) {
+export default function Composer({ room, connected, privateMode, onSent, notify }) {
   const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -60,29 +60,19 @@ export default function Composer({ room, connected, onSent, notify }) {
       delete attempts.current[roomId];
     } catch (error) { notify(`${error.message}，草稿已保留`); } finally { setSending(false); }
   }
-  useLayoutEffect(() => {
-    const node = textarea.current;
-    if (!node) return;
-    node.style.height = 'auto';
-    node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
-  }, [draft.text, room.id]);
   const ready = connected && !sending && (draft.text.trim() || draft.files.length) && draft.files.every(file => file.attachment);
-  return <div className="composer-area">
+  return <div className="composer-area"><div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
+    {dragging && <div className="drop-overlay"><Paperclip size={26} /><span>松开鼠标，分享图片或视频</span></div>}
     {draft.files.length > 0 && <div className="attachment-queue">{draft.files.map(item => <div className={`queued-file ${item.error ? 'failed' : ''}`} key={item.id}>
-      {item.file.type.startsWith('image/') ? <img src={item.url} alt="待发送图片" /> : <span className="queued-video"><Film size={18} /></span>}
+      {item.file.type.startsWith('image/') ? <img src={item.url} alt="待发送图片" /> : <span className="queued-video"><Film size={22} /></span>}
       <div><span>{item.file.name}</span><small>{item.error ? '上传失败' : item.attachment ? formatSize(item.file.size) : `上传 ${item.progress}%`}</small></div>
-      {item.error && <IconButton icon={RotateCcw} label="重试上传" size={15} onClick={() => uploadItem(item, room.id)} />}
-      <IconButton icon={X} label="移除附件" size={15} onClick={() => removeFile(item)} disabled={sending} />
+      {item.error && <IconButton icon={RotateCcw} label="重试上传" onClick={() => uploadItem(item, room.id)} />}
+      <IconButton icon={X} label="移除附件" onClick={() => removeFile(item)} disabled={sending} />
     </div>)}</div>}
-    <div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
-      {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，分享图片或视频</span></div>}
-      <IconButton icon={ImageIcon} label="发送图片（也可拖入或粘贴）" className="composer-tool" disabled={sending || !connected} onClick={() => input.current.click()} />
-      <IconButton icon={Film} label="发送视频（单个文件最大 100 MB）" className="composer-tool" disabled={sending || !connected} onClick={() => videoInput.current.click()} />
-      <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1} onChange={event => update(room.id, state => ({ ...state, text: event.target.value }))}
-        onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); } }}
-        onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); } }} />
-      <button className="send-button" onClick={send} disabled={!ready} aria-label="发送消息" title="Enter 发送 · Shift + Enter 换行">{sending ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={17} strokeWidth={2.2} />}</button>
-      <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} /><input ref={videoInput} type="file" accept="video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
-    </div>
-  </div>;
+    <textarea ref={textarea} aria-label="消息内容" placeholder={`发送消息到 ${room.name}…`} value={draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={3} onChange={event => update(room.id, state => ({ ...state, text: event.target.value }))}
+      onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); } }}
+      onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); } }} />
+    <div className="composer-bottom"><div className="composer-tools"><IconButton icon={ImageIcon} label="发送图片" disabled={sending || !connected} onClick={() => input.current.click()} /><IconButton icon={Film} label="发送视频" disabled={sending || !connected} onClick={() => videoInput.current.click()} /><span className="composer-divider" /><span className="attachment-hint">拖入文件，或粘贴图片</span></div><div className="send-actions"><span>Enter 发送 · Shift + Enter 换行</span><button className="send-button" onClick={send} disabled={!ready} aria-label="发送消息">{sending ? <LoaderCircle size={16} className="spin" /> : <Send size={16} />}<span>发送</span></button></div></div>
+    <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} /><input ref={videoInput} type="file" accept="video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
+  </div><div className="composer-footnote"><ShieldCheck size={12} /><span>{privateMode ? '隐私模式已开启 · 鼠标移开即隐藏内容' : '有事说事，没事虾扯蛋。'}</span><span className="file-limit">单个文件最大 100 MB</span></div></div>;
 }

@@ -34,11 +34,8 @@ export default function useUnread(state, messages, lastRead, connected, historyV
     const exact = snapshot.historyVersion === historyVersion && saved?.afterSeq === afterSeq;
     const throughSeq = Math.max(afterSeq, exact ? saved.throughSeq : 0);
     // Socket events beyond the server snapshot are counted once, even if a response arrives later.
-    const counted = (messages[room.id] || []).filter(message => !message.recalledAt && message.senderId !== userId);
-    const liveCount = counted.filter(message => message.seq > throughSeq && !message.readBy?.includes(userId)).length;
-    // 隐私模式下可以先看后面的消息，游标却停在更早的未读处；已回执过的消息不再计入未读。
-    const seenAhead = exact ? counted.filter(message => message.seq > afterSeq && message.seq <= throughSeq && message.readBy?.includes(userId)).length : 0;
-    const count = (exact ? saved.unreadCount - seenAhead : 0) + liveCount;
+    const liveCount = (messages[room.id] || []).filter(message => !message.recalledAt && message.seq > throughSeq && message.senderId !== userId).length;
+    const count = (exact ? saved.unreadCount : 0) + liveCount;
     const hasUnread = count > 0 || (!exact && !room.lastMessage?.recalledAt && room.lastMessage?.senderId !== userId && room.lastMessage?.seq > afterSeq);
     return [room.id, { count, exact, hasUnread }];
   }));
