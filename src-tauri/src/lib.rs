@@ -13,9 +13,23 @@ use tauri::{AppHandle, Manager, RunEvent, State, Url, Webview, WebviewUrl, Webvi
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_updater::{Update, UpdaterExt};
 
 const MAIN: &str = "main";
 const SEEN_LIMIT: usize = 2000;
+// 更新签名公钥与发布仓库在构建时注入（见 .github/workflows/build.yml）；未注入公钥的构建不启用自动更新。
+const UPDATER_PUBKEY: Option<&str> = option_env!("LINLIAO_UPDATER_PUBKEY");
+const UPDATE_REPO: Option<&str> = option_env!("LINLIAO_UPDATE_REPO");
+
+fn updater_pubkey() -> Option<&'static str> {
+  UPDATER_PUBKEY.filter(|key| !key.trim().is_empty())
+}
+
+fn update_endpoint() -> String {
+  std::env::var("LINLIAO_UPDATE_ENDPOINT").unwrap_or_else(|_| {
+    format!("https://github.com/{}/releases/latest/download/latest.json", UPDATE_REPO.unwrap_or("ayogggua/xiachedan"))
+  })
+}
 
 #[derive(Default, Serialize, Deserialize)]
 struct Config {
@@ -48,6 +62,7 @@ struct Desktop {
   quitting: AtomicBool,
   next_notification: AtomicI32,
   tray: Mutex<Option<TrayIcon>>,
+  update: Mutex<Option<Update>>,
 }
 
 type Shared<'a> = State<'a, Arc<Desktop>>;
@@ -472,6 +487,41 @@ fn desktop_appearance(app: AppHandle, webview: Webview, desktop: Shared<'_>, the
   Ok(true)
 }
 
+#[tauri::command]
+async fn desktop_update_check(app: AppHandle, webview: Webview, desktop: Shared<'_>) -> Result<Value, String> {
+  require_trusted(&webview, &desktop)?;
+  let current = app.package_info().version.to_string();
+  if updater_pubkey().is_none() { return Ok(json!({ "enabled": false, "current": current })) }
+  let endpoint = Url::parse(&update_endpoint()).map_err(|error| error.to_string())?;
+  let updater = app.updater_builder().endpoints(vec![endpoint]).and_then(|builder| builder.build()).map_err(|error| error.to_string())?;
+  let found = updater.check().await.map_err(|error| format!("检查更新失败：{error}"))?;
+  let info = match &found {
+    Some(update) => json!({ "enabled": true, "current": current, "available": true, "version": update.version, "notes": update.body, "date": update.date.map(|date| date.to_string()) }),
+    None => json!({ "enabled": true, "current": current, "available": false }),
+  };
+  *desktop.update.lock().unwrap() = found;
+  Ok(info)
+}
+
+#[tauri::command]
+async fn desktop_update_install(app: AppHandle, webview: Webview, desktop: Shared<'_>) -> Result<bool, String> {
+  require_trusted(&webview, &desktop)?;
+  let update = desktop.update.lock().unwrap().take().ok_or("没有可安装的更新，请先检查更新")?;
+  let progress = app.clone();
+  let (mut received, mut reported) = (0u64, u64::MAX);
+  update.download_and_install(move |chunk, total| {
+    received += chunk as u64;
+    let percent = total.filter(|total| *total > 0).map(|total| (received * 100 / total).min(100));
+    if let Some(percent) = percent.filter(|percent| *percent != reported) {
+      reported = percent;
+      let desktop = progress.state::<Arc<Desktop>>();
+      emit(&progress, &desktop, "update-progress", json!({ "percent": percent }));
+    }
+  }, || {}).await.map_err(|error| format!("更新失败：{error}"))?;
+  // Windows 安装程序会自行退出并启动新版本；macOS 需要重新启动。
+  app.restart();
+}
+
 fn bridge_script(material: &str) -> String {
   let invitation = include_str!("../../shared/invitation.js").replace("export function", "function");
   let platform = if cfg!(target_os = "windows") { "windows" } else if cfg!(target_os = "macos") { "macos" } else { "linux" };
@@ -513,7 +563,12 @@ fn initial_origin(desktop: &Desktop) -> Option<String> {
 }
 
 pub fn run() {
-  tauri::Builder::default()
+  let builder = tauri::Builder::default();
+  let builder = match updater_pubkey() {
+    Some(pubkey) => builder.plugin(tauri_plugin_updater::Builder::new().pubkey(pubkey).build()),
+    None => builder,
+  };
+  builder
     .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
       let desktop = app.state::<Arc<Desktop>>();
       show(app, &desktop, None);
@@ -523,7 +578,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       desktop_connect, desktop_home, desktop_copy, desktop_ready, desktop_state, desktop_settings, desktop_activity,
-      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom
+      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install
     ])
     .setup(|app| {
       let handle = app.handle().clone();
@@ -542,6 +597,7 @@ pub fn run() {
         quitting: AtomicBool::new(false),
         next_notification: AtomicI32::new(1),
         tray: Mutex::new(None),
+        update: Mutex::new(None),
       });
       app.manage(desktop.clone());
       app.set_menu(app_menu(&handle)?)?;

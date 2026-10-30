@@ -383,6 +383,17 @@ button.message-read-status.is-read { color: var(--text-1); }
 :root[data-theme="light"] .privacy-toggle.enabled { background: var(--accent); }
 .storage-clear-button { margin-top: 12px; color: var(--danger-text); }
 .desktop-settings { margin-top: 20px; }
+.update-settings h3 { margin-top: 24px; font-size: 13px; font-weight: 600; }
+.update-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 12px; border-radius: 12px; background: var(--fill-1); }
+.update-row > span { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.update-row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.update-row small { font-size: 11px; color: var(--text-2); }
+.update-row small.update-available { color: var(--accent-bright); font-weight: 600; }
+.update-progress { height: 4px; margin-top: 8px; border-radius: 999px; background: var(--fill-2); overflow: hidden; }
+.update-progress i { display: block; height: 100%; background: var(--accent-bright); transform-origin: left; transition: transform 200ms var(--ease-out); }
+.update-notes { margin-top: 8px; max-height: 96px; overflow-y: auto; font-size: 12px; line-height: 18px; color: var(--text-2); white-space: pre-wrap; }
+.icon-button.has-update { position: relative; }
+.icon-button.has-update::after { content: ""; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-bright); box-shadow: 0 0 0 2px var(--fill-1); }
 .notification-setting { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: var(--fill-1); color: var(--text-2); }
 .notification-setting > span { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .notification-setting b { color: var(--text-1); font-weight: 600; }

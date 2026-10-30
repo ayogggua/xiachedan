@@ -25,6 +25,8 @@
     "allow-desktop-notification-settings",
     "allow-desktop-appearance",
     "allow-desktop-drag",
-    "allow-desktop-zoom"
+    "allow-desktop-zoom",
+    "allow-desktop-update-check",
+    "allow-desktop-update-install"
   ]
 }

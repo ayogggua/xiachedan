@@ -31,6 +31,7 @@
     platform: '/*PLATFORM*/',
     material: '/*MATERIAL*/' || null,
     setAppearance: theme => invoke('desktop_appearance', { theme }),
+    updates: Object.freeze({ check: () => invoke('desktop_update_check'), install: () => invoke('desktop_update_install') }),
     connect: async (invitation, identity) => {
       const { addresses, inviteCode } = parseInvitation(invitation);
       if (!addresses.length) throw new Error('这只有邀请码，请复制包含内网地址的完整邀请');

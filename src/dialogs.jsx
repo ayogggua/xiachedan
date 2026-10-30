@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell } from 'lucide-react';
+import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell, LoaderCircle } from 'lucide-react';
 import { api, upload, formatSize } from './api';
 import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
@@ -86,12 +86,42 @@ function DesktopSettings({ notify }) {
   </section>;
 }
 
-export function ConnectionDialog({ theme, onTheme, connected, me, workspace, onCleared, onClose, notify }) {
+function UpdateSettings({ update, onUpdate, notify }) {
+  const [busy, setBusy] = useState('');
+  const [percent, setPercent] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => window.desktop.onEvent(event => { if (event.type === 'update-progress') setPercent(event.percent); }), []);
+  async function check() {
+    setBusy('check'); setError('');
+    try { const info = await window.desktop.updates.check(); onUpdate(info); if (info.enabled && !info.available) notify('已是最新版本'); }
+    catch (failure) { setError(failure.message); } finally { setBusy(''); }
+  }
+  async function install() {
+    setBusy('install'); setError(''); setPercent(0);
+    try { await window.desktop.updates.install(); }
+    catch (failure) { setError(failure.message); setBusy(''); setPercent(null); }
+  }
+  const status = !update ? '正在检查更新…' : !update.enabled ? '此版本未开启自动更新' : update.available ? `发现新版本 v${update.version}` : '已是最新版本';
+  return <section className="update-settings" aria-label="软件更新"><h3>软件更新</h3>
+    <div className="update-row"><span><b>{update ? `当前版本 v${update.current}` : '虾扯蛋'}</b><small className={update?.available ? 'update-available' : ''}>{status}</small></span>
+      {update?.available
+        ? <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={install}>{busy === 'install' ? <><LoaderCircle className="spin" size={14} />{percent === null ? '准备中' : `${percent}%`}</> : '立即更新'}</button>
+        : <button type="button" className="secondary-button" disabled={Boolean(busy) || update?.enabled === false} onClick={check}>{busy === 'check' ? '检查中…' : '检查更新'}</button>}
+    </div>
+    {busy === 'install' && <div className="update-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? 0}><i style={{ transform: `scaleX(${(percent ?? 0) / 100})` }} /></div>}
+    {update?.available && update.notes && <p className="update-notes">{update.notes}</p>}
+    {busy === 'install' && <p className="inline-note">下载完成后会自动安装并重新启动虾扯蛋。</p>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </section>;
+}
+
+export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onCleared, onClose, notify }) {
   return <Modal title="设置" subtitle="所有聊天都通过局域网连接。" onClose={onClose}>
     <section className="appearance-settings"><h3>外观</h3><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div></section>
     <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
     <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>
     {workspace.ownerId === me.id && <StorageSettings onCleared={onCleared} notify={notify} />}
+    {window.desktop?.updates && <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />}
     {window.desktop && <>{window.desktop.getState && <DesktopSettings notify={notify} />}
       <h3 className="join-space-heading">加入另一个空间</h3><JoinSpaceForm identity={me} />
       <button type="button" className="text-button back-link" onClick={() => window.desktop.home().catch(error => notify(error.message))}>返回本机空间</button>

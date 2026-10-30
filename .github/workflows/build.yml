@@ -56,19 +56,16 @@ jobs:
             target: aarch64-apple-darwin
             bundles: app,dmg
             artifact: xiachedan-mac-arm64
-            files: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           - runner: macos-15-intel
             name: macOS x64
             target: x86_64-apple-darwin
             bundles: app,dmg
             artifact: xiachedan-mac-x64
-            files: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
           - runner: windows-latest
             name: Windows x64
             target: x86_64-pc-windows-msvc
             bundles: nsis
             artifact: xiachedan-windows-x64
-            files: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -84,12 +81,43 @@ jobs:
       - run: npm run build
       - name: Prepare Node sidecar and local server
         run: node scripts/prepare-desktop.mjs ${{ matrix.target }}
+      # 仓库配置了更新签名密钥（secrets.TAURI_SIGNING_PRIVATE_KEY 与 vars.TAURI_UPDATER_PUBKEY）时，
+      # 同时生成已签名的更新包并在客户端启用自动更新；未配置时照常打包、不启用更新。
       - name: Build installer
-        run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          LINLIAO_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          LINLIAO_UPDATE_REPO: ${{ github.repository }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -n "$LINLIAO_UPDATER_PUBKEY" ]; then
+            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          else
+            unset LINLIAO_UPDATER_PUBKEY
+            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          fi
+      - name: Stage release files
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          bundle=src-tauri/target/${{ matrix.target }}/release/bundle
+          mkdir -p out
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) arch=aarch64 ;;
+            x86_64-apple-darwin) arch=x64 ;;
+            *) arch=x64 ;;
+          esac
+          # 统一改成 ASCII 文件名，避免下载地址里的中文编码问题；更新包与签名同名配对。
+          copy() { for file in $1; do [ -f "$file" ] && cp "$file" "out/$2" && { [ -f "$file.sig" ] && cp "$file.sig" "out/$2.sig" || true; }; done; return 0; }
+          copy "$bundle/dmg/*.dmg" "Xiachedan_${version}_${arch}.dmg"
+          copy "$bundle/macos/*.app.tar.gz" "Xiachedan_${version}_${arch}.app.tar.gz"
+          copy "$bundle/nsis/*-setup.exe" "Xiachedan_${version}_${arch}-setup.exe"
+          ls -la out
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.files }}
+          path: out/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -103,6 +131,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: xiachedan-*
@@ -117,5 +146,6 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --verify-tag --title "虾扯蛋 $RELEASE_TAG" --generate-notes --draft
           fi
-          gh release upload "$RELEASE_TAG" release/*.dmg release/*.exe --clobber
+          RELEASE_NOTES=$(gh release view "$RELEASE_TAG" --json body --jq .body) node scripts/update-manifest.mjs release "$RELEASE_TAG" "$GH_REPO"
+          gh release upload "$RELEASE_TAG" release/* --clobber
           gh release edit "$RELEASE_TAG" --draft=false
