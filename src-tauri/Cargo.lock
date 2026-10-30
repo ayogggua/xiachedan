@@ -5537,6 +5537,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "url",
+ "uuid",
 ]
 
 [[package]]

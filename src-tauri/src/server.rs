@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::Path;
@@ -29,9 +30,34 @@ fn pick_port() -> std::io::Result<u16> {
   Ok(TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port())
 }
 
+fn node_command(node: &Path) -> Command {
+  #[allow(unused_mut)]
+  let mut command = Command::new(node);
+  #[cfg(windows)]
+  {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+  }
+  command
+}
+
+// 旧版 Electron 把会话 Cookie 明文存在 Chromium 的 Cookies 库里；用随包的 Node 只读取出（主机名 → 会话）。
+pub fn legacy_sessions(node: &Path, cookies: &Path) -> HashMap<String, String> {
+  const SCRIPT: &str = "const { DatabaseSync } = require('node:sqlite'); \
+    const db = new DatabaseSync(process.argv[1], { readOnly: true }); \
+    const rows = db.prepare(\"SELECT host_key, value FROM cookies WHERE name='linliao_session' AND value<>''\").all(); \
+    console.log(JSON.stringify(Object.fromEntries(rows.map(row => [row.host_key, row.value]))));";
+  if !cookies.is_file() { return HashMap::new() }
+  node_command(node).arg("-e").arg(SCRIPT).arg(cookies).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()
+    .filter(|output| output.status.success())
+    .and_then(|output| serde_json::from_slice(&output.stdout).ok())
+    .unwrap_or_default()
+}
+
 pub fn start(node: &Path, script: &Path, data_dir: &Path) -> Result<LocalServer, String> {
   let port = pick_port().map_err(|error| format!("无法分配本机端口：{error}"))?;
-  let mut command = Command::new(node);
+  let mut command = node_command(node);
   command
     .arg(script)
     .env("PORT", port.to_string())
@@ -40,12 +66,6 @@ pub fn start(node: &Path, script: &Path, data_dir: &Path) -> Result<LocalServer,
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .stderr(Stdio::inherit());
-  #[cfg(windows)]
-  {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
-  }
   let mut child = command.spawn().map_err(|error| format!("无法启动本机服务：{error}"))?;
   let stdout = child.stdout.take().ok_or("无法读取本机服务输出")?;
   let (ready, wait) = mpsc::channel();

@@ -113,11 +113,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
     for (const socket of sockets) if (socket.readyState === WebSocket.OPEN && !isRemoved(socket.userId) && (!roomId || canAccess(room, socket.userId))) socket.send(payload);
   };
+  const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
   const userCreated = (req, res, name, avatar) => {
     const token = randomBytes(32).toString('hex');
     const user = { id: randomUUID(), name, avatar: PRESETS.includes(avatar) ? avatar : 'cat' };
     stmt('INSERT INTO users (id,name,avatar,token_hash,created_at) VALUES (?,?,?,?,?)').run(user.id, name, user.avatar, hash(token), Date.now());
-    res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
+    setSession(res, token);
     broadcast({ type: 'users', users: users() });
     return user;
   };
@@ -142,6 +143,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const ws = workspace();
     const me = authUser(req);
     res.json({ configured: Boolean(ws), workspace: ws ? spaceInfo() : null,
+      spaceId: ws ? stmt('SELECT space_id FROM space_identity WHERE id=1').get().space_id : null,
       canCreate: loopback(req.socket.remoteAddress) && req.get('X-Setup-Key') === setupKey,
       me, ...(me ? stateFor(me) : {}) });
   });
@@ -181,6 +183,26 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!name) throw fail('给自己起个昵称吧');
     rateLimit(req, 'join', 10);
     res.status(201).json({ me: userCreated(req, res, name, req.body.avatar) });
+  });
+  // 桌面端凭本机为这个空间保存的凭证认回身份，不依赖 IP 与 WebView 中的会话 Cookie；legacy 是旧版 Electron 留下的会话，用于一次性迁移。
+  app.post('/api/device', (req, res) => {
+    rateLimit(req, 'device', 30);
+    const device = textValue(req.body?.device, 128);
+    if (!/^[0-9a-f]{64}$/.test(device)) throw fail('设备凭证无效');
+    const legacy = textValue(req.body?.legacy, 128);
+    const current = authUser(req);
+    const previous = legacy && stmt('SELECT id, name, avatar FROM users WHERE token_hash=? AND id NOT IN (SELECT user_id FROM removed_users)').get(hash(legacy));
+    const bound = stmt('SELECT u.id, u.name, u.avatar FROM user_devices d JOIN users u ON u.id=d.user_id WHERE d.device_hash=? AND u.id NOT IN (SELECT user_id FROM removed_users)').get(hash(device));
+    const me = previous || current || bound;
+    if (!me) throw fail('这台电脑还没有加入过这个空间', 404);
+    stmt('INSERT OR REPLACE INTO user_devices (device_hash,user_id,created_at) VALUES (?,?,?)').run(hash(device), me.id, Date.now());
+    if (previous) setSession(res, legacy);
+    else if (!current) {
+      const token = randomBytes(32).toString('hex');
+      stmt('UPDATE users SET token_hash=? WHERE id=?').run(hash(token), me.id);
+      setSession(res, token);
+    }
+    res.json({ me, switched: me.id !== current?.id });
   });
   app.use('/api', (req, _res, next) => {
     req.user = authUser(req);
@@ -419,6 +441,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/logout', (req, res) => {
     for (const socket of sockets) if (socket.userId === req.user.id) socket.close(4001, 'logout');
     stmt('UPDATE users SET token_hash=? WHERE id=?').run(hash(randomBytes(32)), req.user.id);
+    stmt('DELETE FROM user_devices WHERE user_id=?').run(req.user.id);
     res.clearCookie('linliao_session', { path: '/' });
     res.json({ ok: true });
   });

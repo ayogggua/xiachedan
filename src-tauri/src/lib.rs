@@ -39,6 +39,14 @@ struct Config {
   private_mode: Option<bool>,
   #[serde(rename = "notificationsEnabled", skip_serializing_if = "Option::is_none")]
   notifications_enabled: Option<bool>,
+  // 空间编号 → 本机为该空间生成的身份凭证；不随主机 IP 变化。
+  #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+  devices: HashMap<String, String>,
+  // 旧版 Electron 留下的会话（主机名 → 会话），首次进入对应空间认回身份后删除。
+  #[serde(rename = "legacySessions", default, skip_serializing_if = "HashMap::is_empty")]
+  legacy_sessions: HashMap<String, String>,
+  #[serde(rename = "legacyImported", default)]
+  legacy_imported: bool,
 }
 
 #[derive(Default)]
@@ -292,6 +300,20 @@ fn desktop_home(app: AppHandle, webview: Webview, desktop: Shared<'_>) -> Result
   require_trusted(&webview, &desktop)?;
   go_home(&app, &desktop);
   Ok(true)
+}
+
+#[tauri::command]
+fn desktop_identity(webview: Webview, desktop: Shared<'_>, space_id: String, migrated: bool) -> Result<Value, String> {
+  require_trusted(&webview, &desktop)?;
+  if space_id.len() != 32 || !space_id.bytes().all(|byte| byte.is_ascii_hexdigit()) { return Err("空间编号无效".into()) }
+  let mut session = desktop.session.lock().unwrap();
+  let host = Url::parse(&session.active_origin).ok().and_then(|url| url.host_str().map(str::to_string)).unwrap_or_default();
+  if migrated { session.config.legacy_sessions.remove(&host); }
+  let device = session.config.devices.entry(space_id)
+    .or_insert_with(|| format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())).clone();
+  let legacy = session.config.legacy_sessions.get(&host).cloned();
+  desktop.save(&session);
+  Ok(json!({ "device": device, "legacy": legacy }))
 }
 
 #[tauri::command]
@@ -578,7 +600,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       desktop_connect, desktop_home, desktop_copy, desktop_ready, desktop_state, desktop_settings, desktop_activity,
-      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install
+      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install, desktop_identity
     ])
     .setup(|app| {
       let handle = app.handle().clone();
@@ -586,8 +608,12 @@ pub fn run() {
       let root = match std::env::var_os("LINLIAO_DATA_DIR") { Some(dir) => PathBuf::from(dir), None => app.path().data_dir()?.join("邻聊") };
       std::fs::create_dir_all(&root)?;
       let config_path = root.join("desktop.json");
-      let config = std::fs::read_to_string(&config_path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+      let mut config: Config = std::fs::read_to_string(&config_path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
       let node = std::env::current_exe()?.with_file_name(if cfg!(windows) { "node.exe" } else { "node" });
+      if !config.legacy_imported {
+        config.legacy_sessions = server::legacy_sessions(&node, &root.join("Cookies"));
+        config.legacy_imported = true;
+      }
       let script = app.path().resource_dir()?.join("app").join("server").join("index.js");
       let local = server::start(&node, &script, &root.join("space")).map_err(|error| Box::<dyn std::error::Error>::from(error))?;
       let desktop = Arc::new(Desktop {
