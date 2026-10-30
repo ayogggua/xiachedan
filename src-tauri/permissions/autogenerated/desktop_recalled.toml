@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-recalled"
+description = "Enables the desktop_recalled command without any pre-configured scope."
+commands.allow = ["desktop_recalled"]
+
+[[permission]]
+identifier = "deny-desktop-recalled"
+description = "Denies the desktop_recalled command without any pre-configured scope."
+commands.deny = ["desktop_recalled"]
