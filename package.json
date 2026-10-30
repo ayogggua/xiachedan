@@ -12,7 +12,7 @@
     "build": "vite build",
     "start": "node server/index.js",
     "desktop": "npm run build && node scripts/prepare-desktop.mjs && tauri dev --no-watch",
-    "package:mac": "npm run build && node scripts/prepare-desktop.mjs && tauri build --bundles app,dmg",
+    "package:mac": "npm run build && node scripts/prepare-desktop.mjs && CI=true tauri build --bundles app,dmg",
     "package:win": "npm run build && node scripts/prepare-desktop.mjs && tauri build --bundles nsis",
     "tauri": "tauri"
   },
