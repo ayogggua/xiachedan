@@ -499,7 +499,7 @@ fn create_window(app: &AppHandle, desktop: Arc<Desktop>, start: Url) -> tauri::R
   let builder = builder
     .title_bar_style(tauri::TitleBarStyle::Overlay)
     .hidden_title(true)
-    .traffic_light_position(tauri::LogicalPosition::new(20.0, 20.0));
+    .traffic_light_position(tauri::LogicalPosition::new(21.0, 30.0));
   builder.build()
 }
 
