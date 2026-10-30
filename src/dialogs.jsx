@@ -3,6 +3,7 @@ import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell } fr
 import { api, upload, formatSize } from './api';
 import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
+import { THEMES } from './useTheme';
 
 export function ProfileDialog({ me, onClose, onUpdate, notify }) {
   const [name, setName] = useState(me.name);
@@ -85,8 +86,9 @@ function DesktopSettings({ notify }) {
   </section>;
 }
 
-export function ConnectionDialog({ connected, me, workspace, onCleared, onClose, notify }) {
-  return <Modal title="连接与空间" subtitle="所有聊天都通过局域网连接。" onClose={onClose}>
+export function ConnectionDialog({ theme, onTheme, connected, me, workspace, onCleared, onClose, notify }) {
+  return <Modal title="设置" subtitle="所有聊天都通过局域网连接。" onClose={onClose}>
+    <section className="appearance-settings"><h3>外观</h3><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div></section>
     <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
     <p className="inline-note">消息和附件保存在创建空间的 Mac 上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>
     {workspace.ownerId === me.id && <StorageSettings onCleared={onCleared} notify={notify} />}

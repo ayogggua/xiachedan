@@ -8,6 +8,7 @@ import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMembe
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useDesktopBridge from './useDesktopBridge';
+import useTheme from './useTheme';
 import { previewText, readStorage } from './history';
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
   const [toast, setToast] = useState('');
   const [scrolledUp, setScrolledUp] = useState(false);
   const [mobileChat, setMobileChat] = useState(false);
+  const [theme, setTheme] = useTheme();
   const toastTimer = useRef();
   const messageList = useRef();
   const messageContent = useRef();
@@ -123,7 +125,7 @@ export default function App() {
         <div className="section-label"><span>私聊</span><IconButton icon={Plus} label="发起私聊" size={15} onClick={() => setModal('members')} /></div>{filtered.filter(room => room.kind === 'direct').map(roomButton)}
         {!filtered.some(room => room.kind === 'direct') && <p className="sidebar-empty">{search ? '没有匹配的私聊' : '找到一位同事，聊点新鲜事。'}</p>}
       </nav>
-      <div className="me-card"><button className="me-profile" title="修改昵称和头像" onClick={() => setModal('profile')}><Avatar user={state.me} size={30} /><span><b>{state.me.name}</b><small className={connected ? '' : 'warning'}>{connected ? '局域网已连接' : '正在重新连接…'}</small></span></button><IconButton icon={Settings2} label="连接与空间" onClick={() => setModal('connection')} /></div>
+      <div className="me-card"><button className="me-profile" title="修改昵称和头像" onClick={() => setModal('profile')}><Avatar user={state.me} size={30} /><span><b>{state.me.name}</b><small className={connected ? '' : 'warning'}>{connected ? '局域网已连接' : '正在重新连接…'}</small></span></button><IconButton icon={Settings2} label="设置" onClick={() => setModal('connection')} /></div>
     </aside>
     <main className="chat-main">
       <div className="conversation-body"><section className="chat-column">
@@ -148,7 +150,7 @@ export default function App() {
     {modal === 'profile' && <ProfileDialog me={state.me} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
     {modal === 'invite' && <InviteDialog onClose={() => setModal(null)} notify={notify} />}
     {['group', 'addMembers'].includes(modal) && <GroupDialog users={state.users.filter(user => !user.removed)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} />}
-    {modal === 'connection' && <ConnectionDialog connected={connected} me={state.me} workspace={state.workspace} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
+    {modal === 'connection' && <ConnectionDialog theme={theme} onTheme={setTheme} connected={connected} me={state.me} workspace={state.workspace} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
     {modal === 'members' && <Modal title="空间成员" subtitle={`${state.users.filter(user => !user.removed).length} 位成员，${online.length} 人在线。点一位成员开始私聊。`} onClose={() => setModal(null)}><div className="space-members">{state.users.filter(user => !user.removed).map(user => memberRow(user, 32))}</div><div className="modal-footer"><button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请新同事</button></div></Modal>}
     {preview && !privateMode && <Modal title={preview.name} onClose={() => setPreview(null)} wide><img className="lightbox-image" src={mediaUrl(preview.id)} alt={preview.name} /></Modal>}
     {removing && <RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} />}
