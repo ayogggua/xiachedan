@@ -87,8 +87,8 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   }, [message.id, mine, message.recalledAt]);
   useEffect(() => {
     if (message.recalledAt || mine || !readingEnabled || hidden || !visible || alreadyRead || !Array.isArray(message.readBy)) return;
-    // 隐私模式下鼠标需停留满 1 秒才算看过，划过不计。
-    const timer = setTimeout(() => onRead?.(message.roomId, message.id), privateMode ? 1000 : 350);
+    // 隐私模式下鼠标需停留 0.6 秒才算看过，划过不计。
+    const timer = setTimeout(() => onRead?.(message.roomId, message.id), privateMode ? 600 : 350);
     return () => clearTimeout(timer);
   }, [message.recalledAt, mine, readingEnabled, hidden, visible, alreadyRead, message.id, message.roomId, message.readBy, onRead, privateMode]);
   const readCount = recipients.filter(id => message.readBy?.includes(id)).length;

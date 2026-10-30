@@ -51,7 +51,13 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
         { ...message, readBy: [...new Set([...(message.readBy || []), receipt.userId])] } : message) };
     });
   }, []);
-  const markMessageRead = useMessageReads(state?.me.id, connected, applyReceipt);
+  const reportRead = useMessageReads(state?.me.id, connected, applyReceipt);
+  const meId = state?.me.id;
+  // 先在本地记为已读，未读角标立即更新；回执在后台上报。
+  const markMessageRead = useCallback((roomId, messageId) => {
+    applyReceipt({ roomId, userId: meId, messageIds: [messageId] });
+    reportRead(roomId, messageId);
+  }, [applyReceipt, reportRead, meId]);
   const start = useCallback(async () => {
     setStartupError('');
     try { const result = await api('bootstrap'); setBootstrap(result); if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); setState(sanitizeState(result, historyRef.current)); } }
