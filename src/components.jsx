@@ -57,7 +57,7 @@ function Attachment({ file, privateMode, onPreview }) {
   </div>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu }) {
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -105,7 +105,8 @@ export function Message({ message, user, mine, continued = false, privateMode, o
         aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>
         {hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>{message.text && <p className="message-text">{message.text}</p>}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={onPreview} />)}</>}
       </div>
-      {mine && <div className="message-status">{time}{recipients.length > 0 && Array.isArray(message.readBy) && <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} title={`${readCount} 人已读，${recipients.length - readCount} 人未读`}>{readLabel}</span>}</div>}
+      {mine && <div className="message-status">{time}{recipients.length > 0 && Array.isArray(message.readBy) && (direct ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
+        : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>)}</div>}
     </div>
   </article>;
 }
@@ -122,4 +123,26 @@ export function MessageContextMenu({ menu, onClose, onRecall }) {
     return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); };
   }, [onClose]);
   return <div ref={ref} role="menu" aria-label="消息操作" className="message-context-menu" style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 152)), top: Math.max(8, Math.min(menu.y, innerHeight - 62)) }}><button autoFocus role="menuitem" onClick={onRecall}>撤回消息</button></div>;
+}
+
+export function ReadDetail({ anchor, message, members, onClose }) {
+  const ref = useRef();
+  useEffect(() => {
+    ref.current?.focus();
+    // 点已读状态按钮由按钮自身切换开合，这里不重复关闭。
+    const dismiss = event => { if (!ref.current?.contains(event.target) && !event.target.closest?.('.message-read-status')) onClose(); };
+    const key = event => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', key);
+    window.addEventListener('resize', onClose);
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('resize', onClose); };
+  }, [onClose]);
+  const read = members.filter(user => message.readBy?.includes(user.id));
+  const unread = members.filter(user => !message.readBy?.includes(user.id));
+  const list = users => users.map(user => <li key={user.id}><Avatar user={user} size={20} /><span>{user.name}</span></li>);
+  return <div ref={ref} role="dialog" aria-label="已读详情" tabIndex={-1} className="read-detail"
+    style={{ left: Math.max(8, Math.min(anchor.x - 240, innerWidth - 248)), bottom: Math.max(8, innerHeight - anchor.y + 6) }}>
+    <section><h4>已读<small>{read.length}</small></h4>{read.length ? <ul>{list(read)}</ul> : <p>还没有人读</p>}</section>
+    <section><h4>未读<small>{unread.length}</small></h4>{unread.length ? <ul>{list(unread)}</ul> : <p>全员已读</p>}</section>
+  </div>;
 }

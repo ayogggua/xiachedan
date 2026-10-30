@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageCircle, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw } from 'lucide-react';
 import { api, formatTime, mediaUrl } from './api';
-import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, MessageContextMenu } from './components';
+import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, MessageContextMenu, ReadDetail } from './components';
 import Onboarding from './Onboarding';
 import Composer from './Composer';
 import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog } from './dialogs';
@@ -16,6 +16,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [readDetail, setReadDetail] = useState(null);
   const [recalling, setRecalling] = useState(null);
   const [removing, setRemoving] = useState(null);
   const [showMembers, setShowMembers] = useState(false);
@@ -32,9 +33,10 @@ export default function App() {
   useEffect(() => () => clearTimeout(toastTimer.current), []);
   const { privateMode, privacyRef, changePrivacy, windowActive } = useDesktopBridge({ notify, onPendingRoom: setSelected,
     onOpenRoom: roomId => { setSelected(roomId); setMobileChat(true); setModal(null); setSearch(''); } });
+  const closeReadDetail = useCallback(() => setReadDetail(null), []);
   const onHistoryChanged = useCallback(({ cleared }) => {
     if (cleared) { setScrolledUp(false); sticky.current = true; }
-    setPreview(null); setContextMenu(null); setRecalling(null);
+    setPreview(null); setContextMenu(null); setRecalling(null); setReadDetail(null);
   }, []);
   const { bootstrap, state, startupError, start, refresh, messages, hasMore, loading, connected, historyVersion,
     syncHistory, receive, markMessageRead, loadOlder: fetchOlder, updateMe } = useChatSession({ selected, notify, privacyRef, onHistoryChanged });
@@ -98,7 +100,7 @@ export default function App() {
   const peer = room.kind === 'direct' ? peerOf(room) : null;
   const isOwner = state.workspace.ownerId === state.me.id;
   const roomIcon = (target, size = 32) => target.kind === 'direct' ? <Avatar user={peerOf(target)} size={size} online={peerOf(target)?.online} /> : <span className="room-avatar">{target.kind === 'public' ? <Hash size={16} /> : <Users size={16} />}</span>;
-  const openRoom = id => { setSelected(id); setMobileChat(true); };
+  const openRoom = id => { setSelected(id); setMobileChat(true); setReadDetail(null); };
   const roomButton = target => {
     const status = unread[target.id];
     const label = status?.exact ? `${status.count} 条未读消息` : '有新消息';
@@ -138,7 +140,7 @@ export default function App() {
         {hasMore[selected] && <button className="load-older" onClick={loadOlder} disabled={loading}>{loading ? '正在加载…' : '查看更早的消息'}</button>}
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请同事加入</button>}</div>}
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
-        {currentMessages.map((message, index) => { const previous = currentMessages[index - 1]; const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString(); return <React.Fragment key={message.id}>{newDay && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={(event, message) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, message }); }} message={message} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} /></React.Fragment>; })}
+        {currentMessages.map((message, index) => { const previous = currentMessages[index - 1]; const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString(); return <React.Fragment key={message.id}>{newDay && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={(event, message) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, message }); }} message={message} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
       </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />回到最新消息</button>}
       <Composer room={room} connected={connected} onSent={message => { sticky.current = true; receive(message); }} notify={notify} /></section>
       {showMembers && <aside className="members-panel glass" aria-label="会话成员"><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<div className="members-list">{groupMembers.map(user => memberRow(user, 30))}</div></aside>}</div>
@@ -150,6 +152,7 @@ export default function App() {
     {modal === 'members' && <Modal title="空间成员" subtitle={`${state.users.filter(user => !user.removed).length} 位成员，${online.length} 人在线。点一位成员开始私聊。`} onClose={() => setModal(null)}><div className="space-members">{state.users.filter(user => !user.removed).map(user => memberRow(user, 32))}</div><div className="modal-footer"><button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请新同事</button></div></Modal>}
     {preview && !privateMode && <Modal title={preview.name} onClose={() => setPreview(null)} wide><img className="lightbox-image" src={mediaUrl(preview.id)} alt={preview.name} /></Modal>}
     {removing && <RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} />}
+    {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail} />}
     {contextMenu && <MessageContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onRecall={() => { setRecalling(contextMenu.message); setContextMenu(null); }} />}
     {recalling && <RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => { syncHistory([message]); notify('消息已撤回'); }} />}
     {toastElement}

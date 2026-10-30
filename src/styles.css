@@ -212,6 +212,18 @@ textarea { resize: none; line-height: 20px; }
 .mine .masked-message { color: rgba(255, 255, 255, .78); }
 .message-status { display: flex; align-items: center; gap: 6px; padding-right: 4px; }
 .message-read-status.is-read { color: var(--text-1); }
+button.message-read-status { padding: 0 2px; margin: 0 -2px; border-radius: 4px; font-size: inherit; color: inherit; }
+button.message-read-status.is-read { color: var(--text-1); }
+@media (hover: hover) and (pointer: fine) { button.message-read-status:hover { color: var(--text-1); text-decoration: underline; text-underline-offset: 2px; } }
+.read-detail { position: fixed; z-index: 60; width: 240px; max-height: 50dvh; overflow-y: auto; padding: 6px; border-radius: 12px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-2); animation: menu-in 140ms var(--ease-out); transform-origin: bottom right; }
+.read-detail:focus { outline: none; }
+.read-detail section + section { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.read-detail h4 { display: flex; justify-content: space-between; margin: 0; padding: 6px 8px 4px; font-size: 11px; font-weight: 600; color: var(--text-2); }
+.read-detail h4 small { font-size: 11px; font-variant-numeric: tabular-nums; }
+.read-detail ul { margin: 0; padding: 0; list-style: none; }
+.read-detail li { display: flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 13px; }
+.read-detail li span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.read-detail p { padding: 2px 8px 6px; font-size: 12px; color: var(--text-3); }
 .attachment + .attachment { margin-top: 4px; }
 .attachment { border-radius: 12px; overflow: hidden; }
 .image-button { display: block; cursor: zoom-in; }
