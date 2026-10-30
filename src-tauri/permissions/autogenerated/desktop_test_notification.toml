@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-test-notification"
+description = "Enables the desktop_test_notification command without any pre-configured scope."
+commands.allow = ["desktop_test_notification"]
+
+[[permission]]
+identifier = "deny-desktop-test-notification"
+description = "Denies the desktop_test_notification command without any pre-configured scope."
+commands.deny = ["desktop_test_notification"]

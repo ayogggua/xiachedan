@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-home"
+description = "Enables the desktop_home command without any pre-configured scope."
+commands.allow = ["desktop_home"]
+
+[[permission]]
+identifier = "deny-desktop-home"
+description = "Denies the desktop_home command without any pre-configured scope."
+commands.deny = ["desktop_home"]

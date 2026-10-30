@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-history-cleared"
+description = "Enables the desktop_history_cleared command without any pre-configured scope."
+commands.allow = ["desktop_history_cleared"]
+
+[[permission]]
+identifier = "deny-desktop-history-cleared"
+description = "Denies the desktop_history_cleared command without any pre-configured scope."
+commands.deny = ["desktop_history_cleared"]
