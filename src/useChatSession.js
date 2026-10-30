@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, takePendingJoin } from './api';
+import { api } from './api';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
 import useMessageReads from './useMessageReads';
 
@@ -65,11 +65,9 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     let result;
     try { result = await api('bootstrap'); }
     catch { return setStartupError('暂时无法连接到聊天空间，请确认创建空间的电脑正在运行虾扯蛋。'); }
-    const pendingJoin = takePendingJoin();
-    if (pendingJoin && !result.me && result.configured) {
-      try { await api('join', pendingJoin); result = await api('bootstrap'); }
-      catch (error) { notify(error.message); }
-    }
+    // 桌面端注入脚本代为加入同事空间失败时，把原因留给页面提示。
+    const joinError = sessionStorage.getItem('linliao.joinError');
+    if (joinError) { sessionStorage.removeItem('linliao.joinError'); notify(joinError); }
     setBootstrap(result);
     if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); setState(sanitizeState(result, historyRef.current)); }
   }, [syncHistory, notify]);

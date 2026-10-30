@@ -2,6 +2,20 @@
 (() => {
   if (window.desktop) return;
   /*INVITATION*/
+  // 加入同事空间：#join= 由桌面端带来，在对方页面里完成加入（新旧版本主机通用），成功后重新载入。
+  const join = new URLSearchParams(location.hash.slice(1)).get('join');
+  if (join) {
+    history.replaceState(null, '', location.pathname);
+    const headers = { 'Content-Type': 'application/json', 'X-Linliao': '1' };
+    fetch('/api/bootstrap', { headers }).then(response => response.json()).then(async bootstrap => {
+      if (bootstrap.me || !bootstrap.configured) return;
+      const response = await fetch('/api/join', { method: 'POST', headers, body: join });
+      if (response.ok) return location.reload();
+      const result = await response.json().catch(() => ({}));
+      sessionStorage.setItem('linliao.joinError', result.error || '暂时无法加入空间');
+      location.reload();
+    }).catch(() => { sessionStorage.setItem('linliao.joinError', '连接中断，请检查网络后重新加入'); location.reload(); });
+  }
   const invoke = (command, args = {}) => window.__TAURI_INTERNALS__.invoke(command, args)
     .catch(error => { throw new Error(typeof error === 'string' ? error : error?.message || '操作失败'); });
   const listeners = new Set();

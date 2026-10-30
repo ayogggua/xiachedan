@@ -1,13 +1,8 @@
-const handoff = new URLSearchParams(location.hash.slice(1));
-if (handoff.get('setup')) sessionStorage.setItem('linliao.setup', handoff.get('setup'));
-// 桌面端加入同事空间时，把邀请码和身份放在 #join= 里交给对方页面完成加入。
-if (handoff.get('join')) sessionStorage.setItem('linliao.join', handoff.get('join'));
-if (handoff.get('setup') || handoff.get('join')) history.replaceState(null, '', location.pathname);
-export const takePendingJoin = () => {
-  const value = sessionStorage.getItem('linliao.join');
-  sessionStorage.removeItem('linliao.join');
-  try { return value ? JSON.parse(value) : null; } catch { return null; }
-};
+const setup = new URLSearchParams(location.hash.slice(1)).get('setup');
+if (setup) {
+  sessionStorage.setItem('linliao.setup', setup);
+  history.replaceState(null, '', location.pathname);
+}
 // macOS 隐藏标题栏后需给红绿灯留位；Windows 使用系统标题栏。
 export const nativeTitlebar = Boolean(window.desktop) && window.desktop.platform !== 'windows';
 
