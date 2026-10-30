@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Laptop, Plus, Check, Search, Users, ArrowRight, ShieldCheck, Wifi, ExternalLink, Bell } from 'lucide-react';
+import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell } from 'lucide-react';
 import { api, upload, formatSize } from './api';
 import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
@@ -30,7 +30,6 @@ export function InviteDialog({ onClose, notify }) {
   const [error, setError] = useState('');
   useEffect(() => { api('invite').then(setInvite).catch(error => setError(error.message)); }, []);
   return <Modal title="喊上同事，一起扯两句" subtitle="复制一份邀请，同事粘贴一次就能加入。" onClose={onClose}>
-    <div className="invite-illustration"><Laptop size={28} /><span /><Users size={28} /></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {invite ? <InvitationShare invite={invite} notify={notify} /> : !error && <p className="inline-note">正在获取邀请信息…</p>}
   </Modal>;
@@ -79,7 +78,7 @@ function DesktopSettings({ notify }) {
   }
   if (!settings) return null;
   return <section className="desktop-settings" aria-label="菜单栏与提醒">
-    <div className="notification-setting"><Bell size={18} /><span><b>新消息弹窗提醒</b><small>窗口关闭后，虾扯蛋仍会在菜单栏接收消息。</small></span><button type="button" role="switch" aria-label="新消息弹窗提醒" aria-checked={settings.notificationsEnabled} className={`privacy-toggle ${settings.notificationsEnabled ? 'enabled' : ''}`} onClick={toggle}><i className="toggle-track"><i /></i></button></div>
+    <div className="notification-setting"><Bell size={18} /><span><b>新消息弹窗提醒</b><small>窗口关闭后，虾扯蛋仍会在菜单栏接收消息。</small></span><button type="button" role="switch" aria-label="新消息弹窗提醒" aria-checked={settings.notificationsEnabled} className={`switch ${settings.notificationsEnabled ? 'enabled' : ''}`} onClick={toggle}><i className="switch-track"><i /></i></button></div>
     <p className="inline-note">首次使用请允许通知。隐私模式下，通知内容也只显示 ****。</p>
     <div className="notification-actions"><button className="secondary-button" type="button" onClick={test} disabled={!settings.notificationsEnabled || !settings.notificationSupported}>测试提醒</button><button className="text-button" type="button" onClick={() => window.desktop.notificationSettings().catch(error => notify(error.message))}>macOS 通知设置<ExternalLink size={13} /></button></div>
     {settings.notificationError && <p className="form-error" role="alert">{settings.notificationError}</p>}

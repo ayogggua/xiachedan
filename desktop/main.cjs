@@ -37,8 +37,8 @@ async function openAddress(address, check = true) {
 function createWindow() {
   window = new BrowserWindow({
     width: 1260, height: 830, minWidth: 800, minHeight: 650,
-    title: '虾扯蛋', backgroundColor: '#fcfbf9', titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 17, y: 13 }, show: false,
+    title: '虾扯蛋', backgroundColor: '#1c1c1e', titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 20, y: 20 }, show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, spellcheck: false, backgroundThrottling: false },
   });
   window.once('ready-to-show', () => menuBar.show());
