@@ -44,12 +44,15 @@ export default function App() {
   }, [selected, state?.me.id]);
   const currentMessages = messages[selected] || [];
   const lastSeq = currentMessages.at(-1)?.seq;
+  // 隐私模式下游标只推进到第一条还没看过的他人消息之前，未读角标与已读回执一致。
+  const unseen = privateMode && currentMessages.find(message => message.senderId !== state?.me.id && !message.recalledAt && Array.isArray(message.readBy) && !message.readBy.includes(state?.me.id));
+  const readUpTo = unseen ? unseen.seq - 1 : lastSeq;
   const unread = useUnread(state, messages, lastRead, connected, historyVersion);
   useEffect(() => {
     if (!messageList.current || loading) return;
     if (firstLoad.current || sticky.current) { messageList.current.scrollTop = messageList.current.scrollHeight; firstLoad.current = false; }
-    if (lastSeq && windowActive && !scrolledUp && !modal && !preview) setLastRead(previous => lastSeq > (previous[selected] || 0) ? { ...previous, [selected]: lastSeq } : previous);
-  }, [selected, lastSeq, loading, privateMode, windowActive, scrolledUp, modal, preview]);
+    if (readUpTo && windowActive && !scrolledUp && !modal && !preview) setLastRead(previous => readUpTo > (previous[selected] || 0) ? { ...previous, [selected]: readUpTo } : previous);
+  }, [selected, lastSeq, readUpTo, loading, privateMode, windowActive, scrolledUp, modal, preview]);
   // 图片加载、已读回执等让内容变高时，仍停在最新消息处。
   useEffect(() => {
     const list = messageList.current, content = messageContent.current;
