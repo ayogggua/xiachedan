@@ -476,5 +476,8 @@ const entryPath = value => { try { return realpathSync(value); } catch { return 
 if (process.argv[1] && entryPath(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const running = await startServer({ port: Number(process.env.PORT) || 4318, dataDir: process.env.CHAT_DATA_DIR || path.join(root, '.data') });
   console.log(`虾扯蛋已启动：${running.setupUrl}`);
-  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => { await running.close(); process.exit(0); });
+  const shutdown = async () => { await running.close(); process.exit(0); };
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, shutdown);
+  // 桌面端以子进程启动时，父进程退出（包括崩溃）会关闭标准输入，此时随之退出，避免遗留进程占用端口。
+  if (process.env.LINLIAO_EXIT_WITH_STDIN === '1') { process.stdin.on('end', shutdown); process.stdin.resume(); }
 }

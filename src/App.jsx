@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw } from 'lucide-react';
-import { api, formatTime, mediaUrl } from './api';
+import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, MessageContextMenu, ReadDetail } from './components';
 import Onboarding from './Onboarding';
 import Composer from './Composer';
@@ -128,7 +128,7 @@ export default function App() {
   const subtitle = room.kind === 'direct' ? peer?.online ? '在线' : '离线 · 上线后送达' : `${groupMembers.length} 位成员 · ${groupMembers.filter(user => user.online).length} 人在线`;
   const sameGroup = (previous, message) => previous && !previous.recalledAt && !message.recalledAt && previous.senderId === message.senderId &&
     new Date(previous.createdAt).toDateString() === new Date(message.createdAt).toDateString() && message.createdAt - previous.createdAt < 5 * 60000;
-  return <div className={`app ${privateMode ? 'privacy-on' : ''} ${window.desktop ? 'native' : ''} ${mobileChat ? 'show-chat' : ''}`} data-screen-label="虾扯蛋聊天空间">
+  return <div className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''}`} data-screen-label="虾扯蛋聊天空间">
     <aside className="sidebar glass" aria-label="会话列表">
       <div className="space-heading"><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></div>
       <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话" placeholder="搜索" value={search} onChange={event => setSearch(event.target.value)} />{search && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} />}</label>

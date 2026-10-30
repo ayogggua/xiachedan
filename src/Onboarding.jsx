@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight, ArrowLeft, Radio, ShieldCheck, Check, Link2 } from 'lucide-react';
-import { api, randomName } from './api';
+import { api, randomName, nativeTitlebar } from './api';
 import { Logo, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
 
@@ -20,7 +20,7 @@ export default function Onboarding({ bootstrap, onJoined, notify }) {
       setCreatedInvite(await api('invite'));
     } catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  return <div className={`onboarding ${window.desktop ? 'native' : ''}`} data-screen-label="欢迎使用虾扯蛋">
+  return <div className={`onboarding ${nativeTitlebar ? 'native' : ''}`} data-screen-label="欢迎使用虾扯蛋">
     <section className="welcome-story"><div className="welcome-brand"><Logo /><span>虾扯蛋</span></div>
       <h1>有事说事，<br />没事虾扯蛋。</h1><p className="story-description">发个想法，丢张照片，和同一个网络里的朋友扯两句。</p>
       <p className="story-footer"><Radio size={14} />通过局域网连接，无需外网</p>
@@ -38,7 +38,7 @@ export default function Onboarding({ bootstrap, onJoined, notify }) {
           <JoinSpaceForm identity={{ name, avatar }} onJoined={onJoined} allowCodeOnly={!remote && bootstrap.configured} autoFocus={remote} />
         </>}
         {remote ? <button type="button" className="text-button back-link" onClick={() => setRemote(false)}><ArrowLeft size={14} />返回</button> : window.desktop && !create && <button type="button" className="text-button back-link" onClick={() => setRemote(true)}><Link2 size={14} />加入其他空间</button>}
-        <p className="form-footnote"><ShieldCheck size={14} />消息与文件保存在创建空间的 Mac 上</p>
+        <p className="form-footnote"><ShieldCheck size={14} />消息与文件保存在创建空间的电脑上</p>
       </div>}
     </section>
   </div>;

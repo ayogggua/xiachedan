@@ -74,14 +74,14 @@ function DesktopSettings({ notify }) {
   async function test() {
     try {
       const shown = await window.desktop.testNotification();
-      notify(shown ? '已发送测试提醒；未弹出时请检查 macOS 通知设置。' : '提醒未能发送，请检查 macOS 通知设置。');
+      notify(shown ? '已发送测试提醒；未弹出时请检查系统通知设置。' : '提醒未能发送，请检查系统通知设置。');
     } catch (error) { notify(error.message); }
   }
   if (!settings) return null;
   return <section className="desktop-settings" aria-label="菜单栏与提醒">
     <div className="notification-setting"><Bell size={18} /><span><b>新消息弹窗提醒</b><small>窗口关闭后，虾扯蛋仍会在菜单栏接收消息。</small></span><button type="button" role="switch" aria-label="新消息弹窗提醒" aria-checked={settings.notificationsEnabled} className={`switch ${settings.notificationsEnabled ? 'enabled' : ''}`} onClick={toggle}><i className="switch-track"><i /></i></button></div>
     <p className="inline-note">首次使用请允许通知。隐私模式下，通知内容也只显示 ****。</p>
-    <div className="notification-actions"><button className="secondary-button" type="button" onClick={test} disabled={!settings.notificationsEnabled || !settings.notificationSupported}>测试提醒</button><button className="text-button" type="button" onClick={() => window.desktop.notificationSettings().catch(error => notify(error.message))}>macOS 通知设置<ExternalLink size={13} /></button></div>
+    <div className="notification-actions"><button className="secondary-button" type="button" onClick={test} disabled={!settings.notificationsEnabled || !settings.notificationSupported}>测试提醒</button><button className="text-button" type="button" onClick={() => window.desktop.notificationSettings().catch(error => notify(error.message))}>{window.desktop.platform === 'windows' ? '系统通知设置' : 'macOS 通知设置'}<ExternalLink size={13} /></button></div>
     {settings.notificationError && <p className="form-error" role="alert">{settings.notificationError}</p>}
   </section>;
 }
@@ -90,7 +90,7 @@ export function ConnectionDialog({ theme, onTheme, connected, me, workspace, onC
   return <Modal title="设置" subtitle="所有聊天都通过局域网连接。" onClose={onClose}>
     <section className="appearance-settings"><h3>外观</h3><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div></section>
     <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
-    <p className="inline-note">消息和附件保存在创建空间的 Mac 上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>
+    <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>
     {workspace.ownerId === me.id && <StorageSettings onCleared={onCleared} notify={notify} />}
     {window.desktop && <>{window.desktop.getState && <DesktopSettings notify={notify} />}
       <h3 className="join-space-heading">加入另一个空间</h3><JoinSpaceForm identity={me} />
@@ -150,7 +150,7 @@ function StorageSettings({ onCleared, notify }) {
   }
   return <section className="storage-settings"><h3>聊天记录与存储</h3>
     <p className="inline-note">{info ? `${info.messageCount} 条记录 · 聊天附件 ${size(info.attachmentBytes)} · 数据库 ${size(info.databaseBytes)}` : '正在统计空间占用…'}</p>
-    <p className="inline-note">清空整个空间所有会话的聊天记录及已发送的图片、视频，释放创建空间的 Mac 上的存储。成员、头像和群聊会保留。</p>
+    <p className="inline-note">清空整个空间所有会话的聊天记录及已发送的图片、视频，释放创建空间的电脑上的存储。成员、头像和群聊会保留。</p>
     <button className="secondary-button storage-clear-button" disabled={!info || busy} onClick={() => setConfirming(true)}>清空空间聊天记录</button>
     {error && <p className="form-error" role="alert">{error}</p>}
     {confirming && <Modal title="清空整个空间的聊天记录？" subtitle="所有成员的大厅、群聊和私聊记录都会删除，图片与视频文件也会删除。此操作无法恢复。" onClose={() => !busy && setConfirming(false)}>

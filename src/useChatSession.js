@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from './api';
+import { api, takePendingJoin } from './api';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
 import useMessageReads from './useMessageReads';
 
@@ -62,9 +62,17 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
   }, [applyReceipt, reportRead, meId]);
   const start = useCallback(async () => {
     setStartupError('');
-    try { const result = await api('bootstrap'); setBootstrap(result); if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); setState(sanitizeState(result, historyRef.current)); } }
-    catch { setStartupError('暂时无法连接到聊天空间，请确认创建空间的 Mac 正在运行虾扯蛋。'); }
-  }, [syncHistory]);
+    let result;
+    try { result = await api('bootstrap'); }
+    catch { return setStartupError('暂时无法连接到聊天空间，请确认创建空间的电脑正在运行虾扯蛋。'); }
+    const pendingJoin = takePendingJoin();
+    if (pendingJoin && !result.me && result.configured) {
+      try { await api('join', pendingJoin); result = await api('bootstrap'); }
+      catch (error) { notify(error.message); }
+    }
+    setBootstrap(result);
+    if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); setState(sanitizeState(result, historyRef.current)); }
+  }, [syncHistory, notify]);
   useEffect(() => { start(); }, [start]);
   const receive = useCallback(message => {
     if (message.recalledAt) syncHistory([message]);

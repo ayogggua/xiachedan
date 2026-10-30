@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "虾扯蛋",
+  "mainBinaryName": "Linliao",
+  "version": "1.3.0",
+  "identifier": "local.linliao.chat",
+  "build": { "frontendDist": "../dist" },
+  "app": {
+    "windows": [],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis"],
+    "category": "SocialNetworking",
+    "copyright": "虾扯蛋 · 有事说事，没事虾扯蛋。",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "externalBin": ["binaries/node"],
+    "resources": { "resources/app/": "app/" },
+    "macOS": { "minimumSystemVersion": "11.0" }
+  }
+}
