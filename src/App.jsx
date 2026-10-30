@@ -6,192 +6,40 @@ import Onboarding from './Onboarding';
 import Composer from './Composer';
 import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog } from './dialogs';
 import useUnread from './useUnread';
-import useMessageReads from './useMessageReads';
-
-const sanitizeMessage = (message, history) => !message || message.seq <= history.throughSeq ? null :
-  (message.recalledAt || history.recalls.has(message.id)) ? { ...message, recalledAt: message.recalledAt || history.recalls.get(message.id), text: '', attachments: [], readBy: [] } : message;
-const sanitizeState = (state, history) => ({ ...state, rooms: state.rooms.map(room => ({ ...room, lastMessage: sanitizeMessage(room.lastMessage, history) })) });
-const merge = (a, b, history) => {
-  const messages = new Map(a.map(message => [message.id, message]));
-  for (const message of b) {
-    const previous = messages.get(message.id);
-    messages.set(message.id, { ...previous, ...message, recalledAt: previous?.recalledAt || message.recalledAt,
-      ...(previous?.readBy || message.readBy ? { readBy: [...new Set([...(previous?.readBy || []), ...(message.readBy || [])])] } : {}) });
-  }
-  return [...messages.values()].map(message => sanitizeMessage(message, history)).filter(Boolean).sort((a, b) => a.seq - b.seq);
-};
-const readStorage = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
-const previewText = message => message ? message.recalledAt ? '消息已撤回' : message.text || (message.attachments.some(file => file.mime.startsWith('video/')) ? '[视频]' : '[图片]') : '还没有消息，来打个招呼吧';
+import useChatSession from './useChatSession';
+import useDesktopBridge from './useDesktopBridge';
+import { previewText, readStorage } from './history';
 
 export default function App() {
-  const [bootstrap, setBootstrap] = useState(null);
-  const [state, setState] = useState(null);
-  const [startupError, setStartupError] = useState('');
   const [selected, setSelected] = useState('lobby');
-  const [messages, setMessages] = useState({});
-  const [hasMore, setHasMore] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [privateMode, setPrivateMode] = useState(() => readStorage('linliao.privacy', false));
   const [lastRead, setLastRead] = useState(() => readStorage('linliao.read', {}));
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [recalling, setRecalling] = useState(null);
-  const [historyVersion, setHistoryVersion] = useState(0);
-  const historyRef = useRef({ throughSeq: 0, recalls: new Map() });
   const [removing, setRemoving] = useState(null);
   const [showMembers, setShowMembers] = useState(false);
   const [preview, setPreview] = useState(null);
   const [toast, setToast] = useState('');
   const [scrolledUp, setScrolledUp] = useState(false);
-  const [windowActive, setWindowActive] = useState(() => !window.desktop?.onEvent && document.visibilityState === 'visible' && document.hasFocus());
   const toastTimer = useRef();
-  const reconnect = useRef();
-  const activeRoom = useRef(selected);
-  const stateRef = useRef(state);
   const messageList = useRef();
   const sticky = useRef(true);
   const firstLoad = useRef(true);
-  const privacyRef = useRef(privateMode);
-  activeRoom.current = selected;
-  stateRef.current = state;
-  privacyRef.current = privateMode;
   const notify = useCallback(text => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(''), 3500); }, []);
-  const changePrivacy = useCallback(value => {
-    const next = typeof value === 'function' ? value(privacyRef.current) : value;
-    privacyRef.current = next;
-    setPrivateMode(next);
-    window.desktop?.settings?.({ privateMode: next }).catch(error => notify(error.message));
-  }, [notify]);
-  useEffect(() => {
-    const updateFocus = () => {
-      if (!window.desktop?.onEvent) setWindowActive(document.visibilityState === 'visible' && document.hasFocus());
-    };
-    const blur = () => setWindowActive(false);
-    window.addEventListener('focus', updateFocus);
-    window.addEventListener('blur', blur);
-    document.addEventListener('visibilitychange', updateFocus);
-    let cancelled = false;
-    const applySettings = data => {
-      if (cancelled) return;
-      privacyRef.current = data.privateMode;
-      setPrivateMode(data.privateMode);
-      setWindowActive(data.active);
-      if (data.pendingRoom) setSelected(data.pendingRoom);
-    };
-    const unsubscribe = window.desktop?.onEvent?.(data => {
-      if (data.type === 'settings') applySettings(data);
-      if (data.type === 'visibility') setWindowActive(data.active);
-      if (data.type === 'open-room') { setSelected(data.roomId); setModal(null); setSearch(''); }
-    });
-    window.desktop?.ready?.(privacyRef.current).then(applySettings).catch(error => notify(error.message));
-    return () => {
-      cancelled = true;
-      unsubscribe?.();
-      window.removeEventListener('focus', updateFocus);
-      window.removeEventListener('blur', blur);
-      document.removeEventListener('visibilitychange', updateFocus);
-    };
-  }, [notify]);
-  const syncHistory = useCallback((recalls = [], throughSeq = 0) => {
-    const history = historyRef.current;
-    const cleared = throughSeq > history.throughSeq;
-    if (cleared) { history.throughSeq = throughSeq; setHasMore({}); setScrolledUp(false); sticky.current = true; }
-    let changed = cleared;
-    for (const item of recalls) {
-      if (history.recalls.has(item.id)) continue;
-      history.recalls.set(item.id, item.recalledAt); changed = true;
-      window.desktop?.recalled?.({ id: item.id, roomId: item.roomId }).catch(() => {});
-    }
-    if (!changed) return;
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+  const { privateMode, privacyRef, changePrivacy, windowActive } = useDesktopBridge({ notify, onPendingRoom: setSelected,
+    onOpenRoom: roomId => { setSelected(roomId); setModal(null); setSearch(''); } });
+  const onHistoryChanged = useCallback(({ cleared }) => {
+    if (cleared) { setScrolledUp(false); sticky.current = true; }
     setPreview(null); setContextMenu(null); setRecalling(null);
-    setMessages(previous => Object.fromEntries(Object.entries(previous).map(([id, items]) => [id, merge(items, [], history)])));
-    setState(previous => previous ? sanitizeState(previous, history) : previous);
-    setHistoryVersion(value => value + 1);
-    if (cleared) window.desktop?.historyCleared?.().catch(() => {});
   }, []);
-  const refresh = useCallback(async () => {
-    try { const next = await api('state'); syncHistory(next.recalls, next.clearedThroughSeq); setState(sanitizeState(next, historyRef.current)); return next; }
-    catch (error) { if (error.status === 401) location.reload(); throw error; }
-  }, [syncHistory]);
-  const applyReceipt = useCallback(receipt => {
-    const ids = new Set(receipt.messageIds);
-    setMessages(previous => {
-      const roomMessages = previous[receipt.roomId];
-      if (!roomMessages) return previous;
-      return { ...previous, [receipt.roomId]: roomMessages.map(message => ids.has(message.id) ?
-        { ...message, readBy: [...new Set([...(message.readBy || []), receipt.userId])] } : message) };
-    });
-  }, []);
-  const markMessageRead = useMessageReads(state?.me.id, connected, applyReceipt);
-  const start = useCallback(async () => {
-    setStartupError('');
-    try { const result = await api('bootstrap'); setBootstrap(result); if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); setState(sanitizeState(result, historyRef.current)); } }
-    catch { setStartupError('暂时无法连接到聊天空间，请确认创建空间的 Mac 正在运行虾扯蛋。'); }
-  }, [syncHistory]);
-  useEffect(() => { start(); return () => clearTimeout(toastTimer.current); }, [start]);
-  const receive = useCallback(message => {
-    if (message.recalledAt) syncHistory([message]);
-    message = sanitizeMessage(message, historyRef.current);
-    if (!message) return;
-    setMessages(previous => ({ ...previous, [message.roomId]: merge(previous[message.roomId] || [], [message], historyRef.current) }));
-    setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.id === message.roomId && (!room.lastMessage || room.lastMessage.seq < message.seq) ? { ...room, lastMessage: message } : room) } : previous);
-    const current = stateRef.current;
-    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id) {
-      const sender = current.users.find(user => user.id === message.senderId);
-      const target = current.rooms.find(room => room.id === message.roomId);
-      const hidden = privacyRef.current;
-      const title = hidden ? '虾扯蛋 · 新消息' : `${sender?.name || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
-      window.desktop.message({ id: message.id, roomId: message.roomId, privateMode: hidden,
-        title: title.slice(0, 120), body: hidden ? '****' : previewText(message).slice(0, 240),
-      }).catch(error => notify(error.message));
-    }
-  }, [notify, syncHistory]);
+  const { bootstrap, state, startupError, start, refresh, messages, hasMore, loading, connected, historyVersion,
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, updateMe } = useChatSession({ selected, notify, privacyRef, onHistoryChanged });
   useEffect(() => {
     if (!state?.me.id) return;
-    let cancelled = false, socket, delay = 700;
-    async function synchronize() {
-      try {
-        await refresh();
-        const roomId = activeRoom.current;
-        const result = await api(`messages?roomId=${encodeURIComponent(roomId)}`);
-        if (!cancelled) {
-          setMessages(previous => ({ ...previous, [roomId]: merge(previous[roomId] || [], result.messages, historyRef.current) }));
-          setHasMore(previous => ({ ...previous, [roomId]: result.hasMore }));
-        }
-      } catch (error) { if (!cancelled) notify(error.message); }
-    }
-    function connect() {
-      if (cancelled) return;
-      socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/socket`);
-      socket.onopen = () => { if (cancelled) return socket.close(); setConnected(true); delay = 700; synchronize(); };
-      socket.onmessage = event => {
-        let data; try { data = JSON.parse(event.data); } catch { return; }
-        if (data.type === 'message') receive(data.message);
-        if (data.type === 'message-recalled') syncHistory([data.message]);
-        if (data.type === 'history-cleared') { syncHistory([], data.throughSeq); refresh().catch(error => notify(error.message)); }
-        if (data.type === 'message-reads') applyReceipt(data);
-        if (data.type === 'users') setState(previous => ({ ...previous, users: data.users, me: data.users.find(user => user.id === previous.me.id) || previous.me }));
-        if (data.type === 'rooms') refresh().catch(error => notify(error.message));
-      };
-      socket.onclose = event => { if (cancelled) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
-      socket.onerror = () => socket.close();
-    }
-    connect();
-    return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
-  }, [state?.me.id, refresh, receive, notify, applyReceipt, syncHistory]);
-  useEffect(() => {
-    if (!state?.me.id) return;
-    let cancelled = false;
-    firstLoad.current = true; sticky.current = true; setScrolledUp(false); setLoading(true);
-    api(`messages?roomId=${encodeURIComponent(selected)}`).then(result => {
-      if (cancelled) return;
-      setMessages(previous => ({ ...previous, [selected]: merge(previous[selected] || [], result.messages, historyRef.current) }));
-      setHasMore(previous => ({ ...previous, [selected]: result.hasMore }));
-    }).catch(error => { if (!cancelled) notify(error.message); }).finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [selected, state?.me.id, notify]);
+    firstLoad.current = true; sticky.current = true; setScrolledUp(false);
+  }, [selected, state?.me.id]);
   const currentMessages = messages[selected] || [];
   const lastSeq = currentMessages.at(-1)?.seq;
   const unread = useUnread(state, messages, lastRead, connected, historyVersion);
@@ -205,32 +53,21 @@ export default function App() {
     window.desktop?.activity?.({ currentRoomId: state?.me.id ? selected : null, unreadRooms: JSON.parse(unreadRooms) }).catch(error => notify(error.message));
   }, [unreadRooms, selected, state?.me.id, notify]);
   useEffect(() => { localStorage.setItem('linliao.read', JSON.stringify(lastRead)); }, [lastRead]);
-  useEffect(() => { localStorage.setItem('linliao.privacy', JSON.stringify(privateMode)); if (privateMode) setPreview(null); }, [privateMode]);
+  useEffect(() => { if (privateMode) setPreview(null); }, [privateMode]);
   useEffect(() => {
-    const onKey = event => {
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); changePrivacy(value => !value); }
-      if (event.key === 'Escape') setPreview(null);
-    };
+    const onKey = event => { if (event.key === 'Escape') setPreview(null); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [changePrivacy]);
+  }, []);
   async function loadOlder() {
-    if (loading || !currentMessages.length) return;
-    setLoading(true);
     const previousHeight = messageList.current.scrollHeight;
-    try {
-      const result = await api(`messages?roomId=${encodeURIComponent(selected)}&before=${currentMessages[0].seq}`);
-      setMessages(previous => ({ ...previous, [selected]: merge(result.messages, previous[selected] || [], historyRef.current) }));
-      setHasMore(previous => ({ ...previous, [selected]: result.hasMore }));
-      requestAnimationFrame(() => { if (messageList.current) messageList.current.scrollTop += messageList.current.scrollHeight - previousHeight; });
-    } catch (error) { notify(error.message); } finally { setLoading(false); }
+    if (await fetchOlder()) requestAnimationFrame(() => { if (messageList.current) messageList.current.scrollTop += messageList.current.scrollHeight - previousHeight; });
   }
   async function directMessage(user) {
     if (user.id === state.me.id) return setModal('profile');
     try { const result = await api('rooms', { userId: user.id }); await refresh(); setSelected(result.id); setModal(null); }
     catch (error) { notify(error.message); }
   }
-  function updateMe(me) { setState(previous => ({ ...previous, me, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   const toastElement = toast && <div className="toast" role="status"><Check size={16} />{toast}</div>;
   if (startupError) return <div className="startup-state"><Logo /><h2>稍等，连接有点慢</h2><p>{startupError}</p><button className="primary-button" onClick={start}><RefreshCw size={16} />重新连接</button>{window.desktop && <button className="secondary-button" onClick={() => window.desktop.home()}>返回本机空间</button>}</div>;
   if (!bootstrap) return <div className="startup-state"><Logo /><p>正在连接虾扯蛋…</p><LoaderCircle className="spin" size={20} /></div>;
