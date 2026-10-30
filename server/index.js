@@ -3,7 +3,7 @@ import multer from 'multer';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore, serializeMessage as baseMessage } from './store.js';
@@ -459,7 +459,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   } };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Node 以真实路径加载入口模块，经符号链接（如 macOS 的 /tmp）启动时 argv[1] 需先解析再比较。
+const entryPath = value => { try { return realpathSync(value); } catch { return path.resolve(value); } };
+if (process.argv[1] && entryPath(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const running = await startServer({ port: Number(process.env.PORT) || 4318, dataDir: process.env.CHAT_DATA_DIR || path.join(root, '.data') });
   console.log(`虾扯蛋已启动：${running.setupUrl}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => { await running.close(); process.exit(0); });
