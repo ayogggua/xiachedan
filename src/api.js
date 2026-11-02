@@ -5,15 +5,23 @@ if (setup) {
 }
 // macOS 隐藏标题栏后需给红绿灯留位；Windows 使用系统标题栏。
 export const nativeTitlebar = Boolean(window.desktop) && window.desktop.platform !== 'windows';
+const backend = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const endpoint = route => `${backend}/api/${route}`;
+export const socketUrl = () => {
+  const url = new URL('/socket', backend || location.origin);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.href;
+};
 
 export async function api(route, body, options = {}) {
-  const response = await fetch(`/api/${route}`, {
+  const response = await fetch(endpoint(route), {
+    credentials: 'include',
     signal: AbortSignal.timeout(20000),
     method: body === undefined ? 'GET' : 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Linliao': '1', 'X-Setup-Key': sessionStorage.getItem('linliao.setup') || '' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), ...options,
   });
-  const data = await response.json();
+  const data = await response.json().catch(() => ({ error: '连接暂时不可用，请稍后重试' }));
   if (!response.ok) throw Object.assign(new Error(data.error || '连接暂时不可用'), { status: response.status });
   return data;
 }
@@ -21,11 +29,12 @@ export async function api(route, body, options = {}) {
 export function upload(file, query, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/uploads?${new URLSearchParams(query)}`);
+    xhr.open('POST', endpoint(`uploads?${new URLSearchParams(query)}`));
+    xhr.withCredentials = true;
     xhr.setRequestHeader('X-Linliao', '1');
     xhr.timeout = 10 * 60 * 1000;
     xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
-    xhr.onerror = () => reject(new Error('上传中断，请检查局域网连接'));
+    xhr.onerror = () => reject(new Error('上传中断，请检查网络连接'));
     xhr.ontimeout = () => reject(new Error('上传超时，请重试'));
     xhr.onload = () => {
       try { const data = JSON.parse(xhr.responseText); xhr.status < 300 ? resolve(data) : reject(new Error(data.error)); }
@@ -37,7 +46,7 @@ export function upload(file, query, onProgress) {
   });
 }
 
-export const mediaUrl = (id, download = false) => `/api/media?id=${encodeURIComponent(id)}${download ? '&download=1' : ''}`;
+export const mediaUrl = (id, download = false) => endpoint(`media?id=${encodeURIComponent(id)}${download ? '&download=1' : ''}`);
 export const uid = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 export const randomName = () => {
   const descriptions = ['准点下班的', '正在发呆的', '有点机灵的', '爱喝拿铁的', '慢慢来的', '不熬夜的', '周五快乐的', '认真摸鱼的', '带薪散步的', '灵感满格的'];

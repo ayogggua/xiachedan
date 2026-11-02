@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from './api';
+import { api, socketUrl } from './api';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
 import useMessageReads from './useMessageReads';
 
@@ -64,12 +64,13 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     setStartupError('');
     let result;
     try { result = await api('bootstrap'); }
-    catch { return setStartupError('暂时无法连接到聊天空间，请确认创建空间的电脑正在运行虾扯蛋。'); }
+    catch { return setStartupError('暂时无法连接到聊天空间，请检查网络后重试。'); }
     // 桌面端注入脚本代为加入同事空间失败时，把原因留给页面提示。
     const joinError = sessionStorage.getItem('linliao.joinError');
     if (joinError) { sessionStorage.removeItem('linliao.joinError'); notify(joinError); }
     setBootstrap(result);
     if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); setState(sanitizeState(result, historyRef.current)); }
+    else { setState(null); setMessages({}); setHasMore({}); setConnected(false); }
   }, [syncHistory, notify]);
   useEffect(() => { start(); }, [start]);
   const receive = useCallback(message => {
@@ -105,7 +106,7 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     }
     function connect() {
       if (cancelled) return;
-      socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/socket`);
+      socket = new WebSocket(socketUrl());
       socket.onopen = () => { if (cancelled) return socket.close(); setConnected(true); delay = 700; synchronize(); };
       socket.onmessage = event => {
         let data; try { data = JSON.parse(event.data); } catch { return; }
@@ -113,7 +114,7 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
         if (data.type === 'message-recalled') syncHistory([data.message]);
         if (data.type === 'history-cleared') { syncHistory([], data.throughSeq); refresh().catch(error => notify(error.message)); }
         if (data.type === 'message-reads') applyReceipt(data);
-        if (data.type === 'users') setState(previous => ({ ...previous, users: data.users, me: data.users.find(user => user.id === previous.me.id) || previous.me }));
+        if (data.type === 'users') setState(previous => previous ? ({ ...previous, users: data.users, me: { ...previous.me, ...data.users.find(user => user.id === previous.me.id) } }) : previous);
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
       };
       socket.onclose = event => { if (cancelled) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
@@ -160,7 +161,7 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     setMessages(previous => ({ ...previous, [roomId]: merge(pages, previous[roomId] || [], historyRef.current) }));
     setHasMore(previous => ({ ...previous, [roomId]: more }));
   }, []);
-  function updateMe(me) { setState(previous => ({ ...previous, me, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
+  function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, messages, hasMore, loading, connected, historyVersion,
     syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe };
 }

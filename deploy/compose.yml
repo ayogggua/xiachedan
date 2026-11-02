@@ -1,0 +1,30 @@
+name: xiachedan
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    container_name: xiachedan-backend
+    restart: unless-stopped
+    init: true
+    env_file: /etc/xiachedan/backend.env
+    environment:
+      CHAT_RELEASE: ${RELEASE_SHA:?RELEASE_SHA is required}
+      CHAT_ADMIN_PASSWORD_FILE: /run/secrets/admin-password
+    ports:
+      - '127.0.0.1:4318:4318'
+    volumes:
+      - /var/lib/xiachedan:/data
+      - /etc/xiachedan/admin-password:/run/secrets/admin-password:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 768m
+    cpus: 2
+    pids_limit: 128
+    stop_grace_period: 25s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

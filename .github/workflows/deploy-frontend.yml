@@ -1,0 +1,54 @@
+name: Deploy frontend
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'shared/**', 'index.html', 'vite.config.js', 'package.json', 'package-lock.json', '.github/workflows/deploy-frontend.yml']
+  pull_request:
+    branches: [main]
+    paths: ['src/**', 'shared/**', 'index.html', 'vite.config.js', 'package.json', 'package-lock.json', '.github/workflows/deploy-frontend.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Build independent frontend
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: |
+          npm run build
+          node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync("dist/version.json", JSON.stringify({release: process.env.GITHUB_SHA}));'
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: production-web
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Deploy frontend
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+        env:
+          DEPLOY_HOST: ${{ vars.FRONTEND_DEPLOY_HOST || vars.DEPLOY_HOST || '117.50.187.95' }}
+          DEPLOY_USER: ${{ vars.FRONTEND_DEPLOY_USER || vars.DEPLOY_USER || 'ubuntu' }}
+          DEPLOY_SSH_KEY: ${{ secrets.FRONTEND_DEPLOY_SSH_KEY || secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.FRONTEND_DEPLOY_KNOWN_HOSTS || secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_SSH_KEY" && test -n "$DEPLOY_KNOWN_HOSTS"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          trap 'rm -f ~/.ssh/deploy_key' EXIT
+          tar -czf frontend.tar.gz -C dist .
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "$DEPLOY_USER@$DEPLOY_HOST" "frontend $GITHUB_SHA" < frontend.tar.gz

@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
 fn main() {
   println!("cargo:rerun-if-env-changed=LINLIAO_UPDATER_PUBKEY");
   println!("cargo:rerun-if-env-changed=LINLIAO_UPDATE_REPO");
+  println!("cargo:rerun-if-env-changed=LINLIAO_CLOUD_URL");
   tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)))
     .expect("failed to run tauri-build");
 }
