@@ -31,7 +31,7 @@ export function PasswordForm({ required = false, onChanged }) {
   </form>;
 }
 
-export default function Account({ bootstrap, onChanged }) {
+export default function Account({ bootstrap, onChanged, onLogout, loggingOut }) {
   const [register, setRegister] = useState(false);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -53,11 +53,6 @@ export default function Account({ bootstrap, onChanged }) {
     try { await api(`auth/${register ? 'register' : 'login'}`, { identifier, password, ...(register ? { name, avatar } : {}) }); setPassword(''); setConfirm(''); await onChanged(); }
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  async function logout() {
-    setBusy(true); setError('');
-    try { await api('auth/logout', {}); await onChanged(); }
-    catch (error) { setError(error.message); } finally { setBusy(false); }
-  }
   return <div className={`onboarding ${nativeTitlebar ? 'native' : ''}`} data-screen-label="登录虾扯蛋">
     {nativeTitlebar && <div className="drag-strip" data-drag-region aria-hidden="true" />}
     <section className="welcome-story"><div className="welcome-brand"><Logo /><span>虾扯蛋</span></div>
@@ -73,7 +68,7 @@ export default function Account({ bootstrap, onChanged }) {
           <button className="secondary-button full" disabled={busy} onClick={onChanged}><RefreshCw size={15} />刷新审核状态</button>
         </>}
         {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="text-button back-link" disabled={busy} onClick={logout}><LogOut size={14} />退出登录</button>
+        <button className="text-button back-link" disabled={busy || loggingOut} onClick={onLogout}><LogOut size={14} />{loggingOut ? '正在退出…' : '退出登录'}</button>
       </> : <>
         <h2>{register ? '加入聊天空间' : '欢迎回来'}</h2><p className="form-description">{register ? '创建账号，审核通过后就能和大家见面。' : '登录账号，接着聊。'}</p>
         <div className="segmented-control" role="group" aria-label="登录或注册">{[false, true].map(value => <button key={String(value)} type="button" className={register === value ? 'active' : ''} aria-pressed={register === value} disabled={busy} onClick={() => { setRegister(value); setPassword(''); setConfirm(''); setError(''); }}>{value ? '注册' : '登录'}</button>)}</div>

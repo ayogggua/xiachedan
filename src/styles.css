@@ -171,6 +171,9 @@ textarea { resize: none; line-height: 20px; }
 .conversation-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .conversation-title, .conversation-preview { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .conversation-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conversation-pin { flex: none; margin-left: auto; color: var(--text-2); }
+.empty-conversation { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--text-2); }
+.empty-conversation h2 { font-size: 16px; font-weight: 500; }
 .conversation-title time { flex: none; font-size: 10px; line-height: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .conversation-preview { font-size: 11px; line-height: 14px; color: var(--text-2); }
 .private-preview { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -184,6 +187,8 @@ textarea { resize: none; line-height: 20px; }
 .me-profile b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .me-profile small { font-size: 11px; line-height: 14px; color: var(--text-2); }
 .me-profile small.warning { color: var(--warning); }
+.sidebar-logout { display: flex; align-items: center; justify-content: center; flex: none; gap: 6px; margin: 0 6px 6px; padding: 7px 10px; border-radius: 8px; font-size: 12px; color: var(--text-2); }
+.sidebar-logout:hover:not(:disabled) { background: var(--fill-1); color: var(--text-1); }
 @media (hover: hover) and (pointer: fine) {
   .conversation:hover:not(.active) { background: var(--fill-1); }
   .me-profile:hover b { color: #fff; }

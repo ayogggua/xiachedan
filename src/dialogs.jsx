@@ -115,19 +115,13 @@ function UpdateSettings({ update, onUpdate, notify }) {
   </section>;
 }
 
-export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onCleared, onClose, notify }) {
+export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onLogout, loggingOut, onCleared, onClose, notify }) {
   const cloud = workspace.mode === 'cloud';
-  const [loggingOut, setLoggingOut] = useState(false);
-  async function logout() {
-    setLoggingOut(true);
-    try { await api('auth/logout', {}); location.reload(); }
-    catch (error) { notify(error.message); setLoggingOut(false); }
-  }
   return <Modal title="设置" subtitle={cloud ? undefined : '所有聊天都通过局域网连接。'} onClose={onClose}>
     <section className="appearance-settings"><h3>外观</h3><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div></section>
     <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
     {!cloud && <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>}
-    {cloud && <section className="account-settings"><h3>账号</h3><p>{me.phone || me.email}</p><div className="account-actions"><button className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button><button className="secondary-button" disabled={loggingOut} onClick={logout}><LogOut size={15} />{loggingOut ? '正在退出…' : '退出登录'}</button></div></section>}
+    <section className="account-settings"><h3>账号</h3><p>{cloud ? me.phone || me.email : me.name}</p><div className="account-actions">{cloud && <button className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button>}<button className="secondary-button" disabled={loggingOut} onClick={onLogout}><LogOut size={15} />{loggingOut ? '正在退出…' : '退出登录'}</button></div></section>
     {workspace.ownerId === me.id && <StorageSettings cloud={cloud} onCleared={onCleared} notify={notify} />}
     {window.desktop?.updates && <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />}
     {window.desktop && <>{window.desktop.getState && <DesktopSettings notify={notify} />}

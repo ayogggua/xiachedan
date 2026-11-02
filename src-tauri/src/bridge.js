@@ -36,7 +36,35 @@
     invoke(event.detail === 2 ? 'desktop_zoom' : 'desktop_drag').catch(() => {});
   }, true);
   const listeners = new Set();
+  let pendingMenu = null;
+  const contextMenu = (value, onAction) => {
+    const requestId = crypto.randomUUID();
+    pendingMenu = { requestId, onAction };
+    return invoke('desktop_context_menu', { requestId, value }).catch(error => {
+      if (pendingMenu?.requestId === requestId) pendingMenu = null;
+      throw error;
+    });
+  };
+  const menuError = error => window.__linliaoDesktopEmit({ type: 'context-menu-error', message: error.message });
+  listeners.add(event => {
+    if (event.type !== 'context-menu-action' || event.requestId !== pendingMenu?.requestId) return;
+    const menu = pendingMenu;
+    pendingMenu = null;
+    Promise.resolve().then(() => menu.onAction?.(event.action)).catch(menuError);
+  });
   Object.defineProperty(window, '__linliaoDesktopEmit', { value: event => { for (const listener of listeners) { try { listener(event); } catch {} } } });
+  // 每个桌面页面都禁止 WebView 的 Reload / Share / Services 等网页菜单。
+  // 捕获阶段只阻止默认菜单；会话和消息仍由界面自己的右键处理器接管。
+  addEventListener('contextmenu', event => event.preventDefault(), true);
+  addEventListener('contextmenu', event => {
+    const input = event.target.closest?.('input, textarea, [contenteditable="true"]');
+    if (input && !input.disabled && !input.readOnly) {
+      input.focus({ preventScroll: true });
+      contextMenu({ kind: 'edit' }).catch(menuError);
+    } else if (window.getSelection()?.toString() || (input && input.selectionEnd > input.selectionStart)) {
+      contextMenu({ kind: 'selection' }).catch(menuError);
+    }
+  });
   window.desktop = Object.freeze({
     platform: '/*PLATFORM*/',
     material: '/*MATERIAL*/' || null,
@@ -50,6 +78,7 @@
     },
     home: () => invoke('desktop_home'),
     copy: text => invoke('desktop_copy', { text }),
+    contextMenu,
     ready: privateMode => invoke('desktop_ready', { privateMode: privateMode === true }),
     getState: () => invoke('desktop_state'),
     settings: value => invoke('desktop_settings', { value }),

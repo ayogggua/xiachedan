@@ -95,7 +95,7 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   const readLabel = direct ? readCount ? '已读' : '未读' : readCount ? `${readCount}/${recipients.length} 人已读` : '未读';
   if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id}>{mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}</article>;
   const time = <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>;
-  return <article onContextMenu={mine ? event => onContextMenu?.(event, message) : undefined} className={`message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''}`} data-message-id={message.id}>
+  return <article onContextMenu={event => onContextMenu?.(event, message)} className={`message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''}`} data-message-id={message.id}>
     {!mine && (continued ? <span className="avatar-spacer" /> : <Avatar user={user} size={28} />)}
     <div className="message-column">{!mine && !continued && <div className="message-meta"><span>{user?.name || '成员'}</span>{time}</div>}
       <div ref={bubble} className={`message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''}`} tabIndex={privateMode ? 0 : undefined}
@@ -108,21 +108,31 @@ export function Message({ message, user, mine, continued = false, privateMode, o
       {mine && <div className="message-status">{time}{recipients.length > 0 && Array.isArray(message.readBy) && (direct ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
         : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>)}</div>}
     </div>
+    {mine && <Avatar user={user} size={28} />}
   </article>;
 }
 
-export function MessageContextMenu({ menu, onClose, onRecall }) {
+export function ContextMenu({ menu, onClose }) {
   const ref = useRef();
   useEffect(() => {
     const dismiss = event => { if (!ref.current?.contains(event.target)) onClose(); };
-    const key = event => { if (event.key === 'Escape') onClose(); };
+    const key = event => {
+      if (event.key === 'Escape') onClose();
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const items = [...ref.current.querySelectorAll('[role="menuitem"]')];
+      const index = items.indexOf(document.activeElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      items[next]?.focus();
+    };
     document.addEventListener('pointerdown', dismiss);
     document.addEventListener('keydown', key);
     window.addEventListener('blur', onClose);
     window.addEventListener('resize', onClose);
-    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); };
+    document.addEventListener('scroll', onClose, true);
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); document.removeEventListener('scroll', onClose, true); };
   }, [onClose]);
-  return <div ref={ref} role="menu" aria-label="消息操作" className="message-context-menu" style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 152)), top: Math.max(8, Math.min(menu.y, innerHeight - 62)) }}><button autoFocus role="menuitem" onClick={onRecall}>撤回消息</button></div>;
+  return <div ref={ref} role="menu" aria-label={menu.label} className="message-context-menu" onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }} style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 152)), top: Math.max(8, Math.min(menu.y, innerHeight - menu.items.length * 36 - 16)) }}>{menu.items.map((item, index) => <button key={item.id} autoFocus={index === 0} role="menuitem" onClick={() => { onClose(); item.action(); }}>{item.label}</button>)}</div>;
 }
 
 export function ReadDetail({ anchor, message, members, onClose }) {
