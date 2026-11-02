@@ -1,6 +1,6 @@
 {
   "name": "linliao",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "license": "MIT",
   "description": "虾扯蛋 · 有事说事，没事虾扯蛋。",
@@ -12,6 +12,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "start": "node server/index.js",
+    "test": "node --test",
     "desktop": "npm run build && node scripts/prepare-desktop.mjs && tauri dev --no-watch",
     "package:mac": "npm run build && node scripts/prepare-desktop.mjs && CI=true tauri build --bundles app,dmg",
     "package:win": "npm run build && node scripts/prepare-desktop.mjs && tauri build --bundles nsis",

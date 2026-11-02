@@ -2,6 +2,8 @@
 mod macos_notification;
 mod probe;
 mod server;
+mod context_menu;
+use context_menu::desktop_context_menu;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -79,6 +81,7 @@ struct Desktop {
   next_notification: AtomicI32,
   tray: Mutex<Option<TrayIcon>>,
   update: Mutex<Option<Update>>,
+  context_menu: Mutex<Option<context_menu::NativeContextMenu>>,
 }
 
 type Shared<'a> = State<'a, Arc<Desktop>>;
@@ -619,7 +622,7 @@ pub fn run() {
     .plugin(tauri_plugin_clipboard_manager::init())
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
-      desktop_connect, desktop_home, desktop_copy, desktop_ready, desktop_state, desktop_settings, desktop_activity,
+      desktop_connect, desktop_home, desktop_copy, desktop_context_menu, desktop_ready, desktop_state, desktop_settings, desktop_activity,
       desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install, desktop_identity
     ])
     .setup(|app| {
@@ -657,6 +660,7 @@ pub fn run() {
         next_notification: AtomicI32::new(1),
         tray: Mutex::new(None),
         update: Mutex::new(None),
+        context_menu: Mutex::new(None),
       });
       app.manage(desktop.clone());
       app.set_menu(app_menu(&handle)?)?;
@@ -670,7 +674,7 @@ pub fn run() {
           "tray-notifications" => { let next = desktop.session.lock().unwrap().config.notifications_enabled == Some(false); let _ = update_settings(app, &desktop, &json!({ "notificationsEnabled": next })); }
           "tray-test" => { let _ = test_notification(app, &desktop); }
           "tray-settings" => { let _ = open_notification_settings(app); }
-          _ => {}
+          id => context_menu::handle_action(app, &desktop, id),
         }
       });
       let tray = TrayIconBuilder::with_id("main")

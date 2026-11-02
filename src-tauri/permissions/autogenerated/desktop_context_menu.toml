@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-context-menu"
+description = "Enables the desktop_context_menu command without any pre-configured scope."
+commands.allow = ["desktop_context_menu"]
+
+[[permission]]
+identifier = "deny-desktop-context-menu"
+description = "Denies the desktop_context_menu command without any pre-configured scope."
+commands.deny = ["desktop_context_menu"]

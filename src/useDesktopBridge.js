@@ -35,6 +35,7 @@ export default function useDesktopBridge({ notify, onPendingRoom, onOpenRoom }) 
       if (data.type === 'settings') applySettings(data);
       if (data.type === 'visibility') setWindowActive(data.active);
       if (data.type === 'open-room') handlers.current.onOpenRoom(data.roomId);
+      if (data.type === 'context-menu-error') notify(data.message);
     });
     window.desktop?.ready?.(privacyRef.current).then(applySettings).catch(error => notify(error.message));
     return () => {

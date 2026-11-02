@@ -12,6 +12,8 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
   const [hasMore, setHasMore] = useState({});
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const logoutPending = useRef(false);
   const [historyVersion, setHistoryVersion] = useState(0);
   const historyRef = useRef({ throughSeq: 0, recalls: new Map() });
   const reconnect = useRef();
@@ -41,8 +43,8 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     if (cleared) window.desktop?.historyCleared?.().catch(() => {});
   }, []);
   const refresh = useCallback(async () => {
-    try { const next = await api('state'); syncHistory(next.recalls, next.clearedThroughSeq); setState(sanitizeState(next, historyRef.current)); return next; }
-    catch (error) { if (error.status === 401) location.reload(); throw error; }
+    try { const next = await api('state'); if (!logoutPending.current) { syncHistory(next.recalls, next.clearedThroughSeq); setState(sanitizeState(next, historyRef.current)); } return next; }
+    catch (error) { if (error.status === 401 && !logoutPending.current) location.reload(); throw error; }
   }, [syncHistory]);
   const applyReceipt = useCallback(receipt => {
     const ids = new Set(receipt.messageIds);
@@ -57,6 +59,7 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
   const meId = state?.me.id;
   // 先在本地记为已读，未读角标立即更新；回执在后台上报。
   const markMessageRead = useCallback((roomId, messageId) => {
+    if (logoutPending.current) return;
     applyReceipt({ roomId, userId: meId, messageIds: [messageId] });
     reportRead(roomId, messageId);
   }, [applyReceipt, reportRead, meId]);
@@ -65,6 +68,7 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     let result;
     try { result = await api('bootstrap'); }
     catch { return setStartupError('暂时无法连接到聊天空间，请检查网络后重试。'); }
+    if (logoutPending.current) return;
     // 桌面端注入脚本代为加入同事空间失败时，把原因留给页面提示。
     const joinError = sessionStorage.getItem('linliao.joinError');
     if (joinError) { sessionStorage.removeItem('linliao.joinError'); notify(joinError); }
@@ -73,7 +77,27 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     else { setState(null); setMessages({}); setHasMore({}); setConnected(false); }
   }, [syncHistory, notify]);
   useEffect(() => { start(); }, [start]);
+  const logout = useCallback(async () => {
+    if (logoutPending.current) return;
+    logoutPending.current = true;
+    setLoggingOut(true);
+    try {
+      await api(bootstrap?.mode === 'cloud' ? 'auth/logout' : 'logout', {});
+    } catch (error) {
+      logoutPending.current = false;
+      setLoggingOut(false);
+      notify(error.status ? error.message : '退出失败，请检查网络后重试');
+      return;
+    }
+    setState(null); setMessages({}); setHasMore({}); setConnected(false);
+    setBootstrap(previous => ({ ...previous, me: null, account: null }));
+    // 完整重载清理草稿、弹窗和消息缓存；服务端已撤销当前登录及局域网设备绑定。
+    // 同时清空桌面未读角标，避免登录页继续显示上一账号的新消息数量。
+    try { await window.desktop?.activity?.({ currentRoomId: null, unreadRooms: [] }); } catch {}
+    location.reload();
+  }, [bootstrap?.mode, notify]);
   const receive = useCallback(message => {
+    if (logoutPending.current) return;
     if (message.recalledAt) syncHistory([message]);
     message = sanitizeMessage(message, historyRef.current);
     if (!message) return;
@@ -91,12 +115,13 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     }
   }, [notify, syncHistory, privacyRef]);
   useEffect(() => {
-    if (!state?.me.id) return;
+    if (!state?.me.id || loggingOut) { setConnected(false); return; }
     let cancelled = false, socket, delay = 700;
     async function synchronize() {
       try {
         await refresh();
         const roomId = activeRoom.current;
+        if (!roomId) return;
         const result = await api(`messages?roomId=${encodeURIComponent(roomId)}`);
         if (!cancelled) {
           setMessages(previous => ({ ...previous, [roomId]: merge(previous[roomId] || [], result.messages, historyRef.current) }));
@@ -105,10 +130,11 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
       } catch (error) { if (!cancelled) notify(error.message); }
     }
     function connect() {
-      if (cancelled) return;
+      if (cancelled || logoutPending.current) return;
       socket = new WebSocket(socketUrl());
-      socket.onopen = () => { if (cancelled) return socket.close(); setConnected(true); delay = 700; synchronize(); };
+      socket.onopen = () => { if (cancelled || logoutPending.current) return socket.close(); setConnected(true); delay = 700; synchronize(); };
       socket.onmessage = event => {
+        if (cancelled || logoutPending.current) return;
         let data; try { data = JSON.parse(event.data); } catch { return; }
         if (data.type === 'message') receive(data.message);
         if (data.type === 'message-recalled') syncHistory([data.message]);
@@ -117,14 +143,14 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
         if (data.type === 'users') setState(previous => previous ? ({ ...previous, users: data.users, me: { ...previous.me, ...data.users.find(user => user.id === previous.me.id) } }) : previous);
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
       };
-      socket.onclose = event => { if (cancelled) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
+      socket.onclose = event => { if (cancelled || logoutPending.current) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
       socket.onerror = () => socket.close();
     }
     connect();
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
-  }, [state?.me.id, refresh, receive, notify, applyReceipt, syncHistory]);
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, syncHistory]);
   useEffect(() => {
-    if (!state?.me.id) return;
+    if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
     api(`messages?roomId=${encodeURIComponent(selected)}`).then(result => {
@@ -133,7 +159,7 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
       setHasMore(previous => ({ ...previous, [selected]: result.hasMore }));
     }).catch(error => { if (!cancelled) notify(error.message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [selected, state?.me.id, notify]);
+  }, [selected, state?.me.id, loggingOut, notify]);
   async function loadOlder() {
     const current = messages[selected] || [];
     if (loading || !current.length) return false;
@@ -162,6 +188,6 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     setHasMore(previous => ({ ...previous, [roomId]: more }));
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
-  return { bootstrap, state, startupError, start, refresh, messages, hasMore, loading, connected, historyVersion,
+  return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
     syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe };
 }
