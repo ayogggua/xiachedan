@@ -27,6 +27,7 @@
     "allow-desktop-drag",
     "allow-desktop-zoom",
     "allow-desktop-update-check",
-    "allow-desktop-update-install"
+    "allow-desktop-update-install",
+    "allow-desktop-identity"
   ]
 }

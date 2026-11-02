@@ -16,6 +16,10 @@ export function openStore(directory) {
     -- kind: public 公共大厅；group 多人群聊；direct 两人私聊。不使用外键或枚举。
     CREATE TABLE IF NOT EXISTS space_admin (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS removed_users (user_id TEXT PRIMARY KEY, removed_at INTEGER NOT NULL);
+    -- 桌面端按电脑识别身份：每台电脑为每个空间保存一份随机凭证，这里只存哈希；space_identity 是不随 IP 变化的空间编号。
+    CREATE TABLE IF NOT EXISTS user_devices (device_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS space_identity (id INTEGER PRIMARY KEY, space_id TEXT NOT NULL);
+    INSERT OR IGNORE INTO space_identity VALUES (1, lower(hex(randomblob(16))));
     INSERT OR IGNORE INTO space_admin (id,user_id) SELECT 1,id FROM users ORDER BY rowid LIMIT 1;
     CREATE TABLE IF NOT EXISTS rooms (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
