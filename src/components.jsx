@@ -132,7 +132,7 @@ function ReactionPalette({ options, chosen, onPick, onClose }) {
   </div>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick }) {
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -171,6 +171,18 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   const readLabel = direct ? readCount ? '已读' : '未读' : readCount ? `${readCount}/${recipients.length} 人已读` : '未读';
   if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id}>{mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}</article>;
   const time = <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>;
+  // 多选时整行可点：点哪里都只切换选中，不触发菜单。
+  if (selecting) return <article className={`message-row selecting ${mine ? 'mine' : ''} ${continued ? 'continued' : ''} ${selected ? 'selected' : ''}`} data-message-id={message.id}
+    onClick={() => onToggleSelect?.(message)}>
+    <label className="select-check" onClick={event => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => onToggleSelect?.(message)} aria-label={`选择${user?.name || ''}的消息`} /><span>{selected && <Check size={12} />}</span></label>
+    {!mine && (continued ? <span className="avatar-spacer" /> : <Avatar user={user} size={28} />)}
+    <div className="message-column">{!mine && !continued && <div className="message-meta"><span>{user?.name || '成员'}</span>{time}</div>}
+      <div className={`message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''}`}>{hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>
+        {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
+        {message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} />}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={() => {}} />)}</>}</div>
+    </div>
+    {mine && <Avatar user={user} size={28} />}
+  </article>;
   return <article onContextMenu={event => { if (consumeLongPress(press)) event.preventDefault(); else onContextMenu?.(event, message); }}
     {...longPressHandlers(press, (clientX, clientY) => onContextMenu?.(pressEvent(clientX, clientY), message))}
     className={`message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''}`} data-message-id={message.id}>
@@ -181,7 +193,7 @@ export function Message({ message, user, mine, continued = false, privateMode, o
         onPointerEnter={reveal} onPointerMove={reveal} onPointerLeave={() => setRevealed(false)} onBlur={() => setRevealed(false)}
         onKeyDown={event => { if (event.code === 'Space' && privateMode) { event.preventDefault(); setRevealed(true); } }} onKeyUp={event => { if (event.code === 'Space') setRevealed(false); }}
         aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>
-        {hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>{message.replyTo && <Quote reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={() => onOpenQuote?.(message.replyTo)} />}{message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} />}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={onPreview} />)}</>}
+        {hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>{message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}{message.replyTo && <Quote reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={() => onOpenQuote?.(message.replyTo)} />}{message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} />}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={onPreview} />)}</>}
       </div>
       {onReply && <div className={`message-actions ${picking ? 'open' : ''}`}>
         {reactionOptions.length > 0 && <IconButton icon={SmilePlus} label="回应" size={14} aria-expanded={picking} onClick={() => onPick?.(picking ? null : message.id)} />}

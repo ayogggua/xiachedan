@@ -59,6 +59,28 @@ export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
   </form></Modal>;
 }
 
+// 转发：选一个目标会话，逐条发送。
+export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
+  const [search, setSearch] = useState('');
+  const [target, setTarget] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()));
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await onForward(target); onClose(); } catch (failure) { setError(failure.message); } finally { setBusy(false); }
+  }
+  return <Modal title={`转发 ${count} 条消息`} subtitle="选择一个会话，消息会逐条发送过去。" onClose={onClose}><form onSubmit={submit}>
+    <div className="search-input"><Search size={16} /><input autoFocus placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
+    <div className="member-picker" role="radiogroup" aria-label="转发到">{filtered.map(room => <label className="member-option" key={room.id}>
+      <input type="radio" name="forward-target" checked={target?.id === room.id} onChange={() => setTarget(room)} />{icon(room)}<span>{room.name}</span>
+      <span className={`selection-check ${target?.id === room.id ? 'checked' : ''}`}>{target?.id === room.id && <Check size={13} />}</span></label>)}
+      {!filtered.length && <div className="compact-empty"><Search size={25} /><p>没有找到这个会话</p></div>}</div>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !target}>{busy ? '正在转发…' : target ? `转发到「${target.name}」` : '转发'}<ArrowRight size={16} /></button></div>
+  </form></Modal>;
+}
+
 function DesktopSettings({ notify }) {
   const [settings, setSettings] = useState(null);
   useEffect(() => {

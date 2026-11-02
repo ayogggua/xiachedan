@@ -3,7 +3,7 @@ import multer from 'multer';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync, linkSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore, serializeMessage as baseMessage } from './store.js';
@@ -87,7 +87,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     }
     return [...groups].map(([emoji, users]) => ({ emoji, users }));
   };
-  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id) } : null;
+  const forwardOf = id => {
+    const row = stmt('SELECT original_sender, original_created_at FROM message_forwards WHERE message_id=?').get(id);
+    return row ? { senderId: row.original_sender, createdAt: row.original_created_at } : null;
+  };
+  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -310,6 +314,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('DELETE FROM message_replies WHERE message_id=?').run(id);
         stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
         stmt('DELETE FROM message_reactions WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_forwards WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
@@ -329,7 +334,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose='message' AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -381,6 +386,49 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const receipt = { roomId: room.id, userId: req.user.id, messageIds: received.map(row => row.id) };
     if (changed.length) broadcast({ type: 'message-reads', ...receipt, messageIds: changed }, room.id);
     res.json(receipt);
+  });
+  // 逐条转发到另一个会话：按原顺序生成新消息；附件为目标会话另建记录（同一文件用硬链接，失败时复制），
+  // 这样目标会话的成员不需要访问原会话就能下载，任一边撤回也只删除自己那一份。
+  app.post('/api/forward', (req, res) => {
+    rateLimit(req, 'forward', 20);
+    const target = requireRoom(req.body?.roomId, req.user.id);
+    const ids = req.body?.messageIds;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string' || !id || id.length > 100)) throw fail('请选择要转发的消息');
+    const unique = [...new Set(ids)];
+    const rows = stmt(`SELECT * FROM messages WHERE id IN (${unique.map(() => '?').join(',')}) ORDER BY seq`).all(...unique);
+    if (rows.length !== unique.length || rows.some(row => row.seq <= clearedThroughSeq() || recalledAt(row.id))) throw fail('有消息已撤回或已被清空', 404);
+    for (const row of rows) requireRoom(row.room_id, req.user.id);
+    const files = rows.flatMap(row => JSON.parse(row.attachments));
+    if (cloud && files.length) {
+      const used = stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads').get().n;
+      if (used + files.reduce((sum, file) => sum + file.size, 0) > storageBudget) throw fail('空间存储不足，请联系管理员清理附件', 507);
+    }
+    const created = [], copied = [];
+    db.exec('BEGIN');
+    try {
+      for (const row of rows) {
+        const attachments = JSON.parse(row.attachments).map(file => {
+          const id = randomUUID();
+          try { linkSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); } catch { copyFileSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); }
+          copied.push(id);
+          stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.user.id, target.id, file.name, file.mime, file.size, 'message', 1, Date.now());
+          return { ...file, id };
+        });
+        const id = randomUUID();
+        stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, target.id, req.user.id, row.text, JSON.stringify(attachments), `forward:${randomUUID()}`, Date.now());
+        const original = stmt('SELECT original_sender, original_created_at FROM message_forwards WHERE message_id=?').get(row.id);
+        stmt('INSERT INTO message_forwards VALUES (?,?,?)').run(id, original?.original_sender || row.sender_id, original?.original_created_at || row.created_at);
+        created.push(id);
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      for (const id of copied) { try { unlinkSync(path.join(uploadDir, id)); } catch {} }
+      throw error;
+    }
+    const messages = created.map(id => ({ ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] }));
+    for (const message of messages) broadcast({ type: 'message', message }, target.id);
+    res.status(201).json({ messages });
   });
   // 再点一次同一个表情即取消。
   app.post('/api/reactions', (req, res) => {

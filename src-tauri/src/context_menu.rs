@@ -27,6 +27,8 @@ pub struct ContextMenuOptions {
   #[serde(default)]
   can_react: bool,
   #[serde(default)]
+  can_forward: bool,
+  #[serde(default)]
   can_copy: bool,
   #[serde(default)]
   can_recall: bool,
@@ -56,7 +58,7 @@ pub async fn desktop_context_menu(app: AppHandle, webview: Webview, desktop: Sha
       "message" => {
         // 分组之间用分隔线隔开，空的分组不占位置。
         let groups: [&[(bool, &str, &str)]; 3] = [
-          &[(value.can_reply, "reply", "回复"), (value.can_react, "react", "回应")],
+          &[(value.can_reply, "reply", "回复"), (value.can_react, "react", "回应"), (value.can_forward, "forward", "转发"), (value.can_forward, "select", "多选")],
           &[(value.can_copy, "copy", "复制")],
           &[(value.can_recall, "recall", "撤回消息")],
         ];
