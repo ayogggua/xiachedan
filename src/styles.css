@@ -226,6 +226,9 @@ textarea { resize: none; line-height: 20px; }
 
 .message-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 60px max(24px, calc((100% - 860px) / 2)) 104px; scroll-padding-bottom: 104px; }
 .chat-column:has(.announcement-banner) .message-scroll { padding-top: 112px; }
+/* 跳转定位时让出顶部浮动的工具栏和群公告 */
+.message-list [data-seq] { scroll-margin-top: 64px; }
+.chat-column:has(.announcement-banner) .message-list [data-seq] { scroll-margin-top: 116px; }
 .channel-welcome { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px 16px 24px; text-align: center; }
 .channel-welcome.has-messages { padding-bottom: 8px; }
 .welcome-icon { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--fill-2); color: var(--text-2); margin-bottom: 4px; }
@@ -339,6 +342,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 .video-fallback { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 24px; text-align: center; color: var(--text-2); }
 .jump-to-latest { position: absolute; z-index: 3; bottom: 84px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; font-size: 12px; }
 .jump-to-latest:active:not(:disabled) { transform: translateX(-50%) scale(.97); }
+.unread-anchor { position: absolute; z-index: 3; top: 60px; right: 24px; display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 12px; color: var(--mention); font-weight: 600; }
+.chat-column:has(.announcement-banner) .unread-anchor { top: 116px; }
 
 /* 输入胶囊：浮在消息流之上 */
 .mention-picker { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; padding: 4px; border-radius: 14px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-2); }

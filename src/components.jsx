@@ -169,10 +169,10 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   }, [message.recalledAt, mine, readingEnabled, hidden, visible, alreadyRead, message.id, message.roomId, message.readBy, onRead, privateMode]);
   const readCount = recipients.filter(id => message.readBy?.includes(id)).length;
   const readLabel = direct ? readCount ? '已读' : '未读' : readCount ? `${readCount}/${recipients.length} 人已读` : '未读';
-  if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id}>{mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}</article>;
+  if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id} data-seq={message.seq}>{mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}</article>;
   const time = <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>;
   // 多选时整行可点：点哪里都只切换选中，不触发菜单。
-  if (selecting) return <article className={`message-row selecting ${mine ? 'mine' : ''} ${continued ? 'continued' : ''} ${selected ? 'selected' : ''}`} data-message-id={message.id}
+  if (selecting) return <article className={`message-row selecting ${mine ? 'mine' : ''} ${continued ? 'continued' : ''} ${selected ? 'selected' : ''}`} data-message-id={message.id} data-seq={message.seq}
     onClick={() => onToggleSelect?.(message)}>
     <label className="select-check" onClick={event => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => onToggleSelect?.(message)} aria-label={`选择${user?.name || ''}的消息`} /><span>{selected && <Check size={12} />}</span></label>
     {!mine && (continued ? <span className="avatar-spacer" /> : <Avatar user={user} size={28} />)}
@@ -185,7 +185,7 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   </article>;
   return <article onContextMenu={event => { if (consumeLongPress(press)) event.preventDefault(); else onContextMenu?.(event, message); }}
     {...longPressHandlers(press, (clientX, clientY) => onContextMenu?.(pressEvent(clientX, clientY), message))}
-    className={`message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''}`} data-message-id={message.id}>
+    className={`message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''}`} data-message-id={message.id} data-seq={message.seq}>
     {!mine && (continued ? <span className="avatar-spacer" /> : <Avatar user={user} size={28} />)}
     <div className="message-column">{!mine && !continued && <div className="message-meta"><span>{user?.name || '成员'}</span>{time}</div>}
       <div className="bubble-line"><div ref={bubble} className={`message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''}`} tabIndex={privateMode ? 0 : undefined}

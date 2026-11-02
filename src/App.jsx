@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown } from 'lucide-react';
 import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress, pressEvent } from './components';
 import Onboarding from './Onboarding';
@@ -34,6 +34,8 @@ export default function App() {
   const [preview, setPreview] = useState(null);
   const [toast, setToast] = useState('');
   const [scrolledUp, setScrolledUp] = useState(false);
+  const [awaySeq, setAwaySeq] = useState(null);
+  const [unreadAnchor, setUnreadAnchor] = useState(null);
   const [mobileChat, setMobileChat] = useState(false);
   const [theme, setTheme] = useTheme();
   const [update, setUpdate] = useState(null);
@@ -75,6 +77,23 @@ export default function App() {
   const unseen = privateMode && currentMessages.find(message => message.senderId !== state?.me.id && !message.recalledAt && Array.isArray(message.readBy) && !message.readBy.includes(state?.me.id));
   const readUpTo = unseen ? unseen.seq - 1 : lastSeq;
   const unread = useUnread(state, messages, lastRead, connected, historyVersion);
+  // 往上翻看时记下当时最新的一条，之后别人发来的消息计入「N 条新消息」。
+  useEffect(() => { setAwaySeq(scrolledUp ? lastSeq ?? 0 : null); }, [scrolledUp]); // eslint-disable-line react-hooks/exhaustive-deps
+  const arrivedWhileAway = awaySeq === null ? 0 : currentMessages.filter(message => message.seq > awaySeq && message.senderId !== state?.me.id && !message.recalledAt).length;
+  // 进入会话时记下已读位置：打开后列表会滚到底并推进已读位置，所以必须在那之前记住第一条未读在哪里。
+  useEffect(() => {
+    const status = unread[selected];
+    setUnreadAnchor(status?.hasUnread ? { roomId: selected, afterSeq: lastRead[selected] || 0, count: status.exact ? status.count : 0 } : null);
+  }, [selected, state?.me.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 第一条未读已经出现在可视区域（或在它下面）就不再提示。
+  const checkUnreadAnchor = useCallback(() => {
+    const list = messageList.current;
+    if (!unreadAnchor || unreadAnchor.roomId !== selected || !list) return;
+    const first = [...list.querySelectorAll('[data-seq]')].find(node => Number(node.dataset.seq) > unreadAnchor.afterSeq);
+    const top = Math.max(list.getBoundingClientRect().top, document.querySelector('.chat-toolbar')?.getBoundingClientRect().bottom || 0);
+    if (first && first.getBoundingClientRect().top >= top) setUnreadAnchor(null);
+  }, [unreadAnchor, selected]);
+  useEffect(() => { requestAnimationFrame(checkUnreadAnchor); }, [checkUnreadAnchor, lastSeq, loading]);
   const searchTerm = search.trim();
   const globalSearch = useMessageSearch(searchTerm, null, historyVersion, Boolean(state?.me));
   useEffect(() => {
@@ -122,6 +141,17 @@ export default function App() {
       if (info.available) notify(`发现新版本 ${info.version}，可在设置中更新`);
     }).catch(() => {});
   }, [state?.me.id, notify]);
+  async function jumpToFirstUnread() {
+    const anchor = unreadAnchor;
+    setUnreadAnchor(null);
+    try { await loadThrough(anchor.roomId, anchor.afterSeq + 1); } catch (error) { return notify(error.message); }
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const row = [...(messageList.current?.querySelectorAll('[data-seq]') || [])].find(node => Number(node.dataset.seq) > anchor.afterSeq);
+    if (!row) return;
+    sticky.current = false; firstLoad.current = false;
+    // 跨度通常很大，直接跳过去，不做长距离滚动动画。
+    row.scrollIntoView({ block: 'start' });
+  }
   async function jumpToMessage(target) {
     if (target.roomId !== selected) { setSelected(target.roomId); setMobileChat(true); setReadDetail(null); }
     try { await loadThrough(target.roomId, target.seq); } catch (error) { return notify(error.message); }
@@ -281,7 +311,7 @@ export default function App() {
           <IconButton icon={X} label="不再显示这条公告" size={14} onClick={() => setDismissedNotices(previous => ({ ...previous, [room.id]: room.announcement.updatedAt }))} />
         </div>}
         {!connected && !loggingOut && <div className="offline-pill glass" role="status"><WifiOff size={14} />正在重新连接，草稿会保留</div>}
-        <div className="message-scroll" ref={messageList} onScroll={event => { const node = event.currentTarget; sticky.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100; setScrolledUp(!sticky.current); }}><div className="message-list" ref={messageContent}>
+        <div className="message-scroll" ref={messageList} onScroll={event => { const node = event.currentTarget; sticky.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100; setScrolledUp(!sticky.current); checkUnreadAnchor(); }}><div className="message-list" ref={messageContent}>
         {hasMore[selected] && <button className="load-older" onClick={loadOlder} disabled={loading}>{loading ? '正在加载…' : '查看更早的消息'}</button>}
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? cloud ? '大家都在，随便扯两句。' : '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请同事加入</button>}</div>}
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
@@ -290,7 +320,8 @@ export default function App() {
           onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })}
           reactionOptions={state.reactions || []} onReact={toggleReaction} picking={reactingTo === message.id} onPick={setReactingTo}
           selecting={Boolean(selection)} selected={selection?.includes(message.id)} onToggleSelect={target => setSelection(previous => previous.includes(target.id) ? previous.filter(id => id !== target.id) : [...previous, target.id])} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
-      </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />回到最新消息</button>}
+      </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />{arrivedWhileAway ? `${arrivedWhileAway} 条新消息` : '回到最新消息'}</button>}
+      {unreadAnchor?.roomId === selected && <button className="unread-anchor glass" onClick={jumpToFirstUnread}><ArrowUp size={14} />{unreadAnchor.count ? `${unreadAnchor.count} 条未读消息` : '跳到未读消息'}</button>}
       {selection ? <div className="selection-bar glass" role="toolbar" aria-label="多选消息">
         <span>已选 <b>{selection.length}</b> 条</span>
         <button className="secondary-button" onClick={() => setSelection(null)}>取消</button>
