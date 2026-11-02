@@ -4,28 +4,104 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: '指定版本号（如 1.4.2；留空按 Git tag 和下方策略处理）'
+        type: string
+        required: false
+      bump:
+        description: '版本策略：auto 优先当前提交的 tag，否则递增补丁号'
+        type: choice
+        default: auto
+        options: [auto, patch, minor, major]
+      publish_release:
+        description: '正式发布并创建版本 tag（仅 main 可选）'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && github.ref || 'main-release' }}
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Select version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.release.outputs.build }}
+      publish: ${{ steps.version.outputs.publish }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      source_sha: ${{ steps.version.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Select version from Git tags
+        id: version
+        run: node scripts/desktop-version.mjs resolve
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          VERSION_BUMP: ${{ inputs.bump || 'auto' }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+      - name: Check release and signing configuration
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          SHOULD_BUILD: ${{ steps.version.outputs.build }}
+          SHOULD_PUBLISH: ${{ steps.version.outputs.publish }}
+          SIGNING_CONFIGURED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && vars.TAURI_UPDATER_PUBKEY != '' }}
+        run: |
+          if [ "$SHOULD_BUILD" != true ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$SHOULD_PUBLISH" = true ]; then
+            if draft=$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq .draft 2>"$RUNNER_TEMP/release-error"); then
+              if [ "$draft" = false ]; then
+                echo "$RELEASE_TAG 已正式发布，跳过重复构建。"
+                echo "build=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            elif [[ "$(cat "$RUNNER_TEMP/release-error")" != *"(HTTP 404)"* ]]; then
+              cat "$RUNNER_TEMP/release-error" >&2
+              exit 1
+            fi
+            if [ "$SIGNING_CONFIGURED" != true ]; then
+              echo "正式发布需要 TAURI_SIGNING_PRIVATE_KEY 和 TAURI_UPDATER_PUBKEY" >&2
+              exit 1
+            fi
+          fi
+          echo "build=true" >> "$GITHUB_OUTPUT"
+
   build:
     name: Check and build
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
           cache: npm
+      - name: Apply build version
+        run: node scripts/desktop-version.mjs apply
+        env:
+          DESKTOP_VERSION: ${{ needs.prepare.outputs.version }}
       - run: npm ci
       - name: Check JavaScript syntax
         run: |
@@ -33,9 +109,6 @@ jobs:
             node --check "$file"
           done
       - run: npm test
-      - name: Verify release tag matches package version
-        if: startsWith(github.ref, 'refs/tags/')
-        run: node --input-type=module -e 'import fs from "node:fs"; const version = JSON.parse(fs.readFileSync("package.json")).version; if (process.env.GITHUB_REF_NAME !== `v${version}`) throw new Error("Tag must match package.json version");'
       - run: npm run build
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -46,8 +119,7 @@ jobs:
 
   desktop:
     name: Package ${{ matrix.name }}
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    needs: [prepare, build]
     strategy:
       fail-fast: false
       matrix:
@@ -73,13 +145,24 @@ jobs:
       LINLIAO_CLOUD_URL: ${{ vars.CHAT_PUBLIC_URL }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
           cache: npm
+      - name: Apply build version
+        run: node scripts/desktop-version.mjs apply
+        env:
+          DESKTOP_VERSION: ${{ needs.prepare.outputs.version }}
       - name: Install Rust toolchain
         shell: bash
         run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
       - run: npm ci
       - name: Validate production client address
         if: vars.PRODUCTION_DEPLOY_ENABLED == 'true'
@@ -133,14 +216,24 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: desktop
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [prepare, desktop]
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Verify release version is still current
+        run: node scripts/desktop-version.mjs verify
+        env:
+          DESKTOP_VERSION: ${{ needs.prepare.outputs.version }}
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: xiachedan-*
@@ -150,11 +243,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
         run: |
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          node scripts/update-manifest.mjs release "$RELEASE_TAG" "$GH_REPO"
+          node --input-type=module -e 'import fs from "node:fs"; const manifest=JSON.parse(fs.readFileSync("release/latest.json")); for (const platform of ["darwin-aarch64","darwin-x86_64","windows-x86_64"]) { if (!manifest.platforms[platform]?.signature) throw new Error(`Missing signed update: ${platform}`); }'
+          if ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a "$RELEASE_TAG" "$SOURCE_SHA" -m "Release $RELEASE_TAG"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+          if draft=$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq .draft 2>"$RUNNER_TEMP/release-error"); then
+            if [ "$draft" = false ]; then
+              echo "$RELEASE_TAG 已正式发布，不覆盖现有安装包。"
+              exit 0
+            fi
+          elif [[ "$(cat "$RUNNER_TEMP/release-error")" == *"(HTTP 404)"* ]]; then
             gh release create "$RELEASE_TAG" --verify-tag --title "虾扯蛋 $RELEASE_TAG" --generate-notes --draft
+          else
+            cat "$RUNNER_TEMP/release-error" >&2
+            exit 1
           fi
           RELEASE_NOTES=$(gh release view "$RELEASE_TAG" --json body --jq .body) node scripts/update-manifest.mjs release "$RELEASE_TAG" "$GH_REPO"
           gh release upload "$RELEASE_TAG" release/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --draft=false --latest

@@ -3,9 +3,6 @@ on:
   push:
     branches: [main]
     paths: ['src/**', 'shared/**', 'index.html', 'vite.config.js', 'package.json', 'package-lock.json', '.github/workflows/deploy-frontend.yml']
-  pull_request:
-    branches: [main]
-    paths: ['src/**', 'shared/**', 'index.html', 'vite.config.js', 'package.json', 'package-lock.json', '.github/workflows/deploy-frontend.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -36,7 +33,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Deploy frontend
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+        if: github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
         env:
           DEPLOY_HOST: ${{ vars.FRONTEND_DEPLOY_HOST || vars.DEPLOY_HOST || '117.50.187.95' }}
           DEPLOY_USER: ${{ vars.FRONTEND_DEPLOY_USER || vars.DEPLOY_USER || 'ubuntu' }}
