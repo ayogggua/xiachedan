@@ -165,9 +165,9 @@ fn open_address(app: &AppHandle, desktop: &Desktop, origin: &str, fragment: Opti
   main_window(app).ok_or("窗口不可用")?.navigate(url).map_err(|error| error.to_string())
 }
 
-fn open_notification(app: &AppHandle, id: i32) {
+fn open_notification(app: &AppHandle, id: Option<i32>) {
   let desktop = app.state::<Arc<Desktop>>();
-  let room = desktop.session.lock().unwrap().notification_rooms.get(&id).cloned();
+  let room = id.and_then(|id| desktop.session.lock().unwrap().notification_rooms.get(&id).cloned());
   show(app, &desktop, room.filter(|room| !room.is_empty()));
 }
 
@@ -696,7 +696,7 @@ pub fn run() {
       #[cfg(not(target_os = "macos"))]
       app.notification().on_action(move |performed| {
         if performed.action_id() != "tap" { return }
-        if let Some(notification) = performed.notification() { open_notification(&clicked, notification.id()); }
+        if let Some(notification) = performed.notification() { open_notification(&clicked, Some(notification.id())); }
       })?;
       let origin = initial_origin(&desktop).ok_or("本机服务不可用")?;
       let start = {

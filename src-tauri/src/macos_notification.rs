@@ -13,8 +13,13 @@ use objc2_user_notifications::{
   UNUserNotificationCenterDelegate,
 };
 
-type Clicked = Box<dyn Fn(i32) + Send + Sync>;
+type Clicked = Box<dyn Fn(Option<i32>) + Send + Sync>;
 static CLICKED: OnceLock<Clicked> = OnceLock::new();
+
+fn request_prefix() -> &'static str {
+  static PREFIX: OnceLock<String> = OnceLock::new();
+  PREFIX.get_or_init(|| format!("{}:", uuid::Uuid::new_v4()))
+}
 
 define_class!(
   #[unsafe(super(NSObject))]
@@ -35,8 +40,10 @@ define_class!(
     fn did_receive(&self, _center: &UNUserNotificationCenter, response: &UNNotificationResponse,
       completion: &block2::DynBlock<dyn Fn()>) {
       if *response.actionIdentifier() == *unsafe { UNNotificationDefaultActionIdentifier } {
-        let id = response.notification().request().identifier().to_string().parse().ok();
-        if let (Some(id), Some(clicked)) = (id, CLICKED.get()) { clicked(id) }
+        let identifier = response.notification().request().identifier().to_string();
+        let id = identifier.strip_prefix(request_prefix()).and_then(|value| value.parse().ok());
+        // 旧进程的通知仍可唤起应用，但不能用重复的编号打开当前进程的其他会话。
+        if let Some(clicked) = CLICKED.get() { clicked(id) }
       }
       completion.call(());
     }
@@ -44,7 +51,7 @@ define_class!(
 );
 
 /// 在启动阶段（主线程）调用：设置代理、登记点击回调并申请通知权限（已授权的不会再询问）。
-pub fn install(clicked: impl Fn(i32) + Send + Sync + 'static) {
+pub fn install(clicked: impl Fn(Option<i32>) + Send + Sync + 'static) {
   static DELEGATE: OnceLock<Retained<Delegate>> = OnceLock::new();
   let _ = CLICKED.set(Box::new(clicked));
   let center = UNUserNotificationCenter::currentNotificationCenter();
@@ -53,11 +60,12 @@ pub fn install(clicked: impl Fn(i32) + Send + Sync + 'static) {
   center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert, &RcBlock::new(|_: Bool, _: *mut NSError| {}));
 }
 
-/// 以 id 作为请求标识发出通知，点击时回调收到同一个 id。
+/// 每次启动使用独立前缀，避免编号重置后覆盖上次运行留下的系统通知。
 pub fn show(id: i32, title: &str, body: &str) {
   let content = UNMutableNotificationContent::new();
   content.setTitle(&NSString::from_str(title));
   content.setBody(&NSString::from_str(body));
-  let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&NSString::from_str(&id.to_string()), &content, None);
+  let identifier = NSString::from_str(&format!("{}{id}", request_prefix()));
+  let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&identifier, &content, None);
   UNUserNotificationCenter::currentNotificationCenter().addNotificationRequest_withCompletionHandler(&request, None);
 }
