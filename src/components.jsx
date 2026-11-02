@@ -86,10 +86,10 @@ export const consumeLongPress = state => { const fired = state.current.fired; st
 export const pressEvent = (clientX, clientY) => ({ clientX, clientY, preventDefault() {}, stopPropagation() {} });
 
 // 把正文里「@名字」高亮出来；@我和@所有人用更醒目的样式。
-function MessageText({ text, mentions = [], nameOf, viewerId }) {
+function MessageText({ text, mentions = [], nameOf, viewerId, meta = null }) {
   const tokens = mentions.map(id => ({ id, label: `@${id === '*' ? '所有人' : nameOf?.(id) || ''}` })).filter(token => token.label.length > 1)
     .sort((a, b) => b.label.length - a.label.length);
-  if (!tokens.length) return <p className="message-text">{text}</p>;
+  if (!tokens.length) return <p className="message-text">{text}{meta}</p>;
   const parts = [];
   for (let start = 0; start < text.length;) {
     let found = null;
@@ -98,8 +98,11 @@ function MessageText({ text, mentions = [], nameOf, viewerId }) {
     parts.push(text.slice(start, found.index), <span key={found.index} className={`mention ${found.id === viewerId || found.id === '*' ? 'self' : ''}`}>{found.label}</span>);
     start = found.index + found.label.length;
   }
-  return <p className="message-text">{parts}</p>;
+  return <p className="message-text">{parts}{meta}</p>;
 }
+
+// 群聊里按成员给昵称着色：同一个人颜色固定。
+const nameColor = id => `var(--name-${[...(id || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 7})`;
 
 // 引用块：原消息被撤回或清空时只说明状态；点击跳到原消息。
 export function Quote({ reply, author, onOpen, className = '' }) {
@@ -132,11 +135,13 @@ function ReactionPalette({ options, chosen, onPick, onClose }) {
   </div>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect }) {
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
   const press = useRef({ timer: 0, fired: false });
+  // 只给刚收到/刚发出的消息做入场动效，翻历史时不动。
+  const [fresh] = useState(() => Date.now() - message.createdAt < 4000);
   const revealSize = useRef({});
   const reveal = event => {
     if (!privateMode || revealed) return;
@@ -171,30 +176,44 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   const readLabel = direct ? readCount ? '已读' : '未读' : readCount ? `${readCount}/${recipients.length} 人已读` : '未读';
   if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id} data-seq={message.seq}>{mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}</article>;
   const time = <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>;
+  // 时间与已读状态放在气泡右下角（Telegram 式）；自己的群消息点「x/n 人已读」查看名单。
+  const readNode = mine && recipients.length > 0 && Array.isArray(message.readBy) && (direct
+    ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
+    : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>);
+  const meta = <span className="bubble-meta">{time}{readNode}</span>;
+  const lastFile = message.attachments.at(-1);
+  const mediaLast = !message.text && lastFile && /^(image|video)\//.test(lastFile.mime);
+  const showName = !mine && !direct && !continued;
+  const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''}`;
+  const content = hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} />{meta}</div> : <>
+    {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId) }}>{user?.name || '成员'}</div>}
+    {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
+    {message.replyTo && <Quote reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo)} />}
+    {message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={meta} />}
+    {message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}
+    {!message.text && (mediaLast ? <span className="bubble-meta-overlay">{meta}</span> : <div className="bubble-meta-row">{meta}</div>)}
+  </>;
+  // 群聊里头像放在一组连续消息的最后一条旁边（自己的在右侧），这一条带「尾巴」圆角；私聊不显示头像。
+  const avatar = !direct && (last ? <Avatar user={user} size={32} /> : <span className="avatar-spacer" />);
+  const rowClass = `message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''} ${last ? 'last' : ''} ${fresh ? 'fresh' : ''}`;
   // 多选时整行可点：点哪里都只切换选中，不触发菜单。
-  if (selecting) return <article className={`message-row selecting ${mine ? 'mine' : ''} ${continued ? 'continued' : ''} ${selected ? 'selected' : ''}`} data-message-id={message.id} data-seq={message.seq}
+  if (selecting) return <article className={`${rowClass} selecting ${selected ? 'selected' : ''}`} data-message-id={message.id} data-seq={message.seq}
     onClick={() => onToggleSelect?.(message)}>
     <label className="select-check" onClick={event => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => onToggleSelect?.(message)} aria-label={`选择${user?.name || ''}的消息`} /><span>{selected && <Check size={12} />}</span></label>
-    {!mine && (continued ? <span className="avatar-spacer" /> : <Avatar user={user} size={28} />)}
-    <div className="message-column">{!mine && !continued && <div className="message-meta"><span>{user?.name || '成员'}</span>{time}</div>}
-      <div className={`message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''}`}>{hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>
-        {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
-        {message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} />}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={() => {}} />)}</>}</div>
-    </div>
-    {mine && <Avatar user={user} size={28} />}
+    {!mine && avatar}
+    <div className="message-column"><div className={bubbleClass}>{content}</div></div>
+    {mine && avatar}
   </article>;
   return <article onContextMenu={event => { if (consumeLongPress(press)) event.preventDefault(); else onContextMenu?.(event, message); }}
     {...longPressHandlers(press, (clientX, clientY) => onContextMenu?.(pressEvent(clientX, clientY), message))}
-    className={`message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''}`} data-message-id={message.id} data-seq={message.seq}>
-    {!mine && (continued ? <span className="avatar-spacer" /> : <Avatar user={user} size={28} />)}
-    <div className="message-column">{!mine && !continued && <div className="message-meta"><span>{user?.name || '成员'}</span>{time}</div>}
-      <div className="bubble-line"><div ref={bubble} className={`message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''}`} tabIndex={privateMode ? 0 : undefined}
+    className={rowClass} data-message-id={message.id} data-seq={message.seq}>
+    {!mine && avatar}
+    <div className="message-column">
+      <div className="bubble-line"><div ref={bubble} className={bubbleClass} tabIndex={privateMode ? 0 : undefined}
         style={privateMode && revealed ? revealSize.current : undefined}
         onPointerEnter={reveal} onPointerMove={reveal} onPointerLeave={() => setRevealed(false)} onBlur={() => setRevealed(false)}
         onKeyDown={event => { if (event.code === 'Space' && privateMode) { event.preventDefault(); setRevealed(true); } }} onKeyUp={event => { if (event.code === 'Space') setRevealed(false); }}
-        aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>
-        {hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>{message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}{message.replyTo && <Quote reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={() => onOpenQuote?.(message.replyTo)} />}{message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} />}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={onPreview} />)}</>}
-      </div>
+        aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>{content}</div>
       {onReply && <div className={`message-actions ${picking ? 'open' : ''}`}>
         {reactionOptions.length > 0 && <IconButton icon={SmilePlus} label="回应" size={14} aria-expanded={picking} onClick={() => onPick?.(picking ? null : message.id)} />}
         <IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} />
@@ -204,10 +223,8 @@ export function Message({ message, user, mine, continued = false, privateMode, o
         const names = item.users.map(id => id === viewerId ? '我' : nameOf?.(id) || '成员').join('、');
         return <button type="button" key={item.emoji} className={reacted ? 'reacted' : ''} aria-pressed={reacted} title={`${names} 回应了 ${item.emoji}`} aria-label={`${item.emoji} ${item.users.length} 人：${names}`} onClick={() => onReact?.(message, item.emoji)}>
           <span aria-hidden="true">{item.emoji}</span><span aria-hidden="true">{item.users.length}</span></button>; })}</div>}
-      {mine && <div className="message-status">{time}{recipients.length > 0 && Array.isArray(message.readBy) && (direct ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
-        : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>)}</div>}
     </div>
-    {mine && <Avatar user={user} size={28} />}
+    {mine && avatar}
   </article>;
 }
 

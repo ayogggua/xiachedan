@@ -1,19 +1,19 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Image as ImageIcon, Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText } from 'lucide-react';
+import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText } from 'lucide-react';
 import { api, upload, uid, formatSize } from './api';
-import { Avatar, IconButton, PrivatePreview } from './components';
+import { Avatar, IconButton, PrivatePreview, ContextMenu } from './components';
 import { previewText } from './history';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
 export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping }) {
   const typedAt = useRef(0);
+  const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   const input = useRef();
-  const videoInput = useRef();
   const fileInput = useRef();
   const textarea = useRef();
   const draftsRef = useRef(drafts);
@@ -108,11 +108,16 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
       {item.error && <IconButton icon={RotateCcw} label="重试上传" size={15} onClick={() => uploadItem(item, room.id)} />}
       <IconButton icon={X} label="移除附件" size={15} onClick={() => removeFile(item)} disabled={sending} />
     </div>)}</div>}
+    <div className="composer-row">
+    {/* 附件统一收进回形针菜单：图片或视频、文件 */}
+    <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
+      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - 2 * 36, label: '添加附件', items: [
+        { id: 'media', label: '图片或视频', action: () => input.current.click() },
+        { id: 'file', label: '文件（最大 100 MB）', action: () => fileInput.current.click() },
+      ] }); }}><Paperclip size={19} strokeWidth={1.7} /></button>
+    {attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
     <div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
       {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，发送文件</span></div>}
-      <IconButton icon={ImageIcon} label="发送图片（也可拖入或粘贴）" className="composer-tool" disabled={sending || !connected} onClick={() => input.current.click()} />
-      <IconButton icon={Film} label="发送视频（单个文件最大 100 MB）" className="composer-tool" disabled={sending || !connected} onClick={() => videoInput.current.click()} />
-      <IconButton icon={Paperclip} label="发送文件（单个文件最大 100 MB）" className="composer-tool" disabled={sending || !connected} onClick={() => fileInput.current.click()} />
       <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
         aria-autocomplete="list" aria-controls="mention-picker" aria-expanded={Boolean(picker && candidates.length)} aria-activedescendant={picker && candidates.length ? `mention-option-${picker.index}` : undefined}
         onChange={event => {
@@ -130,9 +135,10 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
           if (event.key === 'Escape' && reply) { event.preventDefault(); onCancelReply?.(); }
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); }
         }} />
-      <button className="send-button" onClick={send} disabled={!ready} aria-label="发送消息" title="Enter 发送 · Shift + Enter 换行">{sending ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={17} strokeWidth={2.2} />}</button>
-      <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} /><input ref={videoInput} type="file" accept="video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
-      <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
+    </div>
+    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label="发送消息" title="Enter 发送 · Shift + Enter 换行">{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
+    <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
+    <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     </div>
   </div>;
 }
