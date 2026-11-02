@@ -11,7 +11,7 @@ import useChatSession from './useChatSession';
 import useConversations from './useConversations';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
-import HistorySearch from './HistorySearch';
+import HistorySearch, { SearchResult, SearchStatus, useMessageSearch } from './HistorySearch';
 import { previewText, readStorage } from './history';
 
 export default function App() {
@@ -66,6 +66,8 @@ export default function App() {
   const unseen = privateMode && currentMessages.find(message => message.senderId !== state?.me.id && !message.recalledAt && Array.isArray(message.readBy) && !message.readBy.includes(state?.me.id));
   const readUpTo = unseen ? unseen.seq - 1 : lastSeq;
   const unread = useUnread(state, messages, lastRead, connected, historyVersion);
+  const searchTerm = search.trim();
+  const globalSearch = useMessageSearch(searchTerm, null, historyVersion, Boolean(state?.me));
   useEffect(() => {
     if (!messageList.current || loading) return;
     if (firstLoad.current || sticky.current) { messageList.current.scrollTop = messageList.current.scrollHeight; firstLoad.current = false; }
@@ -103,11 +105,13 @@ export default function App() {
     }).catch(() => {});
   }, [state?.me.id, notify]);
   async function jumpToMessage(target) {
+    if (target.roomId !== selected) { setSelected(target.roomId); setMobileChat(true); setReadDetail(null); }
     try { await loadThrough(target.roomId, target.seq); } catch (error) { return notify(error.message); }
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const row = messageList.current?.querySelector(`[data-message-id="${CSS.escape(target.id)}"]`);
     if (!row) return notify('这条消息已不在聊天记录中');
-    sticky.current = false;
+    // 切换会话时的"首次加载滚到底部"不能覆盖这次定位。
+    sticky.current = false; firstLoad.current = false;
     row.scrollIntoView({ block: 'center', behavior: 'smooth' });
     row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
     if (matchMedia('(max-width: 760px)').matches) setShowMembers(false);
@@ -194,12 +198,19 @@ export default function App() {
     <aside className="sidebar glass" aria-label="会话列表">
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
       <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></div>
-      <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话" placeholder="搜索" value={search} onChange={event => setSearch(event.target.value)} />{search && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} />}</label>
+      <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} />}</label>
       <nav className="conversation-scroll" aria-label="会话">
         {filtered.some(room => room.pinned) && <><div className="section-label"><span>置顶</span></div>{filtered.filter(room => room.pinned).map(roomButton)}</>}
         <div className="section-label"><span>群聊</span><IconButton icon={Plus} label="新建群聊" size={15} onClick={() => setModal('group')} /></div>{filtered.filter(room => !room.pinned && room.kind !== 'direct').map(roomButton)}
         <div className="section-label"><span>私聊</span><IconButton icon={Plus} label="发起私聊" size={15} onClick={() => setModal('members')} /></div>{filtered.filter(room => !room.pinned && room.kind === 'direct').map(roomButton)}
         {!filtered.some(room => room.kind === 'direct') && <p className="sidebar-empty">{search ? '没有匹配的私聊' : '找到一位同事，聊点新鲜事。'}</p>}
+        {searchTerm && <section className="sidebar-messages" aria-label="消息搜索结果" aria-live="polite"><div className="section-label"><span>消息</span></div>
+          {globalSearch.results?.map(message => { const target = rooms.find(item => item.id === message.roomId); if (!target) return null;
+            const sender = message.senderId === state.me.id ? '我' : userMap[message.senderId]?.name || '成员';
+            return <SearchResult key={message.id} message={message} term={searchTerm} avatar={roomIcon(target, 24)} title={target.name}
+              prefix={target.kind === 'direct' && message.senderId !== state.me.id ? '' : `${sender}：`} privateMode={privateMode} onJump={jumpToMessage} />; })}
+          <SearchStatus term={searchTerm} results={globalSearch.results} error={globalSearch.error} />
+        </section>}
       </nav>
       {cloud && isAdmin && <button className="admin-entry" onClick={() => setModal('admin')}><ShieldCheck size={16} /><span>用户管理</span><ChevronRight size={14} /></button>}
       <div className="me-card"><button className="me-profile" title="修改昵称和头像" onClick={() => setModal('profile')}><Avatar user={state.me} size={30} /><span><b>{state.me.name}</b><small className={connected ? '' : 'warning'}>{connected ? cloud ? '已连接' : '局域网已连接' : '正在重新连接…'}</small></span></button><IconButton icon={Settings2} label={update?.available ? '设置（有新版本）' : '设置'} className={update?.available ? 'has-update' : ''} onClick={() => setModal('connection')} /></div>

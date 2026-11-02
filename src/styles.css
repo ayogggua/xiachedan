@@ -317,6 +317,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 .history-results { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 8px; }
 .history-empty { display: flex; align-items: center; gap: 6px; padding: 8px; font-size: 12px; line-height: 18px; color: var(--text-2); }
 .history-result { display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 8px; border-radius: 10px; text-align: left; }
+.history-result .room-avatar { width: 24px; height: 24px; border-radius: 7px; }
+.sidebar-messages { margin-top: 4px; }
 .history-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .history-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
 .history-meta time { flex: none; font-size: 10px; color: var(--text-2); font-variant-numeric: tabular-nums; }
