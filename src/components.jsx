@@ -75,6 +75,22 @@ export const consumeLongPress = state => { const fired = state.current.fired; st
 // 长按时没有原生事件，给右键菜单处理器一个带坐标的替身。
 export const pressEvent = (clientX, clientY) => ({ clientX, clientY, preventDefault() {}, stopPropagation() {} });
 
+// 把正文里「@名字」高亮出来；@我和@所有人用更醒目的样式。
+function MessageText({ text, mentions = [], nameOf, viewerId }) {
+  const tokens = mentions.map(id => ({ id, label: `@${id === '*' ? '所有人' : nameOf?.(id) || ''}` })).filter(token => token.label.length > 1)
+    .sort((a, b) => b.label.length - a.label.length);
+  if (!tokens.length) return <p className="message-text">{text}</p>;
+  const parts = [];
+  for (let start = 0; start < text.length;) {
+    let found = null;
+    for (const token of tokens) { const index = text.indexOf(token.label, start); if (index >= 0 && (!found || index < found.index)) found = { ...token, index }; }
+    if (!found) { parts.push(text.slice(start)); break; }
+    parts.push(text.slice(start, found.index), <span key={found.index} className={`mention ${found.id === viewerId || found.id === '*' ? 'self' : ''}`}>{found.label}</span>);
+    start = found.index + found.label.length;
+  }
+  return <p className="message-text">{parts}</p>;
+}
+
 // 引用块：原消息被撤回或清空时只说明状态；点击跳到原消息。
 export function Quote({ reply, author, onOpen, className = '' }) {
   const unavailable = reply.recalled ? '引用的消息已撤回' : reply.missing ? '引用的消息已被清空' : '';
@@ -132,7 +148,7 @@ export function Message({ message, user, mine, continued = false, privateMode, o
         onPointerEnter={reveal} onPointerMove={reveal} onPointerLeave={() => setRevealed(false)} onBlur={() => setRevealed(false)}
         onKeyDown={event => { if (event.code === 'Space' && privateMode) { event.preventDefault(); setRevealed(true); } }} onKeyUp={event => { if (event.code === 'Space') setRevealed(false); }}
         aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>
-        {hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>{message.replyTo && <Quote reply={message.replyTo} author={nameOf?.(message.replyTo.senderId) || '成员'} onOpen={() => onOpenQuote?.(message.replyTo)} />}{message.text && <p className="message-text">{message.text}</p>}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={onPreview} />)}</>}
+        {hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>{message.replyTo && <Quote reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={() => onOpenQuote?.(message.replyTo)} />}{message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} />}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={onPreview} />)}</>}
       </div>
       {onReply && <div className="message-actions"><IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} /></div>}</div>
       {mine && <div className="message-status">{time}{recipients.length > 0 && Array.isArray(message.readBy) && (direct ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>

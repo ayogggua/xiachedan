@@ -104,12 +104,13 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     setMessages(previous => ({ ...previous, [message.roomId]: merge(previous[message.roomId] || [], [message], historyRef.current) }));
     setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.id === message.roomId && (!room.lastMessage || room.lastMessage.seq < message.seq) ? { ...room, lastMessage: message } : room) } : previous);
     const current = stateRef.current;
-    // 免打扰的会话不弹系统通知。
-    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id && !mutedRef?.current.has(message.roomId)) {
+    const target = current?.rooms.find(room => room.id === message.roomId);
+    const mentionsMe = message.mentions?.some(id => id === current?.me.id || id === '*');
+    // 免打扰的会话只在被 @ 时提醒。
+    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id && (!mutedRef?.current.has(message.roomId) || mentionsMe)) {
       const sender = current.users.find(user => user.id === message.senderId);
-      const target = current.rooms.find(room => room.id === message.roomId);
       const hidden = privacyRef.current;
-      const title = hidden ? '虾扯蛋 · 新消息' : `${sender?.name || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
+      const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : ''}${sender?.name || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
       window.desktop.message({ id: message.id, roomId: message.roomId, privateMode: hidden,
         title: title.slice(0, 120), body: hidden ? '****' : previewText(message).slice(0, 240),
       }).catch(error => notify(error.message));

@@ -56,6 +56,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS message_recalls (message_id TEXT PRIMARY KEY, recalled_at INTEGER NOT NULL);
     -- 引用回复：只记录被引用消息的标识，引用内容在读取时按原消息的最新状态生成。
     CREATE TABLE IF NOT EXISTS message_replies (message_id TEXT PRIMARY KEY, reply_to TEXT NOT NULL);
+    -- @提及：user_id 为成员标识，'*' 表示 @所有人。
+    CREATE TABLE IF NOT EXISTS message_mentions (message_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (message_id, user_id));
     CREATE TABLE IF NOT EXISTS pending_file_deletions (id TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);

@@ -23,6 +23,7 @@
   --text-3: rgba(255, 255, 255, .45);
   --accent: #b9502f;
   --accent-bright: #e8784f;
+  --mention: #f4a07f;
   --accent-icon: #d9653f;
   --online: #30d158;
   --warning: #ffd60a;
@@ -60,6 +61,7 @@
   --text-2: rgba(0, 0, 0, .56);
   --text-3: rgba(0, 0, 0, .46);
   --accent-bright: #b04a28;
+  --mention: #933a1c;
   --online: #1f8f3a;
   --warning: #9a6200;
   --danger-text: #c4281c;
@@ -181,7 +183,7 @@ textarea { resize: none; line-height: 20px; }
 .masked-preview { letter-spacing: 2px; }
 .has-unread .conversation-preview { color: var(--text-1); }
 .unread-badge { flex: none; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; line-height: 16px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
-.muted .unread-badge { background: var(--fill-3); color: var(--text-1); }
+.muted:not(.mentioned) .unread-badge { background: var(--fill-3); color: var(--text-1); }
 .sidebar-empty { padding: 4px 8px; font-size: 11px; line-height: 16px; color: var(--text-3); }
 .me-card { display: flex; align-items: center; gap: 4px; margin: 6px; padding: 6px 6px 6px 8px; border-radius: 12px; background: var(--fill-1); }
 .me-profile { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left; }
@@ -252,6 +254,10 @@ textarea { resize: none; line-height: 20px; }
 .message-bubble.is-masked { cursor: default; }
 .message-bubble.has-media.is-masked { padding: 8px 12px; }
 .message-text { white-space: pre-wrap; }
+.mention { font-weight: 600; color: var(--mention); }
+.mention.self { padding: 0 4px; border-radius: 5px; background: var(--accent); color: #fff; }
+.mine .mention { color: #fff; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.mine .mention.self { background: rgba(0, 0, 0, .16); }
 .bubble-line { display: flex; align-items: center; gap: 4px; max-width: 100%; }
 .mine .bubble-line { flex-direction: row-reverse; }
 .bubble-line .message-bubble { min-width: 0; }
@@ -296,6 +302,14 @@ button.message-read-status.is-read { color: var(--text-1); }
 .jump-to-latest:active:not(:disabled) { transform: translateX(-50%) scale(.97); }
 
 /* 输入胶囊：浮在消息流之上 */
+.mention-picker { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; padding: 4px; border-radius: 14px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-2); }
+.mention-picker button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 9px; text-align: left; }
+.mention-picker button span:not(.avatar):not(.mention-everyone) { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mention-picker button small { flex: none; font-size: 11px; color: var(--text-2); }
+.mention-picker button.active { background: var(--accent); color: #fff; }
+.mention-picker button.active small { color: rgba(255, 255, 255, .85); }
+.mention-everyone { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px; border-radius: 11px; background: var(--fill-2); color: var(--text-2); }
+.mention-flag { flex: none; margin-right: -4px; font-weight: 600; color: var(--mention); }
 .reply-bar { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border-radius: 14px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-1); }
 .reply-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 12px; line-height: 16px; }
 .reply-copy b { font-weight: 600; }

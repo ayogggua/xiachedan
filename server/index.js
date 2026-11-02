@@ -75,7 +75,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     return { id: row.id, seq: row.seq, senderId: row.sender_id, text: row.text.slice(0, 200),
       attachments: JSON.parse(row.attachments).map(file => ({ name: file.name, mime: file.mime })) };
   };
-  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id) } : null;
+  const mentionsOf = id => stmt('SELECT user_id FROM message_mentions WHERE message_id=? ORDER BY rowid').all(id).map(row => row.user_id);
+  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -296,6 +297,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt("UPDATE messages SET text='', attachments='[]' WHERE id=?").run(id);
         stmt('DELETE FROM message_reads WHERE message_id=?').run(id);
         stmt('DELETE FROM message_replies WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
@@ -315,7 +317,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose='message' AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -333,12 +335,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!cursors || typeof cursors !== 'object' || Array.isArray(cursors) ||
       Object.entries(cursors).some(([id, seq]) => !id || id.length > 100 || !Number.isSafeInteger(seq) || seq < 0)) throw fail('已读位置无效');
     const count = stmt(`SELECT COALESCE(MAX(seq), ?) AS throughSeq,
-      COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) THEN 1 ELSE 0 END), 0) AS unreadCount
+      COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) THEN 1 ELSE 0 END), 0) AS unreadCount,
+      COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls)
+        AND EXISTS (SELECT 1 FROM message_mentions WHERE message_id=messages.id AND user_id IN (?, '*')) THEN 1 ELSE 0 END), 0) AS mentionCount
       FROM messages WHERE room_id=? AND seq>?`);
     const rooms = stmt('SELECT id, kind, members FROM rooms').all().filter(room => canAccess(room, req.user.id));
     res.json({ rooms: rooms.map(room => {
       const afterSeq = Object.hasOwn(cursors, room.id) ? cursors[room.id] : 0;
-      return { id: room.id, afterSeq, ...count.get(afterSeq, req.user.id, room.id, afterSeq) };
+      return { id: room.id, afterSeq, ...count.get(afterSeq, req.user.id, req.user.id, req.user.id, room.id, afterSeq) };
     }) });
   });
   app.get('/api/invite', (_req, res) => {
@@ -486,12 +490,27 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       const target = typeof replyTo === 'string' && replyTo.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(replyTo);
       if (!target || target.room_id !== room.id || target.seq <= clearedThroughSeq() || recalledAt(target.id)) throw fail('引用的消息不可用');
     }
+    // @提及必须是会话成员且正文里确实写了「@名字」，避免看不见的提醒；@所有人在群聊里人人可用，大厅仅空间管理者可用。
+    const mentionInput = req.body.mentions === undefined ? [] : req.body.mentions;
+    if (!Array.isArray(mentionInput) || mentionInput.length > 50 || mentionInput.some(value => typeof value !== 'string')) throw fail('提及的成员无效');
+    const mentions = [...new Set(mentionInput)];
+    for (const target of mentions) {
+      if (target === '*') {
+        const manager = req.user.id === ownerId() || ['admin', 'super_admin'].includes(req.user.role);
+        if (room.kind === 'direct' || (room.kind === 'public' && !manager)) throw fail('这里不能 @所有人', 403);
+        if (!messageText.includes('@所有人')) throw fail('提及的成员无效');
+        continue;
+      }
+      const member = userById(target);
+      if (!member || target === req.user.id || !canAccess(room, target) || !messageText.includes(`@${member.name}`)) throw fail('提及的成员无效');
+    }
     const id = randomUUID();
     db.exec('BEGIN');
     try {
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, messageText, JSON.stringify(attachments), clientId, Date.now());
       for (const file of attachments) stmt('UPDATE uploads SET claimed=1 WHERE id=?').run(file.id);
       if (replyTo) stmt('INSERT INTO message_replies VALUES (?,?)').run(id, replyTo);
+      for (const target of mentions) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };

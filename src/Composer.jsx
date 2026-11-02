@@ -1,11 +1,13 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Image as ImageIcon, Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip } from 'lucide-react';
+import { Image as ImageIcon, Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users } from 'lucide-react';
 import { api, upload, uid, formatSize } from './api';
-import { IconButton, PrivatePreview } from './components';
+import { Avatar, IconButton, PrivatePreview } from './components';
 import { previewText } from './history';
 
-const empty = { text: '', files: [] };
-export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode }) {
+const empty = { text: '', files: [], mentions: [] };
+const EVERYONE = { id: '*', name: '所有人' };
+export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false }) {
+  const [picker, setPicker] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -17,6 +19,20 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
   const draft = drafts[room.id] || empty;
   draftsRef.current = drafts;
   const update = (id, fn) => setDrafts(previous => ({ ...previous, [id]: fn(previous[id] || empty) }));
+  // 输入「@」后列出会话成员；只看光标前紧挨着的这一段。
+  const candidates = picker ? [...(canMentionAll ? [EVERYONE] : []), ...members]
+    .filter(user => user.name.toLowerCase().includes(picker.query.toLowerCase())).slice(0, 8) : [];
+  function detectMention(node) {
+    const match = (members.length || canMentionAll) && node.selectionStart === node.selectionEnd && node.value.slice(0, node.selectionStart).match(/@([^\s@]{0,24})$/);
+    setPicker(match ? { start: node.selectionStart - match[1].length - 1, query: match[1], index: 0 } : null);
+  }
+  function chooseMention(user) {
+    const insert = `@${user.name} `, start = picker.start;
+    update(room.id, state => ({ ...state, text: state.text.slice(0, start) + insert + state.text.slice(start + 1 + picker.query.length),
+      mentions: [...new Set([...(state.mentions || []), user.id])] }));
+    setPicker(null);
+    requestAnimationFrame(() => { const node = textarea.current; node?.focus(); node?.setSelectionRange(start + insert.length, start + insert.length); });
+  }
   useEffect(() => () => { for (const draft of Object.values(draftsRef.current)) for (const item of draft.files) URL.revokeObjectURL(item.url); }, []);
   async function uploadItem(item, roomId) {
     update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, error: '', progress: 0 } : file) }));
@@ -48,18 +64,21 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     const roomId = room.id;
     const snapshot = draft;
     const replyTo = reply?.id || null;
-    const signature = JSON.stringify([snapshot.text, snapshot.files.map(file => file.attachment.id), replyTo]);
+    // 只保留正文里仍写着「@名字」的提及。
+    const nameOf = id => id === '*' ? EVERYONE.name : members.find(user => user.id === id)?.name;
+    const mentions = (snapshot.mentions || []).filter(id => nameOf(id) && snapshot.text.includes(`@${nameOf(id)}`));
+    const signature = JSON.stringify([snapshot.text, snapshot.files.map(file => file.attachment.id), replyTo, mentions]);
     const attempt = attempts.current[roomId];
     const clientId = attempt?.signature === signature ? attempt.clientId : uid();
     attempts.current[roomId] = { signature, clientId };
     textarea.current?.focus({ preventScroll: true });
     setSending(true);
     try {
-      const { message } = await api('messages', { roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId, ...(replyTo ? { replyTo } : {}) });
+      const { message } = await api('messages', { roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId, ...(replyTo ? { replyTo } : {}), ...(mentions.length ? { mentions } : {}) });
       onSent(message);
       if (replyTo) onCancelReply?.();
       for (const file of snapshot.files) URL.revokeObjectURL(file.url);
-      update(roomId, () => ({ text: '', files: [] }));
+      update(roomId, () => empty);
       delete attempts.current[roomId];
     } catch (error) { notify(`${error.message}，草稿已保留`); } finally { setSending(false); }
   }
@@ -72,7 +91,14 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
   const ready = connected && !sending && (draft.text.trim() || draft.files.length) && draft.files.every(file => file.attachment);
   // 选择回复时把焦点交给输入框。
   useEffect(() => { if (reply) textarea.current?.focus({ preventScroll: true }); }, [reply?.id]);
+  useEffect(() => setPicker(null), [room.id]);
   return <div className="composer-area">
+    {picker && candidates.length > 0 && <div className="mention-picker" role="listbox" id="mention-picker" aria-label="选择要提及的成员">
+      {candidates.map((user, index) => <button type="button" role="option" id={`mention-option-${index}`} key={user.id} aria-selected={index === picker.index} className={index === picker.index ? 'active' : ''}
+        onPointerDown={event => { event.preventDefault(); chooseMention(user); }}>
+        {user.id === '*' ? <span className="mention-everyone"><Users size={13} /></span> : <Avatar user={user} size={22} />}<span>{user.name}</span>{user.id === '*' && <small>提醒会话里的每个人</small>}
+      </button>)}
+    </div>}
     {reply && <div className="reply-bar" role="status"><span className="reply-copy"><b>回复 {replyAuthor}</b><PrivatePreview privateMode={privateMode}>{previewText(reply)}</PrivatePreview></span><IconButton icon={X} label="取消回复" size={14} onClick={onCancelReply} /></div>}
     {draft.files.length > 0 && <div className="attachment-queue">{draft.files.map(item => <div className={`queued-file ${item.error ? 'failed' : ''}`} key={item.id}>
       {item.file.type.startsWith('image/') ? <img src={item.url} alt="待发送图片" /> : <span className="queued-video"><Film size={18} /></span>}
@@ -84,9 +110,16 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
       {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，分享图片或视频</span></div>}
       <IconButton icon={ImageIcon} label="发送图片（也可拖入或粘贴）" className="composer-tool" disabled={sending || !connected} onClick={() => input.current.click()} />
       <IconButton icon={Film} label="发送视频（单个文件最大 100 MB）" className="composer-tool" disabled={sending || !connected} onClick={() => videoInput.current.click()} />
-      <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1} onChange={event => update(room.id, state => ({ ...state, text: event.target.value }))}
+      <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
+        aria-autocomplete="list" aria-controls="mention-picker" aria-expanded={Boolean(picker && candidates.length)} aria-activedescendant={picker && candidates.length ? `mention-option-${picker.index}` : undefined}
+        onChange={event => { update(room.id, state => ({ ...state, text: event.target.value })); detectMention(event.target); }} onSelect={event => detectMention(event.currentTarget)} onBlur={() => setPicker(null)}
         onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); } }}
         onKeyDown={event => {
+          if (picker && candidates.length && !event.nativeEvent.isComposing) {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const step = event.key === 'ArrowDown' ? 1 : candidates.length - 1; setPicker(value => ({ ...value, index: (value.index + step) % candidates.length })); return; }
+            if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseMention(candidates[picker.index]); return; }
+            if (event.key === 'Escape') { event.preventDefault(); setPicker(null); return; }
+          }
           if (event.key === 'Escape' && reply) { event.preventDefault(); onCancelReply?.(); }
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); }
         }} />
