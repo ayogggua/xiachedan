@@ -61,7 +61,9 @@ else
   }
   if docker inspect xiachedan-backend >/dev/null 2>&1; then docker stop -t 25 xiachedan-backend; fi
   if [[ -f /var/lib/xiachedan/chat.sqlite ]]; then
-    if ! tar -czf "$base/backups/database-$(date -u +%Y%m%dT%H%M%SZ)-$revision.tar.gz" -C /var/lib/xiachedan --wildcards 'chat.sqlite*'; then rollback; exit 1; fi
+    database_files=()
+    for file in /var/lib/xiachedan/chat.sqlite*; do [[ ! -f $file ]] || database_files+=("${file##*/}"); done
+    if ! tar -czf "$base/backups/database-$(date -u +%Y%m%dT%H%M%SZ)-$revision.tar.gz" -C /var/lib/xiachedan "${database_files[@]}"; then rollback; exit 1; fi
   fi
   if ! docker compose -f "$destination/compose.yml" up -d --wait --wait-timeout 90; then rollback; exit 1; fi
   if ! curl --fail --silent --max-time 10 http://127.0.0.1:4318/api/health | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["mode"] == "cloud" and x["ok"] and x["release"] == sys.argv[1]' "$revision"; then rollback; exit 1; fi

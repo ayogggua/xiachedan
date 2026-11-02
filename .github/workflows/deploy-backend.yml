@@ -2,7 +2,7 @@ name: Deploy backend
 on:
   push:
     branches: [main]
-    paths: ['server/**', 'package.json', 'package-lock.json', 'deploy/Dockerfile.backend', 'deploy/compose.yml', '.dockerignore', '.github/workflows/deploy-backend.yml']
+    paths: ['server/**', 'package.json', 'package-lock.json', 'deploy/Dockerfile.backend', 'deploy/compose.yml', 'deploy/release.sh', '.dockerignore', '.github/workflows/deploy-backend.yml']
   pull_request:
     branches: [main]
     paths: ['server/**', 'package.json', 'package-lock.json', 'deploy/**', '.dockerignore', '.github/workflows/deploy-backend.yml']
