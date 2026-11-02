@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore, serializeMessage as baseMessage } from './store.js';
 import { lanAddresses } from './network.js';
+import { createAuth } from './auth.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_FILE = 100 * 1024 * 1024;
@@ -34,15 +35,33 @@ function detectMime(file) {
   return null;
 }
 
-export async function startServer({ dataDir = path.join(root, '.data'), port = 4318, host = '0.0.0.0' } = {}) {
+export async function startServer({ dataDir = path.join(root, '.data'), port = 4318, host = '0.0.0.0',
+  mode = process.env.CHAT_MODE || (process.env.NODE_ENV === 'production' ? 'cloud' : 'local'),
+  serveWeb = process.env.CHAT_SERVE_WEB === 'true' || (mode === 'local' && process.env.CHAT_SERVE_WEB !== 'false'),
+} = {}) {
+  if (!['cloud', 'local'].includes(mode)) throw new Error('CHAT_MODE 必须是 cloud 或 local');
+  const cloud = mode === 'cloud';
+  const production = process.env.NODE_ENV === 'production';
+  if (production && !cloud) throw new Error('生产环境必须启用账号登录模式');
+  const allowedOrigins = new Set((process.env.CHAT_ALLOWED_ORIGINS || process.env.CHAT_PUBLIC_URL || '').split(',').map(value => value.trim()).filter(Boolean));
+  for (const origin of allowedOrigins) {
+    const parsed = new URL(origin);
+    if (parsed.origin !== origin || !['https:', 'http:'].includes(parsed.protocol) || (production && parsed.protocol !== 'https:')) throw new Error('CHAT_ALLOWED_ORIGINS 必须是完整的 HTTPS 来源，不含路径');
+  }
+  if (cloud && production && (!process.env.CHAT_PUBLIC_URL || !allowedOrigins.has(process.env.CHAT_PUBLIC_URL))) throw new Error('生产环境需要可信的 CHAT_PUBLIC_URL');
   const db = openStore(dataDir);
   const uploadDir = path.join(dataDir, 'uploads');
   mkdirSync(uploadDir, { recursive: true, mode: 0o700 });
   const setupKey = randomBytes(32).toString('hex');
   const app = express();
+  if (cloud && process.env.CHAT_TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(process.env.CHAT_TRUST_PROXY) ? Number(process.env.CHAT_TRUST_PROXY) : process.env.CHAT_TRUST_PROXY.split(',').map(value => value.trim()));
   const server = createServer(app);
   const sockets = new Set();
   let closing = false;
+  let auth;
+  let activeUploads = 0;
+  const storageBudget = Number(process.env.CHAT_MAX_STORAGE_BYTES || 10 * 1024 ** 3);
+  if (!Number.isSafeInteger(storageBudget) || storageBudget < MAX_FILE) { db.close(); throw new Error('CHAT_MAX_STORAGE_BYTES 必须大于单文件限制'); }
   const failures = new Map();
   const limits = new Map();
   const stmt = sql => db.prepare(sql);
@@ -67,17 +86,18 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const workspace = () => stmt('SELECT * FROM workspace WHERE id=1').get();
   const ownerId = () => stmt('SELECT user_id FROM space_admin WHERE id=1').get()?.user_id;
   const isRemoved = id => Boolean(stmt('SELECT 1 FROM removed_users WHERE user_id=?').get(id));
-  const spaceInfo = () => ({ name: workspace().name, ownerId: ownerId() });
-  const userById = id => stmt('SELECT id, name, avatar FROM users WHERE id=? AND id NOT IN (SELECT user_id FROM removed_users)').get(id);
+  const spaceInfo = () => ({ name: workspace().name, ownerId: ownerId(), mode });
+  const userById = id => (!cloud || auth.activeId(id)) ? stmt('SELECT id, name, avatar FROM users WHERE id=? AND id NOT IN (SELECT user_id FROM removed_users)').get(id) : null;
   const tokenFrom = req => {
     const cookie = req.headers.cookie?.split(';').map(s => s.trim()).find(s => s.startsWith('linliao_session='));
     return cookie ? cookie.slice('linliao_session='.length) : '';
   };
   const authUser = req => {
+    if (cloud) return auth.user(req);
     const token = tokenFrom(req);
     return token ? stmt('SELECT id, name, avatar FROM users WHERE token_hash=? AND id NOT IN (SELECT user_id FROM removed_users)').get(hash(token)) : null;
   };
-  const canAccess = (room, userId) => room && !isRemoved(userId) && (room.kind === 'public' || JSON.parse(room.members).includes(userId));
+  const canAccess = (room, userId) => room && !isRemoved(userId) && (!cloud || auth.activeId(userId)) && (room.kind === 'public' || JSON.parse(room.members).includes(userId));
   const requireRoom = (id, userId) => {
     const room = typeof id === 'string' ? stmt('SELECT * FROM rooms WHERE id=?').get(id) : null;
     if (!canAccess(room, userId)) throw fail('无法访问这个会话', 403);
@@ -97,7 +117,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const onlineIds = () => new Set([...sockets].filter(s => s.readyState === WebSocket.OPEN).map(s => s.userId));
   const users = () => {
     const online = onlineIds();
-    return stmt('SELECT id, name, avatar FROM users ORDER BY created_at').all().map(user => ({ ...user, removed: isRemoved(user.id), online: !isRemoved(user.id) && online.has(user.id) }));
+    const rows = stmt(cloud ? "SELECT u.id,u.name,u.avatar FROM users u JOIN accounts a ON a.user_id=u.id WHERE a.status IN ('approved','suspended') ORDER BY u.created_at" : 'SELECT id, name, avatar FROM users ORDER BY created_at').all();
+    return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); return { ...user, removed, online: !removed && online.has(user.id) }; });
   };
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
@@ -111,7 +132,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const broadcast = (event, roomId) => {
     const payload = JSON.stringify(event);
     const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
-    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN && !isRemoved(socket.userId) && (!roomId || canAccess(room, socket.userId))) socket.send(payload);
+    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN && !isRemoved(socket.userId) && (!cloud || auth.validSocket(socket)) && (!roomId || canAccess(room, socket.userId))) {
+      if (socket.bufferedAmount > 1024 * 1024) socket.terminate(); else socket.send(payload);
+    }
   };
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
   const userCreated = (req, res, name, avatar) => {
@@ -122,31 +145,50 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     broadcast({ type: 'users', users: users() });
     return user;
   };
-  const rateLimit = (req, key, max, duration = 60000) => {
-    const id = `${req.user?.id || req.socket.remoteAddress}:${key}`;
+  const rateLimit = (req, key, max, duration = 60000, identity) => {
+    const id = `${identity || req.user?.id || req.ip || req.socket.remoteAddress}:${key}`;
     const current = limits.get(id);
+    if (!current && limits.size >= 20000) throw fail('服务繁忙，请稍后再试', 429);
     if (!current || current.until < Date.now()) limits.set(id, { count: 1, until: Date.now() + duration });
     else if (++current.count > max) throw fail('操作有些频繁，稍后再试', 429);
   };
-  const originOK = req => !req.headers.origin || req.headers.origin === `http://${req.headers.host}`;
+  const originOK = req => !req.headers.origin || (cloud ? allowedOrigins.has(req.headers.origin) : req.headers.origin === `http://${req.headers.host}`);
   app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
-      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" });
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" });
     if (req.path.startsWith('/api/')) res.set('Cache-Control', 'no-store');
+    if (cloud && req.headers.origin) {
+      if (!originOK(req)) return next(fail('请求来源无效', 403));
+      res.set({ 'Access-Control-Allow-Origin': req.headers.origin, 'Access-Control-Allow-Credentials': 'true' });
+      res.vary('Origin');
+    }
+    if (cloud && req.method === 'OPTIONS') {
+      res.set({ 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Linliao, X-Setup-Key', 'Access-Control-Max-Age': '600' });
+      return res.sendStatus(204);
+    }
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (!originOK(req) || req.get('X-Linliao') !== '1')) return next(fail('请求来源无效', 403));
     next();
   });
   app.use(express.json({ limit: '64kb' }));
-  app.get('/api/health', (_req, res) => res.json({ app: 'linliao', version: '1.3.0' }));
+  if (cloud) {
+    try { auth = await createAuth({ db, app, production, rateLimit,
+      closeUser: (id, sessionHash) => { for (const socket of sockets) if (sessionHash ? socket.sessionHash === sessionHash : socket.userId === id) socket.close(4001, 'account-changed'); },
+      changed: () => { broadcast({ type: 'users', users: users() }); broadcast({ type: 'rooms' }); },
+    }); } catch (error) { db.close(); throw error; }
+  }
+  app.get('/api/health', (_req, res) => { stmt('SELECT 1').get(); res.json({ app: 'linliao', version: '1.3.0', mode, ok: true, release: process.env.CHAT_RELEASE || 'development' }); });
   app.get('/api/bootstrap', (req, res) => {
     const ws = workspace();
     const me = authUser(req);
     res.json({ configured: Boolean(ws), workspace: ws ? spaceInfo() : null,
       spaceId: ws ? stmt('SELECT space_id FROM space_identity WHERE id=1').get().space_id : null,
-      canCreate: loopback(req.socket.remoteAddress) && req.get('X-Setup-Key') === setupKey,
+      mode, account: cloud ? auth.account(req) : null,
+      canCreate: !cloud && loopback(req.socket.remoteAddress) && req.get('X-Setup-Key') === setupKey,
       me, ...(me ? stateFor(me) : {}) });
   });
+  // 公网模式完全关闭邀请码、本机初始化和设备旧凭证入口，不能绕过账号审核。
+  if (cloud) app.use(['/api/setup', '/api/join', '/api/device', '/api/remove-member', '/api/logout'], (_req, _res, next) => next(fail('请使用账号登录和用户管理', 403)));
   app.post('/api/setup', (req, res) => {
     if (!loopback(req.socket.remoteAddress) || req.get('X-Setup-Key') !== setupKey) throw fail('请在创建空间的 Mac 上操作', 403);
     if (workspace()) throw fail('空间已创建，请直接加入', 409);
@@ -206,7 +248,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   });
   app.use('/api', (req, _res, next) => {
     req.user = authUser(req);
-    next(req.user ? undefined : fail('请先加入空间', 401));
+    next(req.user ? undefined : fail(cloud ? '请先登录并等待管理员审核通过' : '请先加入空间', 401));
   });
   app.get('/api/state', (req, res) => res.json(stateFor(req.user)));
   app.post('/api/remove-member', (req, res) => {
@@ -291,6 +333,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   });
   app.get('/api/invite', (_req, res) => {
     const space = workspace();
+    if (cloud) return res.json({ mode, url: process.env.CHAT_PUBLIC_URL || [...allowedOrigins][0], spaceName: space.name });
     res.json({ code: space.invite_code, spaceName: space.name, addresses: lanAddresses(server.address().port) });
   });
   app.post('/api/message-reads', (req, res) => {
@@ -379,12 +422,21 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     rateLimit(req, 'upload', 30);
     // 授权发生在接收文件之前，防止向无权限会话写入磁盘。
     if (req.query.purpose !== 'avatar') requireRoom(req.query.roomId, req.user.id);
+    if (cloud) {
+      if (activeUploads >= 4) throw fail('上传服务繁忙，请稍后重试', 429);
+      const used = stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads').get().n;
+      if (used + (activeUploads + 1) * MAX_FILE > storageBudget) throw fail('空间存储不足，请联系管理员清理附件', 507);
+      activeUploads++;
+      let released = false;
+      const release = () => { if (!released) { released = true; activeUploads--; } };
+      res.once('finish', release); res.once('close', release);
+    }
     upload.single('file')(req, res, next);
   }, (req, res) => {
     const file = req.file;
     if (!file) throw fail('请选择图片或视频');
     try {
-      if (isRemoved(req.user.id)) throw fail('你已被移出空间', 401);
+      if (isRemoved(req.user.id) || (cloud && !auth.user(req))) throw fail('账号已失效，请重新登录', 401);
       const mime = detectMime(file.path);
       const isAvatar = req.query.purpose === 'avatar';
       if (!mime || (isAvatar && (!mime.startsWith('image/') || file.size > 5 * 1024 * 1024))) throw fail(isAvatar ? '头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片' : '支持 JPG、PNG、GIF、WebP、MP4、MOV 和 WebM 文件');
@@ -446,19 +498,21 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json({ ok: true });
   });
   app.use('/api', (_req, _res, next) => next(fail('接口不存在', 404)));
-  app.use(express.static(path.join(root, 'dist'), { etag: true }));
+  if (serveWeb) app.use(express.static(path.join(root, 'dist'), { etag: true }));
   app.use((error, req, res, _next) => {
     if (req.file && error instanceof multer.MulterError) { try { unlinkSync(req.file.path); } catch {} }
     const status = error.status || (error instanceof multer.MulterError ? 400 : 500);
-    if (status >= 500) console.error(error);
-    res.status(status).json({ error: error.code === 'LIMIT_FILE_SIZE' ? '单个文件不能超过 100 MB' : status >= 500 ? '操作未完成，请稍后重试' : error.message });
+    if (status >= 500) console.error({ message: error.message, code: error.code });
+    res.status(status).json({ error: error.code === 'LIMIT_FILE_SIZE' ? '单个文件不能超过 100 MB' : status === 507 ? '空间存储不足，请联系管理员清理附件' : status >= 500 ? '操作未完成，请稍后重试' : error.message });
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
   server.on('upgrade', (req, socket, head) => {
     const user = authUser(req);
     if (req.url !== '/socket' || !originOK(req) || !user) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
+    if (sockets.size >= 1024 || [...sockets].filter(item => item.userId === user.id).length >= 10) { socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n'); socket.destroy(); return; }
     wss.handleUpgrade(req, socket, head, ws => {
       ws.userId = user.id;
+      if (cloud) ws.sessionHash = auth.tokenHash(req);
       ws.alive = true;
       sockets.add(ws);
       ws.on('pong', () => { ws.alive = true; });
@@ -470,10 +524,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   });
   const heartbeat = setInterval(() => {
     for (const socket of sockets) {
-      if (!socket.alive) socket.terminate();
+      if (cloud && !auth.validSocket(socket)) socket.close(4001, 'session-expired');
+      else if (!socket.alive) socket.terminate();
       else { socket.alive = false; socket.ping(); }
     }
     cleanFiles();
+    auth?.cleanup();
     for (const [key, value] of limits) if (value.until < Date.now()) limits.delete(key);
     for (const [key, value] of failures) if (value.until < Date.now()) failures.delete(key);
     const old = stmt('SELECT id FROM uploads WHERE claimed=0 AND created_at<?').all(Date.now() - 86400000);
@@ -497,8 +553,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
 // Node 以真实路径加载入口模块，经符号链接（如 macOS 的 /tmp）启动时 argv[1] 需先解析再比较。
 const entryPath = value => { try { return realpathSync(value); } catch { return path.resolve(value); } };
 if (process.argv[1] && entryPath(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const running = await startServer({ port: Number(process.env.PORT) || 4318, dataDir: process.env.CHAT_DATA_DIR || path.join(root, '.data') });
-  console.log(`虾扯蛋已启动：${running.setupUrl}`);
+  const running = await startServer({ port: Number(process.env.PORT) || 4318, host: process.env.HOST || '0.0.0.0', dataDir: process.env.CHAT_DATA_DIR || path.join(root, '.data') });
+  console.log(`虾扯蛋已启动：${process.env.CHAT_MODE === 'cloud' || process.env.NODE_ENV === 'production' ? running.address : running.setupUrl}`);
   const shutdown = async () => { await running.close(); process.exit(0); };
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, shutdown);
   // 桌面端以子进程启动时，父进程退出（包括崩溃）会关闭标准输入，此时随之退出，避免遗留进程占用端口。

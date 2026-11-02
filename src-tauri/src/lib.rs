@@ -23,6 +23,11 @@ const SEEN_LIMIT: usize = 2000;
 // 更新签名公钥与发布仓库在构建时注入（见 .github/workflows/build.yml）；未注入公钥的构建不启用自动更新。
 const UPDATER_PUBKEY: Option<&str> = option_env!("LINLIAO_UPDATER_PUBKEY");
 const UPDATE_REPO: Option<&str> = option_env!("LINLIAO_UPDATE_REPO");
+const CLOUD_URL: Option<&str> = option_env!("LINLIAO_CLOUD_URL");
+
+fn cloud_origin() -> Option<String> {
+  CLOUD_URL.filter(|value| !value.trim().is_empty()).map(|value| value.trim().trim_end_matches('/').to_string())
+}
 
 fn updater_pubkey() -> Option<&'static str> {
   UPDATER_PUBKEY.filter(|key| !key.trim().is_empty())
@@ -164,7 +169,7 @@ fn open_notification(app: &AppHandle, id: i32) {
 }
 
 fn go_home(app: &AppHandle, desktop: &Desktop) {
-  if let Some((address, _)) = desktop.local_address() {
+  if let Some(address) = cloud_origin().or_else(|| desktop.local_address().map(|(address, _)| address)) {
     let _ = open_address(app, desktop, &address, None);
   }
 }
@@ -211,7 +216,7 @@ fn tray_menu(app: &AppHandle, unread: usize, private_mode: bool, notifications: 
     &MenuItem::with_id(app, "tray-test", "发送测试提醒", notifications, None::<&str>)?,
     &MenuItem::with_id(app, "tray-settings", settings_label, true, None::<&str>)?,
     &PredefinedMenuItem::separator(app)?,
-    &MenuItem::with_id(app, "home", "返回本机空间", true, None::<&str>)?,
+    &MenuItem::with_id(app, "home", if cloud_origin().is_some() { "返回聊天空间" } else { "返回本机空间" }, true, None::<&str>)?,
     &MenuItem::with_id(app, "quit", "退出虾扯蛋", true, None::<&str>)?,
   ])
 }
@@ -222,7 +227,7 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
       &PredefinedMenuItem::about(app, Some("关于虾扯蛋"), None)?,
       &PredefinedMenuItem::separator(app)?,
       &MenuItem::with_id(app, "show", "显示虾扯蛋", true, None::<&str>)?,
-      &MenuItem::with_id(app, "home", "返回本机空间", true, None::<&str>)?,
+      &MenuItem::with_id(app, "home", if cloud_origin().is_some() { "返回聊天空间" } else { "返回本机空间" }, true, None::<&str>)?,
       &PredefinedMenuItem::separator(app)?,
       &PredefinedMenuItem::hide(app, Some("隐藏虾扯蛋"))?,
       &PredefinedMenuItem::hide_others(app, Some("隐藏其他应用"))?,
@@ -289,6 +294,7 @@ struct Identity { name: String, avatar: String }
 
 #[tauri::command]
 async fn desktop_connect(app: AppHandle, webview: Webview, desktop: Shared<'_>, addresses: Vec<String>, invite_code: String, identity: Identity) -> Result<bool, String> {
+  if cloud_origin().is_some() { return Err("请通过账号登录正式聊天空间".into()); }
   require_trusted(&webview, &desktop)?;
   {
     let mut session = desktop.session.lock().unwrap();
@@ -589,6 +595,7 @@ fn create_window(app: &AppHandle, desktop: Arc<Desktop>, start: Url) -> tauri::R
 }
 
 fn initial_origin(desktop: &Desktop) -> Option<String> {
+  if let Some(origin) = cloud_origin() { return Some(origin); }
   let saved = desktop.session.lock().unwrap().config.server.clone();
   let local = desktop.local_address().map(|(address, _)| address);
   match saved {
@@ -627,12 +634,25 @@ pub fn run() {
         config.legacy_sessions = server::legacy_sessions(&node, &root.join("Cookies"));
         config.legacy_imported = true;
       }
-      let script = app.path().resource_dir()?.join("app").join("server").join("index.js");
-      let local = server::start(&node, &script, &root.join("space")).map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+      // 正式客户端只连接构建时指定的 HTTPS 站点，不再启动本机聊天服务。
+      let local = if let Some(origin) = cloud_origin() {
+        let url = Url::parse(&origin)?;
+        if url.scheme() != "https" || url.origin().ascii_serialization() != origin || !url.username().is_empty() || url.password().is_some() {
+          return Err("LINLIAO_CLOUD_URL 必须是 HTTPS 根地址".into());
+        }
+        let mut capability: Value = serde_json::from_str(include_str!("../capabilities/desktop-bridge.json"))?;
+        capability["identifier"] = json!("cloud-desktop-bridge");
+        capability["remote"]["urls"] = json!([format!("{origin}/*")]);
+        app.add_capability(capability.to_string().as_str())?;
+        None
+      } else {
+        let script = app.path().resource_dir()?.join("app").join("server").join("index.js");
+        Some(server::start(&node, &script, &root.join("space")).map_err(Box::<dyn std::error::Error>::from)?)
+      };
       let desktop = Arc::new(Desktop {
         config_path,
         session: Mutex::new(Session { config, ..Default::default() }),
-        local: Mutex::new(Some(local)),
+        local: Mutex::new(local),
         quitting: AtomicBool::new(false),
         next_notification: AtomicI32::new(1),
         tray: Mutex::new(None),

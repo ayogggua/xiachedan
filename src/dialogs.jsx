@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell, LoaderCircle } from 'lucide-react';
+import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell, LoaderCircle, LogOut, KeyRound, Copy } from 'lucide-react';
 import { api, upload, formatSize } from './api';
 import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
@@ -26,13 +26,13 @@ export function ProfileDialog({ me, onClose, onUpdate, notify }) {
   return <Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { avatarUpload(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} />{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>;
 }
 
-export function InviteDialog({ onClose, notify }) {
+export function InviteDialog({ cloud, onClose, notify }) {
   const [invite, setInvite] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => { api('invite').then(setInvite).catch(error => setError(error.message)); }, []);
-  return <Modal title="喊上同事，一起扯两句" subtitle="复制一份邀请，同事粘贴一次就能加入。" onClose={onClose}>
+  return <Modal title="喊上同事，一起扯两句" subtitle={cloud ? '分享注册链接，管理员审核通过后即可加入。' : '复制一份邀请，同事粘贴一次就能加入。'} onClose={onClose}>
     {error && <p className="form-error" role="alert">{error}</p>}
-    {invite ? <InvitationShare invite={invite} notify={notify} /> : !error && <p className="inline-note">正在获取邀请信息…</p>}
+    {invite ? cloud ? <div className="cloud-invite"><input aria-label="注册链接" value={invite.url || location.origin} readOnly onFocus={event => event.target.select()} /><button className="primary-button full" onClick={() => navigator.clipboard.writeText(invite.url || location.origin).then(() => notify('注册链接已复制')).catch(() => setError('复制失败，请选中上方链接复制'))}><Copy size={15} />复制注册链接</button></div> : <InvitationShare invite={invite} notify={notify} /> : !error && <p className="inline-note">正在获取邀请信息…</p>}
   </Modal>;
 }
 
@@ -115,16 +115,24 @@ function UpdateSettings({ update, onUpdate, notify }) {
   </section>;
 }
 
-export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onCleared, onClose, notify }) {
-  return <Modal title="设置" subtitle="所有聊天都通过局域网连接。" onClose={onClose}>
+export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onCleared, onClose, notify }) {
+  const cloud = workspace.mode === 'cloud';
+  const [loggingOut, setLoggingOut] = useState(false);
+  async function logout() {
+    setLoggingOut(true);
+    try { await api('auth/logout', {}); location.reload(); }
+    catch (error) { notify(error.message); setLoggingOut(false); }
+  }
+  return <Modal title="设置" subtitle={cloud ? undefined : '所有聊天都通过局域网连接。'} onClose={onClose}>
     <section className="appearance-settings"><h3>外观</h3><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div></section>
     <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
-    <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>
-    {workspace.ownerId === me.id && <StorageSettings onCleared={onCleared} notify={notify} />}
+    {!cloud && <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>}
+    {cloud && <section className="account-settings"><h3>账号</h3><p>{me.phone || me.email}</p><div className="account-actions"><button className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button><button className="secondary-button" disabled={loggingOut} onClick={logout}><LogOut size={15} />{loggingOut ? '正在退出…' : '退出登录'}</button></div></section>}
+    {workspace.ownerId === me.id && <StorageSettings cloud={cloud} onCleared={onCleared} notify={notify} />}
     {window.desktop?.updates && <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />}
     {window.desktop && <>{window.desktop.getState && <DesktopSettings notify={notify} />}
-      <h3 className="join-space-heading">加入另一个空间</h3><JoinSpaceForm identity={me} />
-      <button type="button" className="text-button back-link" onClick={() => window.desktop.home().catch(error => notify(error.message))}>返回本机空间</button>
+      {!cloud && <><h3 className="join-space-heading">加入另一个空间</h3><JoinSpaceForm identity={me} />
+      <button type="button" className="text-button back-link" onClick={() => window.desktop.home().catch(error => notify(error.message))}>返回本机空间</button></>}
     </>}
   </Modal>;
 }
@@ -159,7 +167,7 @@ export function RecallDialog({ message, onClose, onRecalled }) {
   </Modal>;
 }
 
-function StorageSettings({ onCleared, notify }) {
+function StorageSettings({ cloud, onCleared, notify }) {
   const [info, setInfo] = useState(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmation, setConfirmation] = useState('');
@@ -180,7 +188,7 @@ function StorageSettings({ onCleared, notify }) {
   }
   return <section className="storage-settings"><h3>聊天记录与存储</h3>
     <p className="inline-note">{info ? `${info.messageCount} 条记录 · 聊天附件 ${size(info.attachmentBytes)} · 数据库 ${size(info.databaseBytes)}` : '正在统计空间占用…'}</p>
-    <p className="inline-note">清空整个空间所有会话的聊天记录及已发送的图片、视频，释放创建空间的电脑上的存储。成员、头像和群聊会保留。</p>
+    <p className="inline-note">清空整个空间所有会话的聊天记录及已发送的图片、视频，释放{cloud ? '服务器' : '创建空间的电脑'}上的存储。成员、头像和群聊会保留。</p>
     <button className="secondary-button storage-clear-button" disabled={!info || busy} onClick={() => setConfirming(true)}>清空空间聊天记录</button>
     {error && <p className="form-error" role="alert">{error}</p>}
     {confirming && <Modal title="清空整个空间的聊天记录？" subtitle="所有成员的大厅、群聊和私聊记录都会删除，图片与视频文件也会删除。此操作无法恢复。" onClose={() => !busy && setConfirming(false)}>

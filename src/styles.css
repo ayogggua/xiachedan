@@ -470,3 +470,31 @@ button.message-read-status.is-read { color: var(--text-1); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* 账号与审核沿用现有玻璃、字体和按钮。 */
+.account-submit { margin-top: 22px; }
+.account-summary { display: flex; align-items: center; gap: 12px; margin: 24px 0; padding: 16px; border-radius: 12px; background: var(--fill-1); }
+.account-summary-copy { flex: 1; min-width: 0; }
+.account-summary b, .account-summary small { display: block; overflow-wrap: anywhere; }
+.account-summary small { margin-top: 5px; color: var(--text-2); }
+.account-status { font-size: 11px; color: var(--text-2); white-space: nowrap; }
+.admin-entry { display: flex; align-items: center; gap: 10px; margin: 0 12px 8px; padding: 10px; border: 0; border-radius: 10px; background: var(--fill-1); color: var(--text-2); text-align: left; }
+.admin-entry:hover { background: var(--fill-2); color: var(--text-1); }
+.admin-entry span { flex: 1; }
+.account-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 8px; }
+.account-tabs .selected { color: var(--accent-bright); box-shadow: inset 0 0 0 1px var(--accent); }
+.account-row { display: flex; align-items: center; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.account-person { flex: 1; min-width: 0; }
+.account-person b, .account-person span, .account-person small { display: block; overflow-wrap: anywhere; }
+.account-person span { margin-top: 4px; color: var(--text-2); }
+.account-person small { margin-top: 4px; color: var(--text-3); font-size: 11px; }
+.account-actions, .account-pagination { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.account-pagination { justify-content: space-between; margin-top: 20px; color: var(--text-2); }
+.account-settings { margin-top: 24px; }
+.account-settings h3 { font-size: 13px; }
+.account-settings p { color: var(--text-2); margin: 8px 0 14px; overflow-wrap: anywhere; }
+.cloud-invite { display: grid; gap: 14px; margin-top: 20px; }
+@media (max-width: 600px) {
+  .account-row { flex-wrap: wrap; }
+  .account-row .account-actions { flex-basis: 100%; padding-left: 48px; }
+}

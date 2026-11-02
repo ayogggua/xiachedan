@@ -13,6 +13,27 @@ export function openStore(directory) {
       id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT NOT NULL,
       token_hash TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL
     );
+    -- role: user 普通用户；admin 管理员；super_admin 超级管理员。
+    -- status: pending 待审核；approved 已通过；rejected 已拒绝；suspended 已停用。
+    -- 手机号与邮箱是可选的唯一登录名；密码只保存带随机盐的 scrypt 摘要。
+    CREATE TABLE IF NOT EXISTS accounts (
+      user_id TEXT PRIMARY KEY, phone TEXT UNIQUE, email TEXT UNIQUE,
+      password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user',
+      status TEXT NOT NULL DEFAULT 'pending', must_change_password INTEGER NOT NULL DEFAULT 0,
+      reviewed_by TEXT, reviewed_at INTEGER, updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS accounts_status ON accounts(status);
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
+    -- action: approve 审核通过；reject 拒绝；suspend 停用；role 调整角色；password 修改密码。
+    CREATE TABLE IF NOT EXISTS account_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT NOT NULL,
+      user_id TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL, created_at INTEGER NOT NULL
+    );
     -- kind: public 公共大厅；group 多人群聊；direct 两人私聊。不使用外键或枚举。
     CREATE TABLE IF NOT EXISTS space_admin (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS removed_users (user_id TEXT PRIMARY KEY, removed_at INTEGER NOT NULL);
