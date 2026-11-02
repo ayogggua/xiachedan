@@ -225,6 +225,7 @@ textarea { resize: none; line-height: 20px; }
 .offline-pill { position: absolute; z-index: 3; top: 56px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; font-size: 12px; color: var(--warning); white-space: nowrap; }
 
 .message-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 60px max(24px, calc((100% - 860px) / 2)) 104px; scroll-padding-bottom: 104px; }
+.chat-column:has(.announcement-banner) .message-scroll { padding-top: 112px; }
 .channel-welcome { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px 16px 24px; text-align: center; }
 .channel-welcome.has-messages { padding-bottom: 8px; }
 .welcome-icon { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--fill-2); color: var(--text-2); margin-bottom: 4px; }
@@ -383,6 +384,21 @@ button.message-read-status.is-read { color: var(--text-1); }
 .history-entry { display: flex; align-items: center; gap: 10px; margin: 0 6px 6px; padding: 8px; border-radius: 10px; text-align: left; color: var(--text-2); }
 .history-entry span { flex: 1; color: var(--text-1); font-weight: 500; }
 .history-title { flex: 1; }
+.owner-tag { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 0 5px; border-radius: 6px; background: rgba(232, 120, 79, .14); color: var(--mention); font-size: 10px; line-height: 16px; font-weight: 600; vertical-align: 1px; }
+.announcement-card { margin: 0 6px 6px; padding: 8px 10px; border-radius: 10px; background: var(--fill-1); }
+.announcement-heading { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12px; }
+.announcement-heading b { flex: 1; color: var(--text-1); }
+.announcement-heading .text-button { font-size: 12px; }
+.announcement-card p { margin-top: 4px; font-size: 12px; line-height: 18px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.leave-group { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 8px 6px 10px; padding: 8px; border-radius: 10px; color: var(--danger-text); font-weight: 500; }
+.announcement-banner { position: absolute; z-index: 2; top: 56px; left: 24px; right: 24px; max-width: 760px; margin: 0 auto; display: flex; align-items: flex-start; gap: 8px; padding: 8px 6px 8px 12px; border-radius: 14px; font-size: 12px; line-height: 18px; }
+.announcement-banner > svg { flex: none; margin-top: 2px; color: var(--accent-icon); }
+.announcement-banner p { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
+.announcement-banner b { margin-right: 6px; }
+.announcement-banner .icon-button { width: 24px; height: 24px; flex: none; }
+.announcement-input { width: 100%; resize: vertical; }
+.field-hint { display: block; margin-top: 4px; text-align: right; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+@media (hover: hover) and (pointer: fine) { .leave-group:hover { background: rgba(255, 105, 97, .1); } }
 .members-panel-heading:has(.history-title) { justify-content: flex-start; gap: 4px; padding-left: 6px; }
 .history-search { margin: 0 10px 8px; }
 .history-results { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 8px; }

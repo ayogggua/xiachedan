@@ -66,6 +66,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 群聊设置：群主（为空或已不在群里时由最早的成员接任）与群公告。
+    CREATE TABLE IF NOT EXISTS room_settings (room_id TEXT PRIMARY KEY, owner_id TEXT, announcement TEXT NOT NULL DEFAULT '', announcement_at INTEGER, announcement_by TEXT);
     -- 每条消息、每位接收者仅保存一次实际查看时间。
     CREATE TABLE IF NOT EXISTS message_reads (
       message_id TEXT NOT NULL, user_id TEXT NOT NULL, read_at INTEGER NOT NULL,

@@ -168,6 +168,40 @@ export function RemoveMemberDialog({ user, onClose, onRemoved }) {
   </Modal>;
 }
 
+// 通用确认框：onConfirm 抛错时显示错误并允许重试。
+export function ConfirmDialog({ title, subtitle, confirmLabel, busyLabel, danger = false, onConfirm, onClose }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function confirm() {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { await onConfirm(); onClose(); } catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title={title} subtitle={subtitle} onClose={() => !busy && onClose()}>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className={`primary-button ${danger ? 'danger-button' : ''}`} disabled={busy} onClick={confirm}>{busy ? busyLabel : confirmLabel}</button></div>
+  </Modal>;
+}
+
+// 群主修改群名或群公告；公告留空即撤下。
+export function GroupEditDialog({ room, field, onClose, onSaved }) {
+  const isName = field === 'name';
+  const [value, setValue] = useState(isName ? room.name : room.announcement?.text || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await api('room-settings', { roomId: room.id, [field]: value }); await onSaved(); onClose(); }
+    catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title={isName ? '修改群名' : '群公告'} subtitle={isName ? '群里的所有人都会看到新的群名。' : '公告会显示在群聊顶部，留空即撤下公告。'} onClose={() => !busy && onClose()}><form onSubmit={submit}>
+    {isName ? <input autoFocus aria-label="群聊名称" value={value} maxLength={24} required onChange={event => setValue(event.target.value)} />
+      : <><textarea autoFocus className="announcement-input" aria-label="群公告内容" value={value} maxLength={500} rows={5} onChange={event => setValue(event.target.value)} placeholder="例如：周五 18:00 发版，请提前合并代码" /><small className="field-hint">{value.trim().length}/500</small></>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || (isName && !value.trim())}>{busy ? '正在保存…' : '保存'}</button></div>
+  </form></Modal>;
+}
+
 export function RecallDialog({ message, onClose, onRecalled }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
