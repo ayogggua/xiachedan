@@ -177,7 +177,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       changed: () => { broadcast({ type: 'users', users: users() }); broadcast({ type: 'rooms' }); },
     }); } catch (error) { db.close(); throw error; }
   }
-  app.get('/api/health', (_req, res) => { stmt('SELECT 1').get(); res.json({ app: 'linliao', version: '1.4.0', mode, ok: true, release: process.env.CHAT_RELEASE || 'development' }); });
+  app.get('/api/health', (_req, res) => { stmt('SELECT 1').get(); res.json({ app: 'linliao', version: '1.4.1', mode, ok: true, release: process.env.CHAT_RELEASE || 'development' }); });
   app.get('/api/bootstrap', (req, res) => {
     const ws = workspace();
     const me = authUser(req);
