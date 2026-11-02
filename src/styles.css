@@ -410,6 +410,19 @@ button.message-read-status.is-read { color: var(--text-1); }
 .history-results { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 8px; }
 .history-empty { display: flex; align-items: center; gap: 6px; padding: 8px; font-size: 12px; line-height: 18px; color: var(--text-2); }
 .history-result { display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 8px; border-radius: 10px; text-align: left; }
+.switch-hint { flex: none; height: 18px; padding: 0 5px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--edge); font-size: 10px; line-height: 18px; color: var(--text-2); font-family: inherit; }
+.quick-switcher { width: min(520px, calc(100vw - 24px)); max-height: min(480px, calc(100dvh - 120px)); margin: 12vh auto auto; padding: 0; border: 0; border-radius: 16px; color: var(--text-1); background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-2); overflow: hidden; }
+.quick-switcher[open] { display: flex; flex-direction: column; }
+.quick-switcher::backdrop { background: rgba(0, 0, 0, .18); }
+.quick-search { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--edge); color: var(--text-2); }
+.quick-search input { flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; box-shadow: none; font-size: 16px; color: var(--text-1); }
+.quick-search input:focus { outline: none; box-shadow: none; }
+.quick-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
+.quick-list button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px; border-radius: 10px; text-align: left; }
+.quick-list button.active { background: var(--fill-3); }
+.quick-list .room-avatar { width: 24px; height: 24px; border-radius: 7px; }
+.quick-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick-empty { padding: 12px 10px; font-size: 13px; color: var(--text-2); }
 .history-result .room-avatar { width: 24px; height: 24px; border-radius: 7px; }
 .sidebar-messages { margin-top: 4px; }
 .history-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

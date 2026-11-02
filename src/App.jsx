@@ -12,6 +12,7 @@ import useConversations from './useConversations';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
 import ImageViewer from './ImageViewer';
+import QuickSwitcher from './QuickSwitcher';
 import HistorySearch, { SearchResult, SearchStatus, useMessageSearch } from './HistorySearch';
 import { previewText, readStorage } from './history';
 
@@ -26,6 +27,7 @@ export default function App() {
   const [selection, setSelection] = useState(null);
   const [forwarding, setForwarding] = useState(null);
   const [groupAction, setGroupAction] = useState(null);
+  const [switcher, setSwitcher] = useState(false);
   const [dismissedNotices, setDismissedNotices] = useState(() => readStorage('linliao.announcements', {}));
   const [readDetail, setReadDetail] = useState(null);
   const [recalling, setRecalling] = useState(null);
@@ -118,6 +120,20 @@ export default function App() {
   useEffect(() => { localStorage.setItem('linliao.read', JSON.stringify(lastRead)); }, [lastRead]);
   useEffect(() => { localStorage.setItem('linliao.announcements', JSON.stringify(dismissedNotices)); }, [dismissedNotices]);
   useEffect(() => { if (privateMode) setPreview(null); }, [privateMode]);
+  // ⌘K 打开快速切换，⌘1–9 切到侧栏第 N 个会话（Windows 与网页端非 Mac 用 Ctrl）；有其他弹窗时不响应。
+  const orderedRef = useRef([]);
+  useEffect(() => {
+    const onKey = event => {
+      const mac = window.desktop ? window.desktop.platform === 'macos' : /Mac/i.test(navigator.platform);
+      if (!(mac ? event.metaKey : event.ctrlKey) || event.shiftKey || event.altKey) return;
+      if (document.querySelector('dialog[open]:not(.quick-switcher)')) return;
+      if (event.key.toLowerCase() === 'k') { event.preventDefault(); setSwitcher(value => !value); return; }
+      const target = /^[1-9]$/.test(event.key) && orderedRef.current[Number(event.key) - 1];
+      if (target) { event.preventDefault(); setSwitcher(false); setSelected(target.id); setMobileChat(true); setReadDetail(null); setPanelView('members'); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   useEffect(() => { setSelection(null); setReactingTo(null); }, [selected]);
   useEffect(() => {
     if (!selection) return;
@@ -246,6 +262,11 @@ export default function App() {
   const query = search.trim().toLowerCase();
   const filtered = rooms.filter(room => (!room.hidden || query) && room.name.toLowerCase().includes(query));
   const peer = room?.kind === 'direct' ? peerOf(room) : null;
+  // 与侧栏顺序一致：置顶、群聊、私聊（已移除的对话不在内）；⌘1–9 按这个顺序切换。
+  const visible = rooms.filter(target => !target.hidden);
+  const ordered = [...visible.filter(target => target.pinned), ...visible.filter(target => !target.pinned && target.kind !== 'direct'), ...visible.filter(target => !target.pinned && target.kind === 'direct')];
+  orderedRef.current = ordered;
+  const switchKey = (window.desktop ? window.desktop.platform === 'macos' : /Mac/i.test(navigator.platform)) ? '⌘K' : 'Ctrl K';
   const isOwner = state.workspace.ownerId === state.me.id;
   const cloud = state.workspace.mode === 'cloud';
   const isAdmin = ['admin', 'super_admin'].includes(state.me.role);
@@ -278,7 +299,7 @@ export default function App() {
     <aside className="sidebar glass" aria-label="会话列表">
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
       <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></div>
-      <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} />}</label>
+      <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>
       <nav className="conversation-scroll" aria-label="会话">
         {filtered.some(room => room.pinned) && <><div className="section-label"><span>置顶</span></div>{filtered.filter(room => room.pinned).map(roomButton)}</>}
         <div className="section-label"><span>群聊</span><IconButton icon={Plus} label="新建群聊" size={15} onClick={() => setModal('group')} /></div>{filtered.filter(room => !room.pinned && room.kind !== 'direct').map(roomButton)}
@@ -363,6 +384,7 @@ export default function App() {
       onConfirm={async () => { await api('room-owner', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify('群主已转让'); }} onClose={() => setGroupAction(null)} />}
     {groupAction?.type === 'leave' && room && <ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将看不到这个群的消息，需要群里的人重新邀请才能回来。'} confirmLabel="退出群聊" busyLabel="正在退出…" danger
       onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}
+    {switcher && <QuickSwitcher rooms={ordered} icon={target => roomIcon(target, 24)} unread={unread} onOpen={id => { setSwitcher(false); openRoom(id); }} onClose={() => setSwitcher(false)} />}
     {forwarding && <ForwardDialog count={forwarding.length} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} />}
     {recalling && <RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => { syncHistory([message]); notify('消息已撤回'); }} />}
     {toastElement}
