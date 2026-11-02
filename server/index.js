@@ -450,12 +450,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     upload.single('file')(req, res, next);
   }, (req, res) => {
     const file = req.file;
-    if (!file) throw fail('请选择图片或视频');
+    if (!file) throw fail('请选择要发送的文件');
     try {
       if (isRemoved(req.user.id) || (cloud && !auth.user(req))) throw fail('账号已失效，请重新登录', 401);
-      const mime = detectMime(file.path);
       const isAvatar = req.query.purpose === 'avatar';
-      if (!mime || (isAvatar && (!mime.startsWith('image/') || file.size > 5 * 1024 * 1024))) throw fail(isAvatar ? '头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片' : '支持 JPG、PNG、GIF、WebP、MP4、MOV 和 WebM 文件');
+      // 能识别为图片或视频的才在页面内预览，其余一律作为普通文件，只允许下载。
+      const mime = detectMime(file.path) || (isAvatar ? null : 'application/octet-stream');
+      if (!mime || (isAvatar && (!mime.startsWith('image/') || file.size > 5 * 1024 * 1024))) throw fail('头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片');
       const attachment = { id: file.filename, name: textValue(Buffer.from(file.originalname, 'latin1').toString('utf8'), 200), mime, size: file.size };
       stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(attachment.id, req.user.id, isAvatar ? null : req.query.roomId, attachment.name, mime, file.size, isAvatar ? 'avatar' : 'message', isAvatar ? 1 : 0, Date.now());
@@ -524,8 +525,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       requireRoom(file.room_id, req.user.id);
       if (!file.claimed && file.owner_id !== req.user.id) throw fail('文件尚未发送', 403);
     }
-    res.set('Content-Type', file.mime);
-    if (req.query.download === '1') res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    // 普通文件只能下载：不按文件内容渲染，也不允许执行脚本。
+    const previewable = /^(image|video)\//.test(file.mime);
+    res.set('Content-Type', previewable ? file.mime : 'application/octet-stream');
+    if (!previewable) res.set('Content-Security-Policy', "sandbox; default-src 'none'");
+    if (!previewable || req.query.download === '1') res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
     res.sendFile(path.join(uploadDir, file.id));
   });
   app.post('/api/logout', (req, res) => {

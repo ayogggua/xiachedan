@@ -297,6 +297,20 @@ button.message-read-status.is-read { color: var(--text-1); }
 .attachment-caption small { font-size: 10px; font-variant-numeric: tabular-nums; }
 .attachment-caption a { display: inline-flex; color: inherit; padding: 2px; }
 .mine .attachment-caption { color: rgba(255, 255, 255, .8); }
+.file-card { display: flex; align-items: center; gap: 10px; width: 300px; max-width: 100%; padding: 8px 10px 8px 8px; border-radius: 12px; background: var(--fill-1); color: inherit; text-decoration: none; }
+.file-card + .file-card, .attachment + .file-card, .file-card + .attachment { margin-top: 4px; }
+.file-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 36px; height: 40px; border-radius: 8px; background: var(--fill-2); color: var(--text-2); }
+.file-icon small { position: absolute; bottom: 3px; font-size: 8px; line-height: 9px; font-weight: 700; letter-spacing: .02em; color: var(--text-1); }
+.file-icon svg { margin-top: -8px; }
+.file-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.file-copy span { font-size: 13px; line-height: 17px; font-weight: 500; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.file-copy small { font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.file-card > svg { flex: none; color: var(--text-2); }
+.mine .file-card { background: rgba(0, 0, 0, .16); }
+.mine .file-icon { background: rgba(255, 255, 255, .2); color: #fff; }
+.mine .file-icon small { color: #fff; }
+.mine .file-copy small, .mine .file-card > svg { color: rgba(255, 255, 255, .85); }
+@media (hover: hover) and (pointer: fine) { .file-card:hover { background: var(--fill-2); } .mine .file-card:hover { background: rgba(0, 0, 0, .24); } }
 .video-fallback { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 24px; text-align: center; color: var(--text-2); }
 .jump-to-latest { position: absolute; z-index: 3; bottom: 84px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; font-size: 12px; }
 .jump-to-latest:active:not(:disabled) { transform: translateX(-50%) scale(.97); }

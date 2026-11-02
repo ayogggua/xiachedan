@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply } from 'lucide-react';
+import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName } from './api';
 import { previewText } from './history';
 import appIcon from './assets/brand/app-icon.svg';
@@ -48,8 +48,18 @@ export function PrivatePreview({ privateMode, children }) {
   return <span className={`private-preview ${privateMode && !revealed ? 'masked-preview' : ''}`} onPointerEnter={() => setRevealed(true)} onPointerMove={() => setRevealed(true)} onPointerLeave={() => setRevealed(false)}>{privateMode && !revealed ? '****' : children}</span>;
 }
 
+// 普通文件：只显示名称和大小，点击下载，不在页面内打开。
+function FileCard({ file }) {
+  const extension = file.name.includes('.') ? file.name.split('.').pop().slice(0, 4).toUpperCase() : '';
+  return <a className="file-card" href={mediaUrl(file.id, true)} download title={`下载 ${file.name}`}>
+    <span className="file-icon"><FileText size={20} strokeWidth={1.6} />{extension && <small>{extension}</small>}</span>
+    <span className="file-copy"><span>{file.name}</span><small>{formatSize(file.size)}</small></span><Download size={15} />
+  </a>;
+}
+
 function Attachment({ file, privateMode, onPreview }) {
   const [failed, setFailed] = useState(false);
+  if (!/^(image|video)\//.test(file.mime)) return <FileCard file={file} />;
   return <div className={`attachment ${file.mime.startsWith('image/') ? 'image-attachment' : 'video-attachment'}`}>
     {file.mime.startsWith('image/') ? <button className="image-button" type="button" onClick={() => !privateMode && onPreview(file)} aria-label={privateMode ? '图片内容' : '放大查看图片'}><img src={mediaUrl(file.id)} alt={file.name} loading="lazy" /></button> : <>
       {failed ? <div className="video-fallback"><Film size={26} /><p>这个视频格式暂时无法预览</p><a href={mediaUrl(file.id, true)} download>下载后播放<ArrowUpRight size={14} /></a></div> : <video src={mediaUrl(file.id)} controls preload="metadata" playsInline onError={() => setFailed(true)} />}
