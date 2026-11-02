@@ -598,6 +598,18 @@ fn create_window(app: &AppHandle, desktop: Arc<Desktop>, start: Url) -> tauri::R
     .title_bar_style(tauri::TitleBarStyle::Overlay)
     .hidden_title(true)
     .traffic_light_position(tauri::LogicalPosition::new(21.0, 30.0));
+  // WKWebView 没有下载处理时会直接取消下载：存到「下载」文件夹（重名自动编号），完成后告诉页面。
+  #[cfg(target_os = "macos")]
+  let builder = {
+    let handle = app.clone();
+    builder.on_download(move |_webview, event| {
+      if let tauri::webview::DownloadEvent::Finished { path, success, .. } = event {
+        let name = path.as_ref().and_then(|path| path.file_name()).map(|name| name.to_string_lossy().into_owned());
+        emit(&handle, &desktop, "download", json!({ "name": name, "success": success }));
+      }
+      true
+    })
+  };
   builder.build()
 }
 
