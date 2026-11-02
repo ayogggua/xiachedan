@@ -54,10 +54,20 @@ export function openStore(directory) {
     );
     -- 撤回记录只保留消息标识与撤回时间，原正文和附件引用会清除。
     CREATE TABLE IF NOT EXISTS message_recalls (message_id TEXT PRIMARY KEY, recalled_at INTEGER NOT NULL);
+    -- 引用回复：只记录被引用消息的标识，引用内容在读取时按原消息的最新状态生成。
+    CREATE TABLE IF NOT EXISTS message_replies (message_id TEXT PRIMARY KEY, reply_to TEXT NOT NULL);
+    -- @提及：user_id 为成员标识，'*' 表示 @所有人。
+    -- 转发：记录原发送人与原发送时间，用来显示「转发自」。
+    CREATE TABLE IF NOT EXISTS message_forwards (message_id TEXT PRIMARY KEY, original_sender TEXT NOT NULL, original_created_at INTEGER NOT NULL);
+    -- 表情回应：每人对同一条消息的同一个表情只记一次。
+    CREATE TABLE IF NOT EXISTS message_reactions (message_id TEXT NOT NULL, user_id TEXT NOT NULL, emoji TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (message_id, user_id, emoji));
+    CREATE TABLE IF NOT EXISTS message_mentions (message_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (message_id, user_id));
     CREATE TABLE IF NOT EXISTS pending_file_deletions (id TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 群聊设置：群主（为空或已不在群里时由最早的成员接任）与群公告。
+    CREATE TABLE IF NOT EXISTS room_settings (room_id TEXT PRIMARY KEY, owner_id TEXT, announcement TEXT NOT NULL DEFAULT '', announcement_at INTEGER, announcement_by TEXT);
     -- 每条消息、每位接收者仅保存一次实际查看时间。
     CREATE TABLE IF NOT EXISTS message_reads (
       message_id TEXT NOT NULL, user_id TEXT NOT NULL, read_at INTEGER NOT NULL,

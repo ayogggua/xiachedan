@@ -15,7 +15,7 @@ export default function useConversations({ state, spaceId, selected, onSelect, n
   const rooms = (state?.rooms || []).map(room => {
     const preference = preferences[room.id];
     const removed = Number.isSafeInteger(preference?.removedThroughSeq) && preference.removedThroughSeq >= 0;
-    return { ...room, pinned: preference?.pinned === true,
+    return { ...room, pinned: preference?.pinned === true, muted: preference?.muted === true,
       hidden: removed && (room.lastMessage?.seq || 0) <= preference.removedThroughSeq };
   }).sort((a, b) => Number(b.pinned) - Number(a.pinned) || (b.lastMessage?.seq || 0) - (a.lastMessage?.seq || 0));
   const current = useRef();
@@ -45,6 +45,8 @@ export default function useConversations({ state, spaceId, selected, onSelect, n
     if (action === 'pin' || action === 'unpin') {
       preference.pinned = action === 'pin';
       delete preference.removedThroughSeq;
+    } else if (action === 'mute' || action === 'unmute') {
+      preference.muted = action === 'mute';
     } else if (action === 'remove') {
       preference.pinned = false;
       preference.removedThroughSeq = room.lastMessage?.seq || 0;

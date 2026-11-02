@@ -3,7 +3,7 @@ import multer from 'multer';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync, linkSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore, serializeMessage as baseMessage } from './store.js';
@@ -12,6 +12,8 @@ import { createAuth } from './auth.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_FILE = 100 * 1024 * 1024;
+// 表情回应的固定选项，随会话状态下发给客户端。
+const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '🙏', '✅', '👀'];
 const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout'];
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -66,7 +68,30 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const limits = new Map();
   const stmt = sql => db.prepare(sql);
   const recalledAt = id => stmt('SELECT recalled_at FROM message_recalls WHERE message_id=?').get(id)?.recalled_at || null;
-  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id) } : null;
+  // 引用内容随原消息变化：原消息被撤回或清空后只保留标识。
+  const replyFor = id => {
+    const row = stmt('SELECT r.reply_to AS replyTo, m.* FROM message_replies r LEFT JOIN messages m ON m.id=r.reply_to WHERE r.message_id=?').get(id);
+    if (!row) return null;
+    if (!row.id || row.seq <= clearedThroughSeq()) return { id: row.replyTo, missing: true };
+    if (recalledAt(row.id)) return { id: row.id, seq: row.seq, senderId: row.sender_id, recalled: true };
+    return { id: row.id, seq: row.seq, senderId: row.sender_id, text: row.text.slice(0, 200),
+      attachments: JSON.parse(row.attachments).map(file => ({ name: file.name, mime: file.mime })) };
+  };
+  const mentionsOf = id => stmt('SELECT user_id FROM message_mentions WHERE message_id=? ORDER BY rowid').all(id).map(row => row.user_id);
+  // 按表情第一次出现的先后排列，每个表情附上回应的成员。
+  const reactionsOf = id => {
+    const groups = new Map();
+    for (const row of stmt('SELECT emoji, user_id FROM message_reactions WHERE message_id=? ORDER BY created_at, rowid').all(id)) {
+      if (!groups.has(row.emoji)) groups.set(row.emoji, []);
+      groups.get(row.emoji).push(row.user_id);
+    }
+    return [...groups].map(([emoji, users]) => ({ emoji, users }));
+  };
+  const forwardOf = id => {
+    const row = stmt('SELECT original_sender, original_created_at FROM message_forwards WHERE message_id=?').get(id);
+    return row ? { senderId: row.original_sender, createdAt: row.original_created_at } : null;
+  };
+  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -120,21 +145,43 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt(cloud ? "SELECT u.id,u.name,u.avatar FROM users u JOIN accounts a ON a.user_id=u.id WHERE a.status IN ('approved','suspended') ORDER BY u.created_at" : 'SELECT id, name, avatar FROM users ORDER BY created_at').all();
     return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); return { ...user, removed, online: !removed && online.has(user.id) }; });
   };
+  // 群主：记录的群主不在群里（或旧数据没有记录）时，由成员列表里最早的人接任；创建群聊时创建者排在第一位。
+  const groupSettings = room => {
+    const members = JSON.parse(room.members);
+    const row = stmt('SELECT * FROM room_settings WHERE room_id=?').get(room.id);
+    return { ownerId: row?.owner_id && members.includes(row.owner_id) ? row.owner_id : members[0] || null,
+      announcement: row?.announcement ? { text: row.announcement, updatedAt: row.announcement_at, updatedBy: row.announcement_by } : null };
+  };
+  const saveSettings = (roomId, change) => {
+    const current = stmt('SELECT * FROM room_settings WHERE room_id=?').get(roomId) || { owner_id: null, announcement: '', announcement_at: null, announcement_by: null };
+    const next = { ...current, ...change };
+    stmt('INSERT OR REPLACE INTO room_settings (room_id,owner_id,announcement,announcement_at,announcement_by) VALUES (?,?,?,?,?)').run(roomId, next.owner_id, next.announcement, next.announcement_at, next.announcement_by);
+  };
+  const requireGroupOwner = (roomId, userId) => {
+    const room = requireRoom(roomId, userId);
+    if (room.kind !== 'group') throw fail('只有群聊可以这样设置');
+    if (groupSettings(room).ownerId !== userId) throw fail('只有群主可以这样设置', 403);
+    return room;
+  };
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
-      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt('SELECT * FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1').get(room.id)) }));
+      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt('SELECT * FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1').get(room.id)),
+      ...(room.kind === 'group' ? groupSettings(room) : {}) }));
   const stateFor = user => {
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: user, workspace: spaceInfo(), users: users(), rooms, recalls, clearedThroughSeq: clearedThroughSeq() };
+    return { me: user, workspace: spaceInfo(), users: users(), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
   };
-  const broadcast = (event, roomId) => {
+  const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
-    const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
-    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN && !isRemoved(socket.userId) && (!cloud || auth.validSocket(socket)) && (!roomId || canAccess(room, socket.userId))) {
+    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN && !isRemoved(socket.userId) && (!cloud || auth.validSocket(socket)) && accepts(socket)) {
       if (socket.bufferedAmount > 1024 * 1024) socket.terminate(); else socket.send(payload);
     }
+  };
+  const broadcast = (event, roomId) => {
+    const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
+    deliver(event, socket => !roomId || canAccess(room, socket.userId));
   };
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
   const userCreated = (req, res, name, avatar) => {
@@ -286,6 +333,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('INSERT INTO message_recalls VALUES (?,?)').run(id, Date.now());
         stmt("UPDATE messages SET text='', attachments='[]' WHERE id=?").run(id);
         stmt('DELETE FROM message_reads WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_replies WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_reactions WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_forwards WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
@@ -305,7 +356,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose='message' AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -323,12 +374,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!cursors || typeof cursors !== 'object' || Array.isArray(cursors) ||
       Object.entries(cursors).some(([id, seq]) => !id || id.length > 100 || !Number.isSafeInteger(seq) || seq < 0)) throw fail('已读位置无效');
     const count = stmt(`SELECT COALESCE(MAX(seq), ?) AS throughSeq,
-      COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) THEN 1 ELSE 0 END), 0) AS unreadCount
+      COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) THEN 1 ELSE 0 END), 0) AS unreadCount,
+      COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls)
+        AND EXISTS (SELECT 1 FROM message_mentions WHERE message_id=messages.id AND user_id IN (?, '*')) THEN 1 ELSE 0 END), 0) AS mentionCount
       FROM messages WHERE room_id=? AND seq>?`);
     const rooms = stmt('SELECT id, kind, members FROM rooms').all().filter(room => canAccess(room, req.user.id));
     res.json({ rooms: rooms.map(room => {
       const afterSeq = Object.hasOwn(cursors, room.id) ? cursors[room.id] : 0;
-      return { id: room.id, afterSeq, ...count.get(afterSeq, req.user.id, room.id, afterSeq) };
+      return { id: room.id, afterSeq, ...count.get(afterSeq, req.user.id, req.user.id, req.user.id, room.id, afterSeq) };
     }) });
   });
   app.get('/api/invite', (_req, res) => {
@@ -355,6 +408,64 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const receipt = { roomId: room.id, userId: req.user.id, messageIds: received.map(row => row.id) };
     if (changed.length) broadcast({ type: 'message-reads', ...receipt, messageIds: changed }, room.id);
     res.json(receipt);
+  });
+  // 逐条转发到另一个会话：按原顺序生成新消息；附件为目标会话另建记录（同一文件用硬链接，失败时复制），
+  // 这样目标会话的成员不需要访问原会话就能下载，任一边撤回也只删除自己那一份。
+  app.post('/api/forward', (req, res) => {
+    rateLimit(req, 'forward', 20);
+    const target = requireRoom(req.body?.roomId, req.user.id);
+    const ids = req.body?.messageIds;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string' || !id || id.length > 100)) throw fail('请选择要转发的消息');
+    const unique = [...new Set(ids)];
+    const rows = stmt(`SELECT * FROM messages WHERE id IN (${unique.map(() => '?').join(',')}) ORDER BY seq`).all(...unique);
+    if (rows.length !== unique.length || rows.some(row => row.seq <= clearedThroughSeq() || recalledAt(row.id))) throw fail('有消息已撤回或已被清空', 404);
+    for (const row of rows) requireRoom(row.room_id, req.user.id);
+    const files = rows.flatMap(row => JSON.parse(row.attachments));
+    if (cloud && files.length) {
+      const used = stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads').get().n;
+      if (used + files.reduce((sum, file) => sum + file.size, 0) > storageBudget) throw fail('空间存储不足，请联系管理员清理附件', 507);
+    }
+    const created = [], copied = [];
+    db.exec('BEGIN');
+    try {
+      for (const row of rows) {
+        const attachments = JSON.parse(row.attachments).map(file => {
+          const id = randomUUID();
+          try { linkSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); } catch { copyFileSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); }
+          copied.push(id);
+          stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.user.id, target.id, file.name, file.mime, file.size, 'message', 1, Date.now());
+          return { ...file, id };
+        });
+        const id = randomUUID();
+        stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, target.id, req.user.id, row.text, JSON.stringify(attachments), `forward:${randomUUID()}`, Date.now());
+        const original = stmt('SELECT original_sender, original_created_at FROM message_forwards WHERE message_id=?').get(row.id);
+        stmt('INSERT INTO message_forwards VALUES (?,?,?)').run(id, original?.original_sender || row.sender_id, original?.original_created_at || row.created_at);
+        created.push(id);
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      for (const id of copied) { try { unlinkSync(path.join(uploadDir, id)); } catch {} }
+      throw error;
+    }
+    const messages = created.map(id => ({ ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] }));
+    for (const message of messages) broadcast({ type: 'message', message }, target.id);
+    res.status(201).json({ messages });
+  });
+  // 再点一次同一个表情即取消。
+  app.post('/api/reactions', (req, res) => {
+    rateLimit(req, 'reactions', 120);
+    const { messageId, emoji } = req.body || {};
+    if (typeof messageId !== 'string' || messageId.length > 100 || !REACTIONS.includes(emoji)) throw fail('表情回应无效');
+    const row = stmt('SELECT * FROM messages WHERE id=?').get(messageId);
+    if (!row || row.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
+    requireRoom(row.room_id, req.user.id);
+    if (recalledAt(row.id)) throw fail('消息已撤回');
+    const removed = stmt('DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?').run(row.id, req.user.id, emoji).changes;
+    if (!removed) stmt('INSERT INTO message_reactions VALUES (?,?,?,?)').run(row.id, req.user.id, emoji, Date.now());
+    const event = { roomId: row.room_id, messageId: row.id, reactions: reactionsOf(row.id) };
+    broadcast({ type: 'message-reactions', ...event }, row.room_id);
+    res.json(event);
   });
   app.post('/api/profile', (req, res) => {
     rateLimit(req, 'profile', 20);
@@ -384,8 +495,49 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       room = { id: randomUUID(), name, kind: 'group', members: [...new Set([req.user.id, ...ids])] };
     }
     stmt('INSERT INTO rooms (id,name,kind,members,created_at) VALUES (?,?,?,?,?)').run(room.id, room.name, room.kind, JSON.stringify(room.members), Date.now());
+    if (room.kind === 'group') saveSettings(room.id, { owner_id: req.user.id });
     broadcast({ type: 'rooms' }, room.id);
     res.status(201).json({ id: room.id });
+  });
+  // 群主改群名、写群公告（留空即撤下公告）。
+  app.post('/api/room-settings', (req, res) => {
+    rateLimit(req, 'room-settings', 30);
+    const room = requireGroupOwner(req.body?.roomId, req.user.id);
+    const { name, announcement } = req.body;
+    if ((name !== undefined && typeof name !== 'string') || (announcement !== undefined && typeof announcement !== 'string') || (name === undefined && announcement === undefined)) throw fail('群设置无效');
+    if (name !== undefined) {
+      const value = textValue(name, 24);
+      if (!value) throw fail('请输入群聊名称');
+      stmt('UPDATE rooms SET name=? WHERE id=?').run(value, room.id);
+    }
+    if (announcement !== undefined) {
+      if (announcement.trim().length > 500) throw fail('群公告最多 500 个字');
+      const text = announcement.trim();
+      saveSettings(room.id, { announcement: text, announcement_at: text ? Date.now() : null, announcement_by: text ? req.user.id : null });
+    }
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ ok: true });
+  });
+  // 退出群聊：群主退出时由最早的成员接任；最后一个人退出后群聊对所有人不可见。
+  app.post('/api/room-leave', (req, res) => {
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    if (room.kind !== 'group') throw fail('只能退出群聊');
+    const members = JSON.parse(room.members).filter(id => id !== req.user.id);
+    const ownerId = groupSettings(room).ownerId;
+    stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
+    if (ownerId === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
+    broadcast({ type: 'rooms' }, room.id);
+    deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
+    res.json({ ok: true });
+  });
+  // 群主把群主身份转给群里的另一位成员。
+  app.post('/api/room-owner', (req, res) => {
+    const room = requireGroupOwner(req.body?.roomId, req.user.id);
+    const target = req.body?.userId;
+    if (typeof target !== 'string' || target === req.user.id || !JSON.parse(room.members).includes(target) || !userById(target)) throw fail('请选择群里的另一位成员');
+    saveSettings(room.id, { owner_id: target });
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ ok: true });
   });
   app.post('/api/room-members', (req, res) => {
     rateLimit(req, 'members', 20);
@@ -405,16 +557,18 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
   });
-  // 只读检索当前会话的文字与附件文件名；撤回与已清空的消息不会命中。
+  // 只读检索文字与附件文件名：带 roomId 时只查该会话，否则查自己能访问的全部会话；撤回与已清空的消息不会命中。
   app.get('/api/search', (req, res) => {
-    const room = requireRoom(req.query.roomId, req.user.id);
+    const roomIds = req.query.roomId === undefined
+      ? stmt('SELECT * FROM rooms').all().filter(room => canAccess(room, req.user.id)).map(room => room.id)
+      : [requireRoom(req.query.roomId, req.user.id).id];
     const query = textValue(req.query.q, 100);
-    if (!query) return res.json({ messages: [] });
+    if (!query || !roomIds.length) return res.json({ messages: [] });
     rateLimit(req, 'search', 120);
     const pattern = `%${query.replace(/[\\%_]/g, char => `\\${char}`)}%`;
-    const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls)
+    const rows = stmt(`SELECT * FROM messages WHERE room_id IN (${roomIds.map(() => '?').join(',')}) AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls)
       AND (text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(messages.attachments) WHERE json_extract(value, '$.name') LIKE ? ESCAPE '\\'))
-      ORDER BY seq DESC LIMIT 50`).all(room.id, clearedThroughSeq(), pattern, pattern);
+      ORDER BY seq DESC LIMIT 50`).all(...roomIds, clearedThroughSeq(), pattern, pattern);
     res.json({ messages: rows.map(serializeMessage) });
   });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
@@ -434,12 +588,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     upload.single('file')(req, res, next);
   }, (req, res) => {
     const file = req.file;
-    if (!file) throw fail('请选择图片或视频');
+    if (!file) throw fail('请选择要发送的文件');
     try {
       if (isRemoved(req.user.id) || (cloud && !auth.user(req))) throw fail('账号已失效，请重新登录', 401);
-      const mime = detectMime(file.path);
       const isAvatar = req.query.purpose === 'avatar';
-      if (!mime || (isAvatar && (!mime.startsWith('image/') || file.size > 5 * 1024 * 1024))) throw fail(isAvatar ? '头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片' : '支持 JPG、PNG、GIF、WebP、MP4、MOV 和 WebM 文件');
+      // 能识别为图片或视频的才在页面内预览，其余一律作为普通文件，只允许下载。
+      const mime = detectMime(file.path) || (isAvatar ? null : 'application/octet-stream');
+      if (!mime || (isAvatar && (!mime.startsWith('image/') || file.size > 5 * 1024 * 1024))) throw fail('头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片');
       const attachment = { id: file.filename, name: textValue(Buffer.from(file.originalname, 'latin1').toString('utf8'), 200), mime, size: file.size };
       stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(attachment.id, req.user.id, isAvatar ? null : req.query.roomId, attachment.name, mime, file.size, isAvatar ? 'avatar' : 'message', isAvatar ? 1 : 0, Date.now());
@@ -468,11 +623,33 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       return { id: file.id, name: file.name, mime: file.mime, size: file.size };
     });
     if (!messageText && !attachments.length) throw fail('消息不能为空');
+    // 只能引用同一会话里仍然可见的消息，避免借引用读取其他会话的内容。
+    const replyTo = req.body.replyTo === undefined || req.body.replyTo === null ? null : req.body.replyTo;
+    if (replyTo !== null) {
+      const target = typeof replyTo === 'string' && replyTo.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(replyTo);
+      if (!target || target.room_id !== room.id || target.seq <= clearedThroughSeq() || recalledAt(target.id)) throw fail('引用的消息不可用');
+    }
+    // @提及必须是会话成员且正文里确实写了「@名字」，避免看不见的提醒；@所有人在群聊里人人可用，大厅仅空间管理者可用。
+    const mentionInput = req.body.mentions === undefined ? [] : req.body.mentions;
+    if (!Array.isArray(mentionInput) || mentionInput.length > 50 || mentionInput.some(value => typeof value !== 'string')) throw fail('提及的成员无效');
+    const mentions = [...new Set(mentionInput)];
+    for (const target of mentions) {
+      if (target === '*') {
+        const manager = req.user.id === ownerId() || ['admin', 'super_admin'].includes(req.user.role);
+        if (room.kind === 'direct' || (room.kind === 'public' && !manager)) throw fail('这里不能 @所有人', 403);
+        if (!messageText.includes('@所有人')) throw fail('提及的成员无效');
+        continue;
+      }
+      const member = userById(target);
+      if (!member || target === req.user.id || !canAccess(room, target) || !messageText.includes(`@${member.name}`)) throw fail('提及的成员无效');
+    }
     const id = randomUUID();
     db.exec('BEGIN');
     try {
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, messageText, JSON.stringify(attachments), clientId, Date.now());
       for (const file of attachments) stmt('UPDATE uploads SET claimed=1 WHERE id=?').run(file.id);
+      if (replyTo) stmt('INSERT INTO message_replies VALUES (?,?)').run(id, replyTo);
+      for (const target of mentions) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
@@ -486,8 +663,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       requireRoom(file.room_id, req.user.id);
       if (!file.claimed && file.owner_id !== req.user.id) throw fail('文件尚未发送', 403);
     }
-    res.set('Content-Type', file.mime);
-    if (req.query.download === '1') res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    // 普通文件只能下载：不按文件内容渲染，也不允许执行脚本。
+    const previewable = /^(image|video)\//.test(file.mime);
+    res.set('Content-Type', previewable ? file.mime : 'application/octet-stream');
+    if (!previewable) res.set('Content-Security-Policy', "sandbox; default-src 'none'");
+    if (!previewable || req.query.download === '1') res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
     res.sendFile(path.join(uploadDir, file.id));
   });
   app.post('/api/logout', (req, res) => {
@@ -516,6 +696,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       ws.alive = true;
       sockets.add(ws);
       ws.on('pong', () => { ws.alive = true; });
+      // 「正在输入」只转发不保存：每个连接两秒内最多一次，只发给同一会话里的其他人。
+      ws.on('message', data => {
+        let event;
+        try { event = JSON.parse(data); } catch { return; }
+        if (event?.type !== 'typing' || typeof event.roomId !== 'string' || event.roomId.length > 100) return;
+        if (Date.now() - (ws.typedAt || 0) < 2000) return;
+        const room = stmt('SELECT * FROM rooms WHERE id=?').get(event.roomId);
+        if (!canAccess(room, ws.userId) || (cloud && !auth.validSocket(ws))) return;
+        ws.typedAt = Date.now();
+        deliver({ type: 'typing', roomId: room.id, userId: ws.userId }, socket => socket.userId !== ws.userId && canAccess(room, socket.userId));
+      });
       ws.on('error', () => ws.terminate());
       ws.on('close', () => { sockets.delete(ws); if (!closing) broadcast({ type: 'users', users: users() }); });
       ws.send(JSON.stringify({ type: 'ready' }));
