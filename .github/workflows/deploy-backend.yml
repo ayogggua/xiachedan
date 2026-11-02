@@ -2,10 +2,7 @@ name: Deploy backend
 on:
   push:
     branches: [main]
-    paths: ['server/**', 'package.json', 'package-lock.json', 'deploy/Dockerfile.backend', 'deploy/compose.yml', 'deploy/release.sh', '.dockerignore', '.github/workflows/deploy-backend.yml']
-  pull_request:
-    branches: [main]
-    paths: ['server/**', 'package.json', 'package-lock.json', 'deploy/**', '.dockerignore', '.github/workflows/deploy-backend.yml']
+    paths: ['server/**', 'shared/**', 'package.json', 'package-lock.json', 'deploy/Dockerfile.backend', 'deploy/compose.yml', 'deploy/release.sh', 'deploy/ssh-entry.sh', '.dockerignore', '.github/workflows/deploy-backend.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -30,8 +27,21 @@ jobs:
           npm audit --omit=dev --audit-level=high
       - name: Build independent backend image
         run: docker build -f deploy/Dockerfile.backend -t "xiachedan-backend:$GITHUB_SHA" .
+      - name: Package backend
+        run: |
+          mkdir -p bundle
+          docker save "xiachedan-backend:$GITHUB_SHA" | gzip -1 > bundle/image.tar.gz
+          cp deploy/compose.yml bundle/
+          tar -czf backend.tar.gz -C bundle .
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: backend-package
+          path: backend.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
       - name: Deploy backend
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+        if: github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '117.50.187.95' }}
           DEPLOY_USER: ${{ vars.DEPLOY_USER || 'ubuntu' }}
@@ -45,8 +55,4 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
           trap 'rm -f ~/.ssh/deploy_key' EXIT
-          mkdir -p bundle
-          docker save "xiachedan-backend:$GITHUB_SHA" | gzip -1 > bundle/image.tar.gz
-          cp deploy/compose.yml bundle/
-          tar -czf backend.tar.gz -C bundle .
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "$DEPLOY_USER@$DEPLOY_HOST" "backend $GITHUB_SHA" < backend.tar.gz
