@@ -198,7 +198,11 @@ fn render(app: &AppHandle, desktop: &Desktop) {
   let Some(tray) = desktop.tray.lock().unwrap().clone() else { return };
   let badge = match count { 0 => None, 1..=99 => Some(count.to_string()), _ => Some("99+".into()) };
   #[cfg(target_os = "macos")]
-  let _ = tray.set_title(badge.as_deref());
+  {
+    let _ = tray.set_title(badge.as_deref());
+    // Dock 图标角标与菜单栏一致：有未读的会话数（免打扰的不算）。
+    if let Some(window) = main_window(app) { let _ = window.set_badge_label(badge.clone()); }
+  }
   let _ = tray.set_tooltip(Some(match &badge {
     Some(badge) => format!("虾扯蛋 · {badge} 个未读会话"),
     None => "虾扯蛋 · 点击打开聊天，右键查看设置".into(),
