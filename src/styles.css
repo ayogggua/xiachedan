@@ -172,6 +172,7 @@ textarea { resize: none; line-height: 20px; }
 .conversation-title, .conversation-preview { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .conversation-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conversation-pin { flex: none; margin-left: auto; color: var(--text-2); }
+.conversation-pin + .conversation-pin { margin-left: -4px; }
 .empty-conversation { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--text-2); }
 .empty-conversation h2 { font-size: 16px; font-weight: 500; }
 .conversation-title time { flex: none; font-size: 10px; line-height: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
@@ -180,6 +181,7 @@ textarea { resize: none; line-height: 20px; }
 .masked-preview { letter-spacing: 2px; }
 .has-unread .conversation-preview { color: var(--text-1); }
 .unread-badge { flex: none; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; line-height: 16px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
+.muted .unread-badge { background: var(--fill-3); color: var(--text-1); }
 .sidebar-empty { padding: 4px 8px; font-size: 11px; line-height: 16px; color: var(--text-3); }
 .me-card { display: flex; align-items: center; gap: 4px; margin: 6px; padding: 6px 6px 6px 8px; border-radius: 12px; background: var(--fill-1); }
 .me-profile { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left; }

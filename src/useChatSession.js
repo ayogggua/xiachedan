@@ -4,7 +4,7 @@ import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
 import useMessageReads from './useMessageReads';
 
 // 空间会话的数据层：启动、状态同步、WebSocket、分页消息、撤回与清空记录、已读回执。
-export default function useChatSession({ selected, notify, privacyRef, onHistoryChanged }) {
+export default function useChatSession({ selected, notify, privacyRef, mutedRef, onHistoryChanged }) {
   const [bootstrap, setBootstrap] = useState(null);
   const [state, setState] = useState(null);
   const [startupError, setStartupError] = useState('');
@@ -104,7 +104,8 @@ export default function useChatSession({ selected, notify, privacyRef, onHistory
     setMessages(previous => ({ ...previous, [message.roomId]: merge(previous[message.roomId] || [], [message], historyRef.current) }));
     setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.id === message.roomId && (!room.lastMessage || room.lastMessage.seq < message.seq) ? { ...room, lastMessage: message } : room) } : previous);
     const current = stateRef.current;
-    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id) {
+    // 免打扰的会话不弹系统通知。
+    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id && !mutedRef?.current.has(message.roomId)) {
       const sender = current.users.find(user => user.id === message.senderId);
       const target = current.rooms.find(room => room.id === message.roomId);
       const hidden = privacyRef.current;
