@@ -6,7 +6,8 @@ import { previewText } from './history';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false }) {
+export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping }) {
+  const typedAt = useRef(0);
   const [picker, setPicker] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
@@ -114,7 +115,11 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
       <IconButton icon={Paperclip} label="发送文件（单个文件最大 100 MB）" className="composer-tool" disabled={sending || !connected} onClick={() => fileInput.current.click()} />
       <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
         aria-autocomplete="list" aria-controls="mention-picker" aria-expanded={Boolean(picker && candidates.length)} aria-activedescendant={picker && candidates.length ? `mention-option-${picker.index}` : undefined}
-        onChange={event => { update(room.id, state => ({ ...state, text: event.target.value })); detectMention(event.target); }} onSelect={event => detectMention(event.currentTarget)} onBlur={() => setPicker(null)}
+        onChange={event => {
+          update(room.id, state => ({ ...state, text: event.target.value })); detectMention(event.target);
+          // 有内容时每 3 秒最多告诉别人一次「正在输入」。
+          if (event.target.value.trim() && Date.now() - typedAt.current > 3000) { typedAt.current = Date.now(); onTyping?.(room.id); }
+        }} onSelect={event => detectMention(event.currentTarget)} onBlur={() => setPicker(null)}
         onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); } }}
         onKeyDown={event => {
           if (picker && candidates.length && !event.nativeEvent.isComposing) {

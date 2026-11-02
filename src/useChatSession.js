@@ -55,6 +55,23 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         { ...message, readBy: [...new Set([...(message.readBy || []), receipt.userId])] } : message) };
     });
   }, []);
+  // 正在输入：{ roomId: { userId: 截止时间 } }，5 秒内没有新的输入事件就消失。
+  const [typing, setTyping] = useState({});
+  const socketRef = useRef();
+  const sendTyping = useCallback(roomId => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ type: 'typing', roomId }));
+  }, []);
+  const stopTyping = useCallback((roomId, userId) => setTyping(previous => {
+    if (!previous[roomId]?.[userId]) return previous;
+    const { [userId]: _, ...rest } = previous[roomId];
+    return { ...previous, [roomId]: rest };
+  }), []);
+  useEffect(() => {
+    if (!Object.values(typing).some(users => Object.keys(users).length)) return;
+    const timer = setInterval(() => setTyping(previous => Object.fromEntries(Object.entries(previous)
+      .map(([roomId, users]) => [roomId, Object.fromEntries(Object.entries(users).filter(([, until]) => until > Date.now()))]))), 1000);
+    return () => clearInterval(timer);
+  }, [typing]);
   const applyReactions = useCallback(({ roomId, messageId, reactions }) => {
     setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, reactions } : message) } : previous);
   }, []);
@@ -136,12 +153,13 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     }
     function connect() {
       if (cancelled || logoutPending.current) return;
-      socket = new WebSocket(socketUrl());
+      socket = socketRef.current = new WebSocket(socketUrl());
       socket.onopen = () => { if (cancelled || logoutPending.current) return socket.close(); setConnected(true); delay = 700; synchronize(); };
       socket.onmessage = event => {
         if (cancelled || logoutPending.current) return;
         let data; try { data = JSON.parse(event.data); } catch { return; }
-        if (data.type === 'message') receive(data.message);
+        if (data.type === 'message') { receive(data.message); stopTyping(data.message.roomId, data.message.senderId); }
+        if (data.type === 'typing') setTyping(previous => ({ ...previous, [data.roomId]: { ...previous[data.roomId], [data.userId]: Date.now() + 5000 } }));
         if (data.type === 'message-recalled') syncHistory([data.message]);
         if (data.type === 'history-cleared') { syncHistory([], data.throughSeq); refresh().catch(error => notify(error.message)); }
         if (data.type === 'message-reads') applyReceipt(data);
@@ -154,7 +172,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     }
     connect();
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
-  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, syncHistory]);
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
@@ -195,5 +213,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, typing, sendTyping };
 }

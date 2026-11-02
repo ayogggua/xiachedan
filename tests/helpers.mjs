@@ -107,6 +107,7 @@ export async function listen(base, member) {
     events,
     received: type => events.some(event => event.type === type),
     clear: () => { events.length = 0; },
+    send: event => socket.send(JSON.stringify(event)),
     close: () => socket.close(),
   };
 }

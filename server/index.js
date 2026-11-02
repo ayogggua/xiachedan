@@ -696,6 +696,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       ws.alive = true;
       sockets.add(ws);
       ws.on('pong', () => { ws.alive = true; });
+      // 「正在输入」只转发不保存：每个连接两秒内最多一次，只发给同一会话里的其他人。
+      ws.on('message', data => {
+        let event;
+        try { event = JSON.parse(data); } catch { return; }
+        if (event?.type !== 'typing' || typeof event.roomId !== 'string' || event.roomId.length > 100) return;
+        if (Date.now() - (ws.typedAt || 0) < 2000) return;
+        const room = stmt('SELECT * FROM rooms WHERE id=?').get(event.roomId);
+        if (!canAccess(room, ws.userId) || (cloud && !auth.validSocket(ws))) return;
+        ws.typedAt = Date.now();
+        deliver({ type: 'typing', roomId: room.id, userId: ws.userId }, socket => socket.userId !== ws.userId && canAccess(room, socket.userId));
+      });
       ws.on('error', () => ws.terminate());
       ws.on('close', () => { sockets.delete(ws); if (!closing) broadcast({ type: 'users', users: users() }); });
       ws.send(JSON.stringify({ type: 'ready' }));
