@@ -5,7 +5,26 @@ import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
 
-export function ProfileDialog({ me, onClose, onUpdate, notify }) {
+// 在其他设备上登录同一身份：生成 10 分钟有效、只能用一次的登录码（仅局域网模式）。
+function LoginCode({ notify }) {
+  const [code, setCode] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { if (!code) return; const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, [code]);
+  const remaining = code ? Math.max(0, Math.ceil((code.expiresAt - now) / 1000)) : 0;
+  async function generate() {
+    setBusy(true);
+    try { setCode(await api('login-code', {})); setNow(Date.now()); } catch (error) { notify(error.message); } finally { setBusy(false); }
+  }
+  return <section className="login-code" aria-label="在其他设备登录">
+    <div><b>在其他设备登录</b><small>在手机或另一台电脑打开这个空间，选择「用登录码登录」并输入下面的码，就能以同一个身份聊天。</small></div>
+    {code && remaining > 0 ? <div className="login-code-value"><code aria-label="登录码">{code.code}</code><small>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')} 后失效 · 只能用一次</small>
+      <button type="button" className="text-button" onClick={() => navigator.clipboard?.writeText(code.code).then(() => notify('登录码已复制'), () => notify('复制失败，请手动输入'))}><Copy size={13} />复制</button></div>
+      : <button type="button" className="secondary-button" onClick={generate} disabled={busy}><KeyRound size={15} />{busy ? '正在生成…' : code ? '重新生成登录码' : '生成登录码'}</button>}
+  </section>;
+}
+
+export function ProfileDialog({ me, onClose, onUpdate, notify, cloud = false }) {
   const [name, setName] = useState(me.name);
   const [avatar, setAvatar] = useState(me.avatar);
   const [busy, setBusy] = useState(false);
@@ -23,7 +42,7 @@ export function ProfileDialog({ me, onClose, onUpdate, notify }) {
     try { const result = await upload(file, { purpose: 'avatar' }); setAvatar(result.me.avatar); onUpdate(result.me); notify('头像已更新'); }
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  return <Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { avatarUpload(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} />{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>;
+  return <Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { avatarUpload(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} />{!cloud && <LoginCode notify={notify} />}{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>;
 }
 
 export function InviteDialog({ cloud, onClose, notify }) {

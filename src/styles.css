@@ -403,6 +403,14 @@ button.message-read-status.is-read { color: var(--text-1); }
 .announcement-banner b { margin-right: 6px; }
 .announcement-banner .icon-button { width: 24px; height: 24px; flex: none; }
 .announcement-input { width: 100%; resize: vertical; }
+.login-code { display: flex; flex-direction: column; gap: 10px; margin: 16px 0 0; padding: 12px; border-radius: 12px; background: var(--fill-1); }
+.login-code > div:first-child { display: flex; flex-direction: column; gap: 2px; }
+.login-code small { font-size: 12px; line-height: 17px; color: var(--text-2); }
+.login-code .secondary-button { align-self: flex-start; }
+.login-code-value { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.login-code-value code { padding: 4px 10px; border-radius: 8px; background: var(--fill-2); font: 600 20px/28px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 2px; }
+.login-code-value small { font-variant-numeric: tabular-nums; }
+.login-code-value .text-button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
 .field-hint { display: block; margin-top: 4px; text-align: right; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 @media (hover: hover) and (pointer: fine) { .leave-group:hover { background: rgba(255, 105, 97, .1); } }
 .members-panel-heading:has(.history-title) { justify-content: flex-start; gap: 4px; padding-left: 6px; }

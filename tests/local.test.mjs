@@ -100,7 +100,7 @@ describe('局域网模式：按电脑识别身份', () => {
     assert.equal((await space.client().post('/api/device', { device: 'xyz' })).status, 400);
   });
 
-  test('绑定后会话丢失仍能认回原身份，旧会话失效', async () => {
+  test('绑定后会话丢失仍能认回原身份，原来设备上的会话不受影响', async () => {
     const bound = await member.post('/api/device', { device: deviceA });
     assert.equal(bound.status, 200);
     assert.equal(bound.body.switched, false);
@@ -112,7 +112,7 @@ describe('局域网模式：按电脑识别身份', () => {
     assert.equal((await fresh.get('/api/state')).body.me.id, member.id);
     member.jar.clear();
     for (const [name, value] of oldCookie) member.jar.set(name, value);
-    assert.equal((await member.get('/api/state')).status, 401);
+    assert.equal((await member.get('/api/state')).status, 200);
   });
 
   test('其他电脑的凭证不能冒用', async () => {

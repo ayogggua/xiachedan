@@ -66,6 +66,9 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 局域网模式的多设备会话：首台设备的会话仍在 users.token_hash，其余设备各有一条记录；登录码用于在新设备上登录同一身份。
+    CREATE TABLE IF NOT EXISTS local_sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS login_codes (code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL);
     -- 群聊设置：群主（为空或已不在群里时由最早的成员接任）与群公告。
     CREATE TABLE IF NOT EXISTS room_settings (room_id TEXT PRIMARY KEY, owner_id TEXT, announcement TEXT NOT NULL DEFAULT '', announcement_at INTEGER, announcement_by TEXT);
     -- 每条消息、每位接收者仅保存一次实际查看时间。

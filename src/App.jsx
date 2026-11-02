@@ -363,7 +363,7 @@ export default function App() {
           {room.kind === 'group' && <button className="leave-group" onClick={() => setGroupAction({ type: 'leave' })}><LogOut size={15} />退出群聊</button>}</>}</aside>}</div>
       </> : <div className="empty-conversation"><MessageCircle size={32} /><h2>选择一个对话</h2><button className="secondary-button" onClick={() => setModal('members')}>发起私聊</button></div>}
     </main>
-    {modal === 'profile' && <ProfileDialog me={state.me} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
+    {modal === 'profile' && <ProfileDialog cloud={cloud} me={state.me} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
     {modal === 'invite' && <InviteDialog cloud={cloud} onClose={() => setModal(null)} notify={notify} />}
     {modal === 'admin' && cloud && isAdmin && <AdminDialog me={state.me} onClose={() => setModal(null)} onUpdated={refresh} notify={notify} />}
     {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><PasswordForm onChanged={() => location.reload()} /></Modal>}

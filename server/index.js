@@ -117,10 +117,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const cookie = req.headers.cookie?.split(';').map(s => s.trim()).find(s => s.startsWith('linliao_session='));
     return cookie ? cookie.slice('linliao_session='.length) : '';
   };
+  const userByToken = token => stmt(`SELECT id, name, avatar FROM users WHERE (token_hash=? OR id IN (SELECT user_id FROM local_sessions WHERE token_hash=?))
+    AND id NOT IN (SELECT user_id FROM removed_users)`).get(hash(token), hash(token));
   const authUser = req => {
     if (cloud) return auth.user(req);
     const token = tokenFrom(req);
-    return token ? stmt('SELECT id, name, avatar FROM users WHERE token_hash=? AND id NOT IN (SELECT user_id FROM removed_users)').get(hash(token)) : null;
+    return token ? userByToken(token) : null;
   };
   const canAccess = (room, userId) => room && !isRemoved(userId) && (!cloud || auth.activeId(userId)) && (room.kind === 'public' || JSON.parse(room.members).includes(userId));
   const requireRoom = (id, userId) => {
@@ -184,6 +186,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     deliver(event, socket => !roomId || canAccess(room, socket.userId));
   };
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
+  // 新设备另开一条会话，不顶掉同一身份在其他设备上的登录。
+  const startSession = (res, userId) => {
+    const token = randomBytes(32).toString('hex');
+    stmt('INSERT INTO local_sessions VALUES (?,?,?)').run(hash(token), userId, Date.now());
+    setSession(res, token);
+  };
   const userCreated = (req, res, name, avatar) => {
     const token = randomBytes(32).toString('hex');
     const user = { id: randomUUID(), name, avatar: PRESETS.includes(avatar) ? avatar : 'cat' };
@@ -235,7 +243,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       me, ...(me ? stateFor(me) : {}) });
   });
   // 公网模式完全关闭邀请码、本机初始化和设备旧凭证入口，不能绕过账号审核。
-  if (cloud) app.use(['/api/setup', '/api/join', '/api/device', '/api/remove-member', '/api/logout'], (_req, _res, next) => next(fail('请使用账号登录和用户管理', 403)));
+  if (cloud) app.use(['/api/setup', '/api/join', '/api/device', '/api/remove-member', '/api/logout', '/api/login-code'], (_req, _res, next) => next(fail('请使用账号登录和用户管理', 403)));
   app.post('/api/setup', (req, res) => {
     if (!loopback(req.socket.remoteAddress) || req.get('X-Setup-Key') !== setupKey) throw fail('请在创建空间的 Mac 上操作', 403);
     if (workspace()) throw fail('空间已创建，请直接加入', 409);
@@ -280,24 +288,48 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!/^[0-9a-f]{64}$/.test(device)) throw fail('设备凭证无效');
     const legacy = textValue(req.body?.legacy, 128);
     const current = authUser(req);
-    const previous = legacy && stmt('SELECT id, name, avatar FROM users WHERE token_hash=? AND id NOT IN (SELECT user_id FROM removed_users)').get(hash(legacy));
+    const previous = legacy && userByToken(legacy);
     const bound = stmt('SELECT u.id, u.name, u.avatar FROM user_devices d JOIN users u ON u.id=d.user_id WHERE d.device_hash=? AND u.id NOT IN (SELECT user_id FROM removed_users)').get(hash(device));
     const me = previous || current || bound;
     if (!me) throw fail('这台电脑还没有加入过这个空间', 404);
     stmt('INSERT OR REPLACE INTO user_devices (device_hash,user_id,created_at) VALUES (?,?,?)').run(hash(device), me.id, Date.now());
     if (previous) setSession(res, legacy);
-    else if (!current) {
-      const token = randomBytes(32).toString('hex');
-      stmt('UPDATE users SET token_hash=? WHERE id=?').run(hash(token), me.id);
-      setSession(res, token);
-    }
+    else if (!current) startSession(res, me.id);
     res.json({ me, switched: me.id !== current?.id });
+  });
+  // 用登录码在新设备上登录已有身份：10 分钟内有效、只能用一次；按来源地址限制尝试次数。
+  app.post('/api/login-code/redeem', (req, res) => {
+    const ip = req.socket.remoteAddress;
+    const attempt = failures.get(`code:${ip}`);
+    if (attempt?.count >= 12 && attempt.until > Date.now()) throw fail('尝试次数过多，请 5 分钟后重试', 429);
+    const code = textValue(req.body?.code, 20).replace(/[\s-]/g, '').toUpperCase();
+    stmt('DELETE FROM login_codes WHERE expires_at<=?').run(Date.now());
+    const row = /^[A-Z0-9]{8}$/.test(code) && stmt('SELECT user_id FROM login_codes WHERE code_hash=?').get(hash(code));
+    const user = row && userById(row.user_id);
+    if (!user) {
+      failures.set(`code:${ip}`, { count: attempt?.until > Date.now() ? attempt.count + 1 : 1, until: Date.now() + 300000 });
+      throw fail('登录码不正确或已过期', 403);
+    }
+    failures.delete(`code:${ip}`);
+    stmt('DELETE FROM login_codes WHERE code_hash=?').run(hash(code));
+    startSession(res, user.id);
+    res.json({ me: user });
   });
   app.use('/api', (req, _res, next) => {
     req.user = authUser(req);
     next(req.user ? undefined : fail(cloud ? '请先登录并等待管理员审核通过' : '请先加入空间', 401));
   });
   app.get('/api/state', (req, res) => res.json(stateFor(req.user)));
+  // 生成登录码：同一身份同时只保留最新的一个。
+  app.post('/api/login-code', (req, res) => {
+    rateLimit(req, 'login-code', 10);
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const code = [...randomBytes(8)].map(byte => alphabet[byte % alphabet.length]).join('');
+    const expiresAt = Date.now() + 10 * 60000;
+    stmt('DELETE FROM login_codes WHERE user_id=?').run(req.user.id);
+    stmt('INSERT INTO login_codes VALUES (?,?,?)').run(hash(code), req.user.id, expiresAt);
+    res.json({ code: `${code.slice(0, 4)}-${code.slice(4)}`, expiresAt });
+  });
   app.post('/api/remove-member', (req, res) => {
     if (req.user.id !== ownerId()) throw fail('只有空间创建者可以移除成员', 403);
     const id = req.body?.userId;
@@ -670,9 +702,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!previewable || req.query.download === '1') res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
     res.sendFile(path.join(uploadDir, file.id));
   });
+  // 退出只影响当前设备：其他设备的会话保留。
   app.post('/api/logout', (req, res) => {
     for (const socket of sockets) if (socket.userId === req.user.id) socket.close(4001, 'logout');
-    stmt('UPDATE users SET token_hash=? WHERE id=?').run(hash(randomBytes(32)), req.user.id);
+    const token = hash(tokenFrom(req));
+    if (!stmt('DELETE FROM local_sessions WHERE token_hash=?').run(token).changes) stmt('UPDATE users SET token_hash=? WHERE id=?').run(hash(randomBytes(32)), req.user.id);
     stmt('DELETE FROM user_devices WHERE user_id=?').run(req.user.id);
     res.clearCookie('linliao_session', { path: '/' });
     res.json({ ok: true });
