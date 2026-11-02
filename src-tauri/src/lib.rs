@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod macos_notification;
 mod probe;
 mod server;
 
@@ -11,6 +13,7 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, State, Url, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+#[cfg(not(target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -154,6 +157,12 @@ fn open_address(app: &AppHandle, desktop: &Desktop, origin: &str, fragment: Opti
   main_window(app).ok_or("窗口不可用")?.navigate(url).map_err(|error| error.to_string())
 }
 
+fn open_notification(app: &AppHandle, id: i32) {
+  let desktop = app.state::<Arc<Desktop>>();
+  let room = desktop.session.lock().unwrap().notification_rooms.get(&id).cloned();
+  show(app, &desktop, room.filter(|room| !room.is_empty()));
+}
+
 fn go_home(app: &AppHandle, desktop: &Desktop) {
   if let Some((address, _)) = desktop.local_address() {
     let _ = open_address(app, desktop, &address, None);
@@ -260,7 +269,11 @@ fn update_settings(app: &AppHandle, desktop: &Desktop, value: &Value) -> Result<
 fn notify(app: &AppHandle, desktop: &Desktop, room: &str, title: &str, body: &str) -> bool {
   let id = desktop.next_notification.fetch_add(1, Ordering::Relaxed);
   desktop.session.lock().unwrap().notification_rooms.insert(id, room.to_string());
-  match app.notification().builder().id(id).title(title).body(body).show() {
+  #[cfg(target_os = "macos")]
+  let shown: Result<(), ()> = { macos_notification::show(id, title, body); Ok(()) };
+  #[cfg(not(target_os = "macos"))]
+  let shown = app.notification().builder().id(id).title(title).body(body).show();
+  match shown {
     Ok(()) => { desktop.session.lock().unwrap().notification_error.clear(); true }
     Err(_) => {
       desktop.session.lock().unwrap().notification_error = "系统未能显示提醒，请检查系统的通知设置。".into();
@@ -654,11 +667,12 @@ pub fn run() {
         .build(app)?;
       *desktop.tray.lock().unwrap() = Some(tray);
       let clicked = handle.clone();
+      #[cfg(target_os = "macos")]
+      macos_notification::install(move |id| open_notification(&clicked, id));
+      #[cfg(not(target_os = "macos"))]
       app.notification().on_action(move |performed| {
         if performed.action_id() != "tap" { return }
-        let desktop = clicked.state::<Arc<Desktop>>();
-        let room = performed.notification().and_then(|notification| desktop.session.lock().unwrap().notification_rooms.get(&notification.id()).cloned());
-        show(&clicked, &desktop, room.filter(|room| !room.is_empty()));
+        if let Some(notification) = performed.notification() { open_notification(&clicked, notification.id()); }
       })?;
       let origin = initial_origin(&desktop).ok_or("本机服务不可用")?;
       let start = {
