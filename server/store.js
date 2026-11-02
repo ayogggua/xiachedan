@@ -57,6 +57,8 @@ export function openStore(directory) {
     -- 引用回复：只记录被引用消息的标识，引用内容在读取时按原消息的最新状态生成。
     CREATE TABLE IF NOT EXISTS message_replies (message_id TEXT PRIMARY KEY, reply_to TEXT NOT NULL);
     -- @提及：user_id 为成员标识，'*' 表示 @所有人。
+    -- 表情回应：每人对同一条消息的同一个表情只记一次。
+    CREATE TABLE IF NOT EXISTS message_reactions (message_id TEXT NOT NULL, user_id TEXT NOT NULL, emoji TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (message_id, user_id, emoji));
     CREATE TABLE IF NOT EXISTS message_mentions (message_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (message_id, user_id));
     CREATE TABLE IF NOT EXISTS pending_file_deletions (id TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);

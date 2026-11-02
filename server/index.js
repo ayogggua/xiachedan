@@ -12,6 +12,8 @@ import { createAuth } from './auth.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_FILE = 100 * 1024 * 1024;
+// 表情回应的固定选项，随会话状态下发给客户端。
+const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '🙏', '✅', '👀'];
 const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout'];
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -76,7 +78,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       attachments: JSON.parse(row.attachments).map(file => ({ name: file.name, mime: file.mime })) };
   };
   const mentionsOf = id => stmt('SELECT user_id FROM message_mentions WHERE message_id=? ORDER BY rowid').all(id).map(row => row.user_id);
-  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id) } : null;
+  // 按表情第一次出现的先后排列，每个表情附上回应的成员。
+  const reactionsOf = id => {
+    const groups = new Map();
+    for (const row of stmt('SELECT emoji, user_id FROM message_reactions WHERE message_id=? ORDER BY created_at, rowid').all(id)) {
+      if (!groups.has(row.emoji)) groups.set(row.emoji, []);
+      groups.get(row.emoji).push(row.user_id);
+    }
+    return [...groups].map(([emoji, users]) => ({ emoji, users }));
+  };
+  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -137,7 +148,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: user, workspace: spaceInfo(), users: users(), rooms, recalls, clearedThroughSeq: clearedThroughSeq() };
+    return { me: user, workspace: spaceInfo(), users: users(), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
   };
   const broadcast = (event, roomId) => {
     const payload = JSON.stringify(event);
@@ -298,6 +309,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('DELETE FROM message_reads WHERE message_id=?').run(id);
         stmt('DELETE FROM message_replies WHERE message_id=?').run(id);
         stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_reactions WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
@@ -317,7 +329,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose='message' AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -369,6 +381,21 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const receipt = { roomId: room.id, userId: req.user.id, messageIds: received.map(row => row.id) };
     if (changed.length) broadcast({ type: 'message-reads', ...receipt, messageIds: changed }, room.id);
     res.json(receipt);
+  });
+  // 再点一次同一个表情即取消。
+  app.post('/api/reactions', (req, res) => {
+    rateLimit(req, 'reactions', 120);
+    const { messageId, emoji } = req.body || {};
+    if (typeof messageId !== 'string' || messageId.length > 100 || !REACTIONS.includes(emoji)) throw fail('表情回应无效');
+    const row = stmt('SELECT * FROM messages WHERE id=?').get(messageId);
+    if (!row || row.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
+    requireRoom(row.room_id, req.user.id);
+    if (recalledAt(row.id)) throw fail('消息已撤回');
+    const removed = stmt('DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?').run(row.id, req.user.id, emoji).changes;
+    if (!removed) stmt('INSERT INTO message_reactions VALUES (?,?,?,?)').run(row.id, req.user.id, emoji, Date.now());
+    const event = { roomId: row.room_id, messageId: row.id, reactions: reactionsOf(row.id) };
+    broadcast({ type: 'message-reactions', ...event }, row.room_id);
+    res.json(event);
   });
   app.post('/api/profile', (req, res) => {
     rateLimit(req, 'profile', 20);

@@ -261,10 +261,20 @@ textarea { resize: none; line-height: 20px; }
 .bubble-line { display: flex; align-items: center; gap: 4px; max-width: 100%; }
 .mine .bubble-line { flex-direction: row-reverse; }
 .bubble-line .message-bubble { min-width: 0; }
-.message-actions { flex: none; display: flex; opacity: 0; transition: opacity 120ms var(--ease-out); }
+.message-actions { position: relative; flex: none; display: flex; opacity: 0; transition: opacity 120ms var(--ease-out); }
 .message-actions .icon-button { width: 26px; height: 26px; border-radius: 13px; color: var(--text-2); }
-.message-row:hover .message-actions, .message-actions:focus-within { opacity: 1; }
-@media (hover: none) { .message-actions { display: none; } }
+.message-row:hover .message-actions, .message-actions:focus-within, .message-actions.open { opacity: 1; }
+@media (hover: none) { .message-actions:not(.open) { display: none; } .message-actions.open > .icon-button { display: none; } }
+.reaction-palette { position: absolute; z-index: 20; bottom: calc(100% + 4px); left: 0; display: flex; gap: 2px; padding: 4px; border-radius: 18px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-2); animation: menu-in 140ms var(--ease-out); }
+.mine .reaction-palette { left: auto; right: 0; transform-origin: bottom right; }
+.reaction-palette.below { bottom: auto; top: calc(100% + 4px); }
+.reaction-palette button { width: 32px; height: 32px; border-radius: 16px; font-size: 18px; line-height: 32px; }
+.reaction-palette button.chosen { background: var(--fill-3); }
+@media (hover: hover) and (pointer: fine) { .reaction-palette button:hover { background: var(--fill-2); transform: scale(1.12); } }
+.reaction-chips { display: flex; flex-wrap: wrap; gap: 4px; max-width: 100%; }
+.reaction-chips button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 12px; background: var(--fill-1); box-shadow: inset 0 0 0 1px var(--edge); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-1); }
+.reaction-chips button.reacted { background: rgba(232, 120, 79, .16); box-shadow: inset 0 0 0 1px rgba(232, 120, 79, .55); }
+@media (hover: hover) and (pointer: fine) { .reaction-chips button:hover { background: var(--fill-2); } }
 .message-quote { display: flex; flex-direction: column; gap: 1px; width: 100%; max-width: 360px; margin: 0 0 6px; padding: 5px 8px; border-radius: 10px; background: var(--fill-1); font-size: 12px; line-height: 16px; text-align: left; color: var(--text-2); }
 .message-quote b { font-weight: 600; color: var(--text-1); }
 .message-quote span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

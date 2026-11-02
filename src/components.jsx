@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName } from './api';
 import { previewText } from './history';
 import appIcon from './assets/brand/app-icon.svg';
@@ -109,7 +109,30 @@ export function Quote({ reply, author, onOpen, className = '' }) {
     : <button type="button" className={`message-quote ${className}`} onClick={onOpen} title="查看原消息">{body}</button>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf }) {
+// 表情选择条：Esc 或点到外面关闭，选完即关。
+function ReactionPalette({ options, chosen, onPick, onClose }) {
+  const ref = useRef();
+  const [below, setBelow] = useState(false);
+  // 消息列表会裁掉溢出部分，顶部还浮着工具栏：上方放不下时改为向下展开。
+  useLayoutEffect(() => {
+    const box = ref.current?.getBoundingClientRect(), list = ref.current?.closest('.message-scroll')?.getBoundingClientRect();
+    const toolbar = document.querySelector('.chat-toolbar')?.getBoundingClientRect();
+    if (box && list && box.top < Math.max(list.top, toolbar?.bottom || 0) + 4) setBelow(true);
+  }, []);
+  useEffect(() => {
+    ref.current?.querySelector('button')?.focus();
+    const dismiss = event => { if (!ref.current?.contains(event.target)) onClose(); };
+    const key = event => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); };
+  }, [onClose]);
+  return <div ref={ref} className={`reaction-palette ${below ? 'below' : ''}`} role="group" aria-label="选择表情">
+    {options.map(emoji => <button type="button" key={emoji} aria-label={`回应 ${emoji}`} aria-pressed={chosen.includes(emoji)} className={chosen.includes(emoji) ? 'chosen' : ''} onClick={() => { onPick(emoji); onClose(); }}>{emoji}</button>)}
+  </div>;
+}
+
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -160,7 +183,15 @@ export function Message({ message, user, mine, continued = false, privateMode, o
         aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>
         {hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>{message.replyTo && <Quote reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={() => onOpenQuote?.(message.replyTo)} />}{message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} />}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={onPreview} />)}</>}
       </div>
-      {onReply && <div className="message-actions"><IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} /></div>}</div>
+      {onReply && <div className={`message-actions ${picking ? 'open' : ''}`}>
+        {reactionOptions.length > 0 && <IconButton icon={SmilePlus} label="回应" size={14} aria-expanded={picking} onClick={() => onPick?.(picking ? null : message.id)} />}
+        <IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} />
+        {picking && <ReactionPalette options={reactionOptions} chosen={(message.reactions || []).filter(item => item.users.includes(viewerId)).map(item => item.emoji)} onPick={emoji => onReact?.(message, emoji)} onClose={() => onPick?.(null)} />}
+      </div>}</div>
+      {message.reactions?.length > 0 && <div className="reaction-chips">{message.reactions.map(item => { const reacted = item.users.includes(viewerId);
+        const names = item.users.map(id => id === viewerId ? '我' : nameOf?.(id) || '成员').join('、');
+        return <button type="button" key={item.emoji} className={reacted ? 'reacted' : ''} aria-pressed={reacted} title={`${names} 回应了 ${item.emoji}`} aria-label={`${item.emoji} ${item.users.length} 人：${names}`} onClick={() => onReact?.(message, item.emoji)}>
+          <span aria-hidden="true">{item.emoji}</span><span aria-hidden="true">{item.users.length}</span></button>; })}</div>}
       {mine && <div className="message-status">{time}{recipients.length > 0 && Array.isArray(message.readBy) && (direct ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
         : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>)}</div>}
     </div>

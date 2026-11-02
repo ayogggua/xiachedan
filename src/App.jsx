@@ -21,6 +21,7 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [replying, setReplying] = useState(null);
+  const [reactingTo, setReactingTo] = useState(null);
   const [readDetail, setReadDetail] = useState(null);
   const [recalling, setRecalling] = useState(null);
   const [removing, setRemoving] = useState(null);
@@ -50,7 +51,7 @@ export default function App() {
   // 免打扰只在本机生效，与置顶一样保存在会话偏好里；不弹通知，也不计入菜单栏和托盘的未读数。
   const mutedRooms = useRef(new Set());
   const { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
   const { rooms: conversations, scope: conversationScope, restore: restoreConversation, act: conversationAction } =
     useConversations({ state, spaceId: bootstrap?.spaceId, selected, onSelect: setSelected, notify });
   mutedRooms.current = new Set(conversations.filter(room => room.muted).map(room => room.id));
@@ -121,6 +122,10 @@ export default function App() {
     row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
     if (matchMedia('(max-width: 760px)').matches) setShowMembers(false);
   }
+  async function toggleReaction(message, emoji) {
+    try { applyReactions(await api('reactions', { messageId: message.id, emoji })); }
+    catch (error) { notify(error.message); }
+  }
   async function directMessage(user) {
     if (user.id === state.me.id) return setModal('profile');
     try { const result = await api('rooms', { userId: user.id }); await refresh(); openRoom(result.id); setModal(null); }
@@ -153,6 +158,7 @@ export default function App() {
     const canCopy = Boolean(message.text) && !privateMode;
     const canRecall = message.senderId === state.me.id && !message.recalledAt;
     const canReply = !message.recalledAt;
+    const canReact = canReply && Boolean(state.reactions?.length);
     const act = action => {
       const current = messageContext.current;
       if (current.scope !== conversationScope) return;
@@ -160,13 +166,15 @@ export default function App() {
       if (!latest || latest.recalledAt) return;
       if (action === 'recall') setRecalling(latest);
       if (action === 'reply') setReplying({ roomId: latest.roomId, id: latest.id });
+      if (action === 'react') setReactingTo(latest.id);
       if (action === 'copy' && !current.privateMode) {
         const copy = window.desktop?.copy ? window.desktop.copy(latest.text) : navigator.clipboard.writeText(latest.text);
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canReply, canCopy, canRecall }, [
+    showContextMenu(event, { kind: 'message', canReply, canReact, canCopy, canRecall }, [
       ...(canReply ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
+      ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
       ...(canRecall ? [{ id: 'recall', label: '撤回消息', action: () => act('recall') }] : []),
     ], '消息操作');
@@ -245,7 +253,8 @@ export default function App() {
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
         {currentMessages.map((message, index) => { const previous = currentMessages[index - 1]; const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString(); return <React.Fragment key={message.id}>{newDay && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={messageMenu} message={message}
           onReply={target => setReplying({ roomId: target.roomId, id: target.id })} nameOf={id => userMap[id]?.name}
-          onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
+          onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })}
+          reactionOptions={state.reactions || []} onReact={toggleReaction} picking={reactingTo === message.id} onPick={setReactingTo} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
       </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />回到最新消息</button>}
       <Composer room={room} connected={connected && !loggingOut} onSent={message => { sticky.current = true; receive(message); }} notify={notify} privateMode={privateMode}
         members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))}

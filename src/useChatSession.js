@@ -55,6 +55,9 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         { ...message, readBy: [...new Set([...(message.readBy || []), receipt.userId])] } : message) };
     });
   }, []);
+  const applyReactions = useCallback(({ roomId, messageId, reactions }) => {
+    setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, reactions } : message) } : previous);
+  }, []);
   const reportRead = useMessageReads(state?.me.id, connected, applyReceipt);
   const meId = state?.me.id;
   // 先在本地记为已读，未读角标立即更新；回执在后台上报。
@@ -142,6 +145,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'message-recalled') syncHistory([data.message]);
         if (data.type === 'history-cleared') { syncHistory([], data.throughSeq); refresh().catch(error => notify(error.message)); }
         if (data.type === 'message-reads') applyReceipt(data);
+        if (data.type === 'message-reactions') applyReactions(data);
         if (data.type === 'users') setState(previous => previous ? ({ ...previous, users: data.users, me: { ...previous.me, ...data.users.find(user => user.id === previous.me.id) } }) : previous);
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
       };
@@ -150,7 +154,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     }
     connect();
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
-  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, syncHistory]);
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, syncHistory]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
@@ -191,5 +195,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions };
 }
