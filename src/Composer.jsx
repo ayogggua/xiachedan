@@ -1,10 +1,11 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip } from 'lucide-react';
 import { api, upload, uid, formatSize } from './api';
-import { IconButton } from './components';
+import { IconButton, PrivatePreview } from './components';
+import { previewText } from './history';
 
 const empty = { text: '', files: [] };
-export default function Composer({ room, connected, onSent, notify }) {
+export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode }) {
   const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -46,15 +47,17 @@ export default function Composer({ room, connected, onSent, notify }) {
     if (sending || !connected || (!draft.text.trim() && !draft.files.length) || draft.files.some(file => !file.attachment)) return;
     const roomId = room.id;
     const snapshot = draft;
-    const signature = JSON.stringify([snapshot.text, snapshot.files.map(file => file.attachment.id)]);
+    const replyTo = reply?.id || null;
+    const signature = JSON.stringify([snapshot.text, snapshot.files.map(file => file.attachment.id), replyTo]);
     const attempt = attempts.current[roomId];
     const clientId = attempt?.signature === signature ? attempt.clientId : uid();
     attempts.current[roomId] = { signature, clientId };
     textarea.current?.focus({ preventScroll: true });
     setSending(true);
     try {
-      const { message } = await api('messages', { roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId });
+      const { message } = await api('messages', { roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId, ...(replyTo ? { replyTo } : {}) });
       onSent(message);
+      if (replyTo) onCancelReply?.();
       for (const file of snapshot.files) URL.revokeObjectURL(file.url);
       update(roomId, () => ({ text: '', files: [] }));
       delete attempts.current[roomId];
@@ -67,7 +70,10 @@ export default function Composer({ room, connected, onSent, notify }) {
     node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
   }, [draft.text, room.id]);
   const ready = connected && !sending && (draft.text.trim() || draft.files.length) && draft.files.every(file => file.attachment);
+  // 选择回复时把焦点交给输入框。
+  useEffect(() => { if (reply) textarea.current?.focus({ preventScroll: true }); }, [reply?.id]);
   return <div className="composer-area">
+    {reply && <div className="reply-bar" role="status"><span className="reply-copy"><b>回复 {replyAuthor}</b><PrivatePreview privateMode={privateMode}>{previewText(reply)}</PrivatePreview></span><IconButton icon={X} label="取消回复" size={14} onClick={onCancelReply} /></div>}
     {draft.files.length > 0 && <div className="attachment-queue">{draft.files.map(item => <div className={`queued-file ${item.error ? 'failed' : ''}`} key={item.id}>
       {item.file.type.startsWith('image/') ? <img src={item.url} alt="待发送图片" /> : <span className="queued-video"><Film size={18} /></span>}
       <div><span>{item.file.name}</span><small>{item.error ? '上传失败' : item.attachment ? formatSize(item.file.size) : `上传 ${item.progress}%`}</small></div>
@@ -80,7 +86,10 @@ export default function Composer({ room, connected, onSent, notify }) {
       <IconButton icon={Film} label="发送视频（单个文件最大 100 MB）" className="composer-tool" disabled={sending || !connected} onClick={() => videoInput.current.click()} />
       <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1} onChange={event => update(room.id, state => ({ ...state, text: event.target.value }))}
         onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); } }}
-        onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); } }} />
+        onKeyDown={event => {
+          if (event.key === 'Escape' && reply) { event.preventDefault(); onCancelReply?.(); }
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); }
+        }} />
       <button className="send-button" onClick={send} disabled={!ready} aria-label="发送消息" title="Enter 发送 · Shift + Enter 换行">{sending ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={17} strokeWidth={2.2} />}</button>
       <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} /><input ref={videoInput} type="file" accept="video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     </div>

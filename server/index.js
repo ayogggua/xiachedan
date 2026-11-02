@@ -66,7 +66,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const limits = new Map();
   const stmt = sql => db.prepare(sql);
   const recalledAt = id => stmt('SELECT recalled_at FROM message_recalls WHERE message_id=?').get(id)?.recalled_at || null;
-  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id) } : null;
+  // 引用内容随原消息变化：原消息被撤回或清空后只保留标识。
+  const replyFor = id => {
+    const row = stmt('SELECT r.reply_to AS replyTo, m.* FROM message_replies r LEFT JOIN messages m ON m.id=r.reply_to WHERE r.message_id=?').get(id);
+    if (!row) return null;
+    if (!row.id || row.seq <= clearedThroughSeq()) return { id: row.replyTo, missing: true };
+    if (recalledAt(row.id)) return { id: row.id, seq: row.seq, senderId: row.sender_id, recalled: true };
+    return { id: row.id, seq: row.seq, senderId: row.sender_id, text: row.text.slice(0, 200),
+      attachments: JSON.parse(row.attachments).map(file => ({ name: file.name, mime: file.mime })) };
+  };
+  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -286,6 +295,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('INSERT INTO message_recalls VALUES (?,?)').run(id, Date.now());
         stmt("UPDATE messages SET text='', attachments='[]' WHERE id=?").run(id);
         stmt('DELETE FROM message_reads WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_replies WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
@@ -305,7 +315,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose='message' AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -470,11 +480,18 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       return { id: file.id, name: file.name, mime: file.mime, size: file.size };
     });
     if (!messageText && !attachments.length) throw fail('消息不能为空');
+    // 只能引用同一会话里仍然可见的消息，避免借引用读取其他会话的内容。
+    const replyTo = req.body.replyTo === undefined || req.body.replyTo === null ? null : req.body.replyTo;
+    if (replyTo !== null) {
+      const target = typeof replyTo === 'string' && replyTo.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(replyTo);
+      if (!target || target.room_id !== room.id || target.seq <= clearedThroughSeq() || recalledAt(target.id)) throw fail('引用的消息不可用');
+    }
     const id = randomUUID();
     db.exec('BEGIN');
     try {
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, messageText, JSON.stringify(attachments), clientId, Date.now());
       for (const file of attachments) stmt('UPDATE uploads SET claimed=1 WHERE id=?').run(file.id);
+      if (replyTo) stmt('INSERT INTO message_replies VALUES (?,?)').run(id, replyTo);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };

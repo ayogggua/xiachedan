@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, LogOut } from 'lucide-react';
 import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
-import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail } from './components';
+import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress, pressEvent } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
@@ -20,6 +20,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [replying, setReplying] = useState(null);
   const [readDetail, setReadDetail] = useState(null);
   const [recalling, setRecalling] = useState(null);
   const [removing, setRemoving] = useState(null);
@@ -36,6 +37,7 @@ export default function App() {
   const messageContent = useRef();
   const sticky = useRef(true);
   const firstLoad = useRef(true);
+  const longPress = useRef({ timer: 0, fired: false });
   const notify = useCallback(text => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(''), 3500); }, []);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
   const { privateMode, privacyRef, changePrivacy, windowActive } = useDesktopBridge({ notify, onPendingRoom: openRoom,
@@ -60,6 +62,8 @@ export default function App() {
     setContextMenu(null); setReadDetail(null); setPreview(null);
   }, [selected, state?.me.id]);
   const currentMessages = messages[selected] || [];
+  // 正在回复的消息以最新状态为准：被撤回或清空后自动取消。
+  const replyTarget = replying?.roomId === selected ? currentMessages.find(message => message.id === replying.id && !message.recalledAt) || null : null;
   const lastSeq = currentMessages.at(-1)?.seq;
   // 隐私模式下游标只推进到第一条还没看过的他人消息之前，未读角标与已读回执一致。
   // 悬停显示本身说明用户在看，因此隐私模式不再要求窗口处于激活状态。
@@ -147,18 +151,21 @@ export default function App() {
   function messageMenu(event, message) {
     const canCopy = Boolean(message.text) && !privateMode;
     const canRecall = message.senderId === state.me.id && !message.recalledAt;
+    const canReply = !message.recalledAt;
     const act = action => {
       const current = messageContext.current;
       if (current.scope !== conversationScope) return;
       const latest = current.messages[message.roomId]?.find(item => item.id === message.id);
       if (!latest || latest.recalledAt) return;
       if (action === 'recall') setRecalling(latest);
+      if (action === 'reply') setReplying({ roomId: latest.roomId, id: latest.id });
       if (action === 'copy' && !current.privateMode) {
         const copy = window.desktop?.copy ? window.desktop.copy(latest.text) : navigator.clipboard.writeText(latest.text);
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canCopy, canRecall }, [
+    showContextMenu(event, { kind: 'message', canReply, canCopy, canRecall }, [
+      ...(canReply ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
       ...(canRecall ? [{ id: 'recall', label: '撤回消息', action: () => act('recall') }] : []),
     ], '消息操作');
@@ -184,7 +191,10 @@ export default function App() {
   const roomButton = target => {
     const status = unread[target.id];
     const label = status?.exact ? `${status.count} 条未读消息` : '有新消息';
-    return <button className={`conversation ${selected === target.id ? 'active' : ''} ${status?.hasUnread ? 'has-unread' : ''} ${target.muted ? 'muted' : ''}`} key={target.id} data-room-id={target.id} aria-current={selected === target.id ? 'page' : undefined} aria-haspopup="menu" onClick={() => openRoom(target.id)} onContextMenu={event => conversationMenu(event, target)}>
+    return <button className={`conversation ${selected === target.id ? 'active' : ''} ${status?.hasUnread ? 'has-unread' : ''} ${target.muted ? 'muted' : ''}`} key={target.id} data-room-id={target.id} aria-current={selected === target.id ? 'page' : undefined} aria-haspopup="menu"
+      onClick={() => { if (!consumeLongPress(longPress)) openRoom(target.id); }} {...longPressHandlers(longPress, (x, y) => conversationMenu(pressEvent(x, y), target))}
+      onContextMenu={event => { if (longPress.current.fired) event.preventDefault(); else conversationMenu(event, target); }}
+      onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { const rect = event.currentTarget.getBoundingClientRect(); conversationMenu(Object.assign(pressEvent(rect.left + 24, rect.bottom), { preventDefault: () => event.preventDefault() }), target); } }}>
       {roomIcon(target)}<span className="conversation-copy"><span className="conversation-title"><span className="conversation-name">{target.name}</span>{target.pinned && <Pin className="conversation-pin" size={11} aria-label="已置顶" />}{target.muted && <BellOff className="conversation-pin" size={11} aria-label="免打扰" />}<time>{target.lastMessage ? formatTime(target.lastMessage.createdAt) : ''}</time></span>
         <span className="conversation-preview"><PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>{status?.hasUnread && <span className="unread-badge" aria-label={label} title={label}>{status.exact ? status.count > 99 ? '99+' : status.count : '新'}</span>}</span>
       </span>
@@ -232,9 +242,12 @@ export default function App() {
         {hasMore[selected] && <button className="load-older" onClick={loadOlder} disabled={loading}>{loading ? '正在加载…' : '查看更早的消息'}</button>}
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? cloud ? '大家都在，随便扯两句。' : '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请同事加入</button>}</div>}
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
-        {currentMessages.map((message, index) => { const previous = currentMessages[index - 1]; const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString(); return <React.Fragment key={message.id}>{newDay && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={messageMenu} message={message} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
+        {currentMessages.map((message, index) => { const previous = currentMessages[index - 1]; const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString(); return <React.Fragment key={message.id}>{newDay && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={messageMenu} message={message}
+          onReply={target => setReplying({ roomId: target.roomId, id: target.id })} nameOf={id => id === state.me.id ? '我' : userMap[id]?.name}
+          onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
       </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />回到最新消息</button>}
-      <Composer room={room} connected={connected && !loggingOut} onSent={message => { sticky.current = true; receive(message); }} notify={notify} /></section>
+      <Composer room={room} connected={connected && !loggingOut} onSent={message => { sticky.current = true; receive(message); }} notify={notify} privateMode={privateMode}
+        reply={replyTarget} replyAuthor={replyTarget && (replyTarget.senderId === state.me.id ? '自己' : userMap[replyTarget.senderId]?.name || '成员')} onCancelReply={() => setReplying(null)} /></section>
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : '会话成员'}>{panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
         : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><div className="members-list">{groupMembers.map(user => memberRow(user, 30))}</div></>}</aside>}</div>

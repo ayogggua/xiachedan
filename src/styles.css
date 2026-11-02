@@ -252,6 +252,20 @@ textarea { resize: none; line-height: 20px; }
 .message-bubble.is-masked { cursor: default; }
 .message-bubble.has-media.is-masked { padding: 8px 12px; }
 .message-text { white-space: pre-wrap; }
+.bubble-line { display: flex; align-items: center; gap: 4px; max-width: 100%; }
+.mine .bubble-line { flex-direction: row-reverse; }
+.bubble-line .message-bubble { min-width: 0; }
+.message-actions { flex: none; display: flex; opacity: 0; transition: opacity 120ms var(--ease-out); }
+.message-actions .icon-button { width: 26px; height: 26px; border-radius: 13px; color: var(--text-2); }
+.message-row:hover .message-actions, .message-actions:focus-within { opacity: 1; }
+@media (hover: none) { .message-actions { display: none; } }
+.message-quote { display: flex; flex-direction: column; gap: 1px; width: 100%; max-width: 360px; margin: 0 0 6px; padding: 5px 8px; border-radius: 10px; background: var(--fill-1); font-size: 12px; line-height: 16px; text-align: left; color: var(--text-2); }
+.message-quote b { font-weight: 600; color: var(--text-1); }
+.message-quote span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.has-media .message-quote { margin: 4px 4px 2px; width: auto; }
+.mine .message-quote { background: rgba(0, 0, 0, .16); color: #fff; }
+.mine .message-quote b { color: #fff; }
+@media (hover: hover) and (pointer: fine) { button.message-quote:hover { background: var(--fill-2); } .mine button.message-quote:hover { background: rgba(0, 0, 0, .24); } }
 .masked-message { display: flex; align-items: center; gap: 6px; letter-spacing: 2px; color: var(--text-2); }
 .mine .masked-message { color: rgba(255, 255, 255, .78); }
 .message-status { display: flex; align-items: center; gap: 6px; padding-right: 4px; }
@@ -282,6 +296,11 @@ button.message-read-status.is-read { color: var(--text-1); }
 .jump-to-latest:active:not(:disabled) { transform: translateX(-50%) scale(.97); }
 
 /* 输入胶囊：浮在消息流之上 */
+.reply-bar { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border-radius: 14px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-1); }
+.reply-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 12px; line-height: 16px; }
+.reply-copy b { font-weight: 600; }
+.reply-copy .private-preview { color: var(--text-2); }
+.reply-bar .icon-button { width: 26px; height: 26px; }
 .composer-area { position: absolute; z-index: 3; left: 24px; right: 24px; bottom: 16px; max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
 .attachment-queue { display: flex; gap: 8px; overflow-x: auto; padding: 8px; border-radius: 14px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-1); }
 .queued-file { display: flex; align-items: center; gap: 8px; flex: none; max-width: 240px; padding: 4px 4px 4px 4px; border-radius: 10px; background: var(--fill-1); }

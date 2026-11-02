@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check } from 'lucide-react';
+import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName } from './api';
+import { previewText } from './history';
 import appIcon from './assets/brand/app-icon.svg';
 
 export const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout'];
@@ -57,10 +58,36 @@ function Attachment({ file, privateMode, onPreview }) {
   </div>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail }) {
+// 触屏没有右键：长按 500 毫秒触发 onLongPress，手指移动则取消；consumed() 用来吞掉长按后的那次点击。
+export function longPressHandlers(state, onLongPress) {
+  const cancel = () => clearTimeout(state.current.timer);
+  return {
+    onPointerDown: event => {
+      if (event.pointerType !== 'touch') return;
+      const { clientX, clientY } = event;
+      state.current = { fired: false, timer: setTimeout(() => { state.current.fired = true; onLongPress(clientX, clientY); }, 500) };
+    },
+    onPointerUp: cancel, onPointerCancel: cancel,
+    onPointerMove: event => { if (event.pointerType === 'touch' && (Math.abs(event.movementX) > 4 || Math.abs(event.movementY) > 4)) cancel(); },
+  };
+}
+export const consumeLongPress = state => { const fired = state.current.fired; state.current.fired = false; return fired; };
+// 长按时没有原生事件，给右键菜单处理器一个带坐标的替身。
+export const pressEvent = (clientX, clientY) => ({ clientX, clientY, preventDefault() {}, stopPropagation() {} });
+
+// 引用块：原消息被撤回或清空时只说明状态；点击跳到原消息。
+export function Quote({ reply, author, onOpen, className = '' }) {
+  const unavailable = reply.recalled ? '引用的消息已撤回' : reply.missing ? '引用的消息已被清空' : '';
+  const body = <><b>{author}</b><span>{unavailable || previewText(reply)}</span></>;
+  return unavailable || !onOpen ? <div className={`message-quote ${unavailable ? 'unavailable' : ''} ${className}`}>{unavailable ? <span>{unavailable}</span> : body}</div>
+    : <button type="button" className={`message-quote ${className}`} onClick={onOpen} title="查看原消息">{body}</button>;
+}
+
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
+  const press = useRef({ timer: 0, fired: false });
   const revealSize = useRef({});
   const reveal = event => {
     if (!privateMode || revealed) return;
@@ -95,16 +122,19 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   const readLabel = direct ? readCount ? '已读' : '未读' : readCount ? `${readCount}/${recipients.length} 人已读` : '未读';
   if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id}>{mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}</article>;
   const time = <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>;
-  return <article onContextMenu={event => onContextMenu?.(event, message)} className={`message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''}`} data-message-id={message.id}>
+  return <article onContextMenu={event => { if (consumeLongPress(press)) event.preventDefault(); else onContextMenu?.(event, message); }}
+    {...longPressHandlers(press, (clientX, clientY) => onContextMenu?.(pressEvent(clientX, clientY), message))}
+    className={`message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''}`} data-message-id={message.id}>
     {!mine && (continued ? <span className="avatar-spacer" /> : <Avatar user={user} size={28} />)}
     <div className="message-column">{!mine && !continued && <div className="message-meta"><span>{user?.name || '成员'}</span>{time}</div>}
-      <div ref={bubble} className={`message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''}`} tabIndex={privateMode ? 0 : undefined}
+      <div className="bubble-line"><div ref={bubble} className={`message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''}`} tabIndex={privateMode ? 0 : undefined}
         style={privateMode && revealed ? revealSize.current : undefined}
         onPointerEnter={reveal} onPointerMove={reveal} onPointerLeave={() => setRevealed(false)} onBlur={() => setRevealed(false)}
         onKeyDown={event => { if (event.code === 'Space' && privateMode) { event.preventDefault(); setRevealed(true); } }} onKeyUp={event => { if (event.code === 'Space') setRevealed(false); }}
         aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>
-        {hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>{message.text && <p className="message-text">{message.text}</p>}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={onPreview} />)}</>}
+        {hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} /></div> : <>{message.replyTo && <Quote reply={message.replyTo} author={nameOf?.(message.replyTo.senderId) || '成员'} onOpen={() => onOpenQuote?.(message.replyTo)} />}{message.text && <p className="message-text">{message.text}</p>}{message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={onPreview} />)}</>}
       </div>
+      {onReply && <div className="message-actions"><IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} /></div>}</div>
       {mine && <div className="message-status">{time}{recipients.length > 0 && Array.isArray(message.readBy) && (direct ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
         : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>)}</div>}
     </div>

@@ -23,6 +23,8 @@ pub struct ContextMenuOptions {
   #[serde(default)]
   muted: bool,
   #[serde(default)]
+  can_reply: bool,
+  #[serde(default)]
   can_copy: bool,
   #[serde(default)]
   can_recall: bool,
@@ -50,9 +52,20 @@ pub async fn desktop_context_menu(app: AppHandle, webview: Webview, desktop: Sha
         add("remove", "移除对话")?;
       }
       "message" => {
-        if value.can_copy { add("copy", "复制")?; }
-        if value.can_copy && value.can_recall { menu.append(&PredefinedMenuItem::separator(&app)?)?; }
-        if value.can_recall { add("recall", "撤回消息")?; }
+        // 分组之间用分隔线隔开，空的分组不占位置。
+        let groups: [&[(bool, &str, &str)]; 3] = [
+          &[(value.can_reply, "reply", "回复")],
+          &[(value.can_copy, "copy", "复制")],
+          &[(value.can_recall, "recall", "撤回消息")],
+        ];
+        let mut first = true;
+        for group in groups {
+          let items: Vec<_> = group.iter().filter(|item| item.0).collect();
+          if items.is_empty() { continue; }
+          if !first { menu.append(&PredefinedMenuItem::separator(&app)?)?; }
+          first = false;
+          for (_, action, label) in items { add(action, label)?; }
+        }
       }
       "edit" => {
         menu.append_items(&[
