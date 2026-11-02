@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew Xiachedan HTTPS certificate
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/xiachedan/certbot/bin/certbot renew --quiet --config-dir /etc/xiachedan/acme --work-dir /var/lib/xiachedan-acme --logs-dir /var/log/xiachedan-acme --deploy-hook "/usr/sbin/nginx -t && /usr/bin/systemctl reload nginx"
+PrivateTmp=true
+NoNewPrivileges=true
