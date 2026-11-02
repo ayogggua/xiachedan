@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown } from 'lucide-react';
-import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Download } from 'lucide-react';
+import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress, pressEvent } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
@@ -223,6 +223,7 @@ export default function App() {
     showContextMenu(event, { kind: 'conversation', pinned: target.pinned, muted: target.muted }, [
       { id: pin, label: target.pinned ? '取消置顶' : '置顶对话', action: () => conversationAction(pin, target.id, conversationScope) },
       { id: mute, label: target.muted ? '取消免打扰' : '消息免打扰', action: () => conversationAction(mute, target.id, conversationScope) },
+      { id: 'export', label: '导出聊天记录', action: () => downloadExport(target.id) },
       { id: 'remove', label: '移除对话', action: () => conversationAction('remove', target.id, conversationScope) },
     ], '对话操作');
   }
@@ -373,6 +374,7 @@ export default function App() {
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : '会话成员'}>{panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
         : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button>
+          <button className="history-entry" onClick={() => downloadExport(room.id)}><Download size={16} /><span>导出聊天记录</span></button>
           {room.kind === 'group' && <>
             {groupOwner === state.me.id && <button className="history-entry" onClick={() => setGroupAction({ type: 'name' })}><PencilLine size={16} /><span>修改群名</span><ChevronRight size={14} /></button>}
             <section className="announcement-card" aria-label="群公告"><div className="announcement-heading"><Megaphone size={14} /><b>群公告</b>{groupOwner === state.me.id && <button className="text-button" onClick={() => setGroupAction({ type: 'announcement' })}>{room.announcement ? '编辑' : '发布'}</button>}</div>

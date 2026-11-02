@@ -577,6 +577,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 .segmented-control.three { grid-template-columns: repeat(3, 1fr); }
 :root[data-theme="light"] .privacy-toggle.enabled { background: var(--accent); }
 .storage-clear-button { margin-top: 12px; color: var(--danger-text); }
+.backup-settings .secondary-button { margin-top: 10px; }
+.backup-path { overflow-wrap: anywhere; user-select: text; }
 .desktop-settings { margin-top: 20px; }
 .update-settings h3 { margin-top: 24px; font-size: 13px; font-weight: 600; }
 .update-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 12px; border-radius: 12px; background: var(--fill-1); }

@@ -236,6 +236,27 @@ export function RecallDialog({ message, onClose, onRecalled }) {
   </Modal>;
 }
 
+// 局域网模式的自动备份：每天一份数据库快照，保留最近几份；恢复时用备份文件替换 chat.sqlite。
+function BackupSettings({ notify }) {
+  const [info, setInfo] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { api('backups').then(setInfo).catch(error => setError(error.message)); }, []);
+  async function backupNow() {
+    setBusy(true); setError('');
+    try { const result = await api('backups', {}); setInfo(current => ({ ...current, backups: result.backups })); notify('已备份'); }
+    catch (error) { setError(error.message); }
+    finally { setBusy(false); }
+  }
+  const latest = info?.backups[0];
+  return <div className="backup-settings"><h3>自动备份</h3>
+    <p className="inline-note">{!info ? '正在读取备份…' : latest ? `每天备份一次聊天记录，保留最近 ${info.keep} 份 · 上次 ${new Date(latest.createdAt).toLocaleString('zh-CN', { hour12: false })}` : `每天备份一次聊天记录，保留最近 ${info.keep} 份 · 还没有备份`}</p>
+    {info && <p className="inline-note backup-path">备份位置：{info.directory}（图片和文件不在备份内）</p>}
+    <button className="secondary-button" disabled={!info || busy} onClick={backupNow}>{busy ? '正在备份…' : '立即备份'}</button>
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </div>;
+}
+
 function StorageSettings({ cloud, onCleared, notify }) {
   const [info, setInfo] = useState(null);
   const [confirming, setConfirming] = useState(false);
@@ -260,6 +281,7 @@ function StorageSettings({ cloud, onCleared, notify }) {
     <p className="inline-note">清空整个空间所有会话的聊天记录及已发送的图片、视频，释放{cloud ? '服务器' : '创建空间的电脑'}上的存储。成员、头像和群聊会保留。</p>
     <button className="secondary-button storage-clear-button" disabled={!info || busy} onClick={() => setConfirming(true)}>清空空间聊天记录</button>
     {error && <p className="form-error" role="alert">{error}</p>}
+    {!cloud && <BackupSettings notify={notify} />}
     {confirming && <Modal title="清空整个空间的聊天记录？" subtitle="所有成员的大厅、群聊和私聊记录都会删除，图片与视频文件也会删除。此操作无法恢复。" onClose={() => !busy && setConfirming(false)}>
       <label className="field-label" htmlFor="clear-history-confirm">输入“清空”以确认</label><input id="clear-history-confirm" value={confirmation} onChange={event => setConfirmation(event.target.value)} disabled={busy} autoComplete="off" />
       {error && <p className="form-error" role="alert">{error}</p>}

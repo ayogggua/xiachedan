@@ -46,6 +46,13 @@ export function upload(file, query, onProgress) {
   });
 }
 
+// 导出会话聊天记录：按本机时区排时间，通过下载保存为文本文件。
+export function downloadExport(roomId) {
+  const link = document.createElement('a');
+  link.href = endpoint(`export?roomId=${encodeURIComponent(roomId)}&tz=${new Date().getTimezoneOffset()}`);
+  link.download = '';
+  link.click();
+}
 export const mediaUrl = (id, download = false) => endpoint(`media?id=${encodeURIComponent(id)}${download ? '&download=1' : ''}`);
 export const uid = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 export const randomName = () => {

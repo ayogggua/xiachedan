@@ -52,6 +52,7 @@ pub async fn desktop_context_menu(app: AppHandle, webview: Webview, desktop: Sha
       "conversation" => {
         add(if value.pinned { "unpin" } else { "pin" }, if value.pinned { "取消置顶" } else { "置顶对话" })?;
         add(if value.muted { "unmute" } else { "mute" }, if value.muted { "取消免打扰" } else { "消息免打扰" })?;
+        add("export", "导出聊天记录")?;
         menu.append(&PredefinedMenuItem::separator(&app)?)?;
         add("remove", "移除对话")?;
       }

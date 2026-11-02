@@ -3,7 +3,7 @@ import multer from 'multer';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync, linkSync, copyFileSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync, linkSync, copyFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore, serializeMessage as baseMessage } from './store.js';
@@ -18,6 +18,9 @@ const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet'
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const textValue = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+const BACKUP_KEEP = 7;
+const BACKUP_EVERY = 86400000;
+const sizeText = bytes => bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const loopback = address => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address);
 
 function detectMime(file) {
@@ -101,6 +104,24 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     }
   };
   cleanFiles();
+  // 局域网模式每天用 VACUUM INTO 给数据库做一份一致的快照，只保留最近 7 份；附件文件不随快照复制。
+  // 账号模式部署在服务器上，备份由服务器管理员负责。
+  const backupDir = path.join(dataDir, 'backups');
+  const backups = () => { try { return readdirSync(backupDir).filter(name => /^chat-[\dTZ-]+\.sqlite$/.test(name)).sort().reverse()
+    .map(name => { const info = statSync(path.join(backupDir, name)); return { name, size: info.size, createdAt: info.mtimeMs }; }); } catch { return []; } };
+  const backup = () => {
+    mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+    const name = `chat-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`;
+    stmt('VACUUM INTO ?').run(path.join(backupDir, name));
+    for (const old of backups().slice(BACKUP_KEEP)) { try { unlinkSync(path.join(backupDir, old.name)); } catch {} }
+    return backups()[0];
+  };
+  const backupIfDue = () => {
+    if (cloud || !stmt('SELECT 1 FROM workspace WHERE id=1').get()) return;
+    if (Date.now() - (backups()[0]?.createdAt || 0) < BACKUP_EVERY) return;
+    try { backup(); } catch (error) { console.error({ message: '自动备份失败', error: error.message }); }
+  };
+  backupIfDue();
   const fileSize = file => { try { return statSync(file).size; } catch { return 0; } };
   const storage = () => ({
     messageCount: stmt('SELECT COUNT(*) AS n FROM messages').get().n,
@@ -603,6 +624,48 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       ORDER BY seq DESC LIMIT 50`).all(...roomIds, clearedThroughSeq(), pattern, pattern);
     res.json({ messages: rows.map(serializeMessage) });
   });
+  // 导出单个会话为纯文本：只含自己有权访问的会话，按客户端时区显示时间；附件只列文件名和大小。
+  app.get('/api/export', (req, res) => {
+    rateLimit(req, 'export', 10);
+    const room = requireRoom(req.query.roomId, req.user.id);
+    const offset = Number(req.query.tz || 0);
+    if (!Number.isInteger(offset) || Math.abs(offset) > 840) throw fail('时区无效');
+    const time = value => new Date(value - offset * 60000).toISOString().slice(0, 16).replace('T', ' ');
+    const names = new Map(stmt('SELECT id, name FROM users').all().map(user => [user.id, user.name]));
+    const nameOf = id => names.get(id) || '已离开的成员';
+    const members = JSON.parse(room.members);
+    const title = room.kind === 'direct' ? nameOf(members.find(id => id !== req.user.id) || req.user.id) : room.name;
+    const blocks = [];
+    for (const row of stmt('SELECT * FROM messages WHERE room_id=? AND seq>? ORDER BY seq').iterate(room.id, clearedThroughSeq())) {
+      const message = serializeMessage(row);
+      const lines = [`${time(message.createdAt)}  ${nameOf(message.senderId)}${message.forwardedFrom ? `（转发自 ${nameOf(message.forwardedFrom.senderId)}）` : ''}`];
+      if (message.recalledAt) lines.push('（消息已撤回）');
+      else {
+        const quote = message.replyTo;
+        if (quote) lines.push(`↪ 回复 ${quote.senderId ? nameOf(quote.senderId) : ''}：${quote.missing ? '原消息已不存在' : quote.recalled ? '原消息已撤回' : quote.text.replace(/\s+/g, ' ').slice(0, 40) || '[附件]'}`);
+        if (message.text) lines.push(message.text);
+        for (const file of message.attachments) lines.push(`[附件] ${file.name}（${sizeText(file.size)}）`);
+      }
+      blocks.push(lines.join('\n'));
+    }
+    const header = `虾扯蛋聊天记录\n会话：${title}\n导出时间：${time(Date.now())} · 共 ${blocks.length} 条消息`;
+    const date = time(Date.now()).slice(0, 10).replace(/-/g, '');
+    res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`虾扯蛋-${title}-${date}.txt`)}` });
+    res.send([header, ...blocks].join('\n\n') + '\n');
+  });
+  const requireBackupOwner = req => {
+    if (cloud) throw fail('账号模式的数据由服务器管理员备份', 403);
+    if (req.user.id !== ownerId()) throw fail('只有空间创建者可以管理备份', 403);
+  };
+  app.get('/api/backups', (req, res) => {
+    requireBackupOwner(req);
+    res.json({ backups: backups(), directory: backupDir, keep: BACKUP_KEEP });
+  });
+  app.post('/api/backups', (req, res) => {
+    requireBackupOwner(req);
+    rateLimit(req, 'backup', 6);
+    res.status(201).json({ backup: backup(), backups: backups() });
+  });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
   app.post('/api/uploads', (req, res, next) => {
     rateLimit(req, 'upload', 30);
@@ -754,6 +817,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       else { socket.alive = false; socket.ping(); }
     }
     cleanFiles();
+    backupIfDue();
     auth?.cleanup();
     for (const [key, value] of limits) if (value.until < Date.now()) limits.delete(key);
     for (const [key, value] of failures) if (value.until < Date.now()) failures.delete(key);
