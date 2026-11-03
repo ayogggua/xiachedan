@@ -36,6 +36,7 @@ export default function useDesktopBridge({ notify, onPendingRoom, onOpenRoom }) 
       if (data.type === 'visibility') setWindowActive(data.active);
       if (data.type === 'open-room') handlers.current.onOpenRoom(data.roomId);
       if (data.type === 'context-menu-error') notify(data.message);
+      if (data.type === 'download') notify(data.success ? `已保存到「下载」：${data.name}` : '下载未完成，请重试');
     });
     window.desktop?.ready?.(privacyRef.current).then(applySettings).catch(error => notify(error.message));
     return () => {

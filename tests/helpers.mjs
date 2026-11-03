@@ -94,3 +94,22 @@ export async function startCloud() {
 
 export const send = (member, roomId, text, extra = {}) =>
   member.post('/api/messages', { roomId, clientId: `c-${Date.now()}-${Math.random()}`, text, ...extra });
+
+// 以成员身份连上实时通道，记录收到的事件；ready 之后才返回，避免漏掉后续事件。
+export async function listen(base, member) {
+  const { WebSocket } = await import('ws');
+  const cookie = [...member.jar].map(([name, value]) => `${name}=${value}`).join('; ');
+  const socket = new WebSocket(base.replace(/^http/, 'ws') + '/socket', { headers: { cookie } });
+  const events = [];
+  socket.on('message', data => events.push(JSON.parse(data)));
+  await new Promise((resolve, reject) => { socket.once('error', reject); socket.on('message', data => { if (JSON.parse(data).type === 'ready') resolve(); }); });
+  return {
+    events,
+    received: type => events.some(event => event.type === type),
+    clear: () => { events.length = 0; },
+    send: event => socket.send(JSON.stringify(event)),
+    close: () => socket.close(),
+  };
+}
+
+export const settle = (ms = 150) => new Promise(resolve => setTimeout(resolve, ms));

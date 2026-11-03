@@ -198,7 +198,11 @@ fn render(app: &AppHandle, desktop: &Desktop) {
   let Some(tray) = desktop.tray.lock().unwrap().clone() else { return };
   let badge = match count { 0 => None, 1..=99 => Some(count.to_string()), _ => Some("99+".into()) };
   #[cfg(target_os = "macos")]
-  let _ = tray.set_title(badge.as_deref());
+  {
+    let _ = tray.set_title(badge.as_deref());
+    // Dock 图标角标与菜单栏一致：有未读的会话数（免打扰的不算）。
+    if let Some(window) = main_window(app) { let _ = window.set_badge_label(badge.clone()); }
+  }
   let _ = tray.set_tooltip(Some(match &badge {
     Some(badge) => format!("虾扯蛋 · {badge} 个未读会话"),
     None => "虾扯蛋 · 点击打开聊天，右键查看设置".into(),
@@ -594,6 +598,18 @@ fn create_window(app: &AppHandle, desktop: Arc<Desktop>, start: Url) -> tauri::R
     .title_bar_style(tauri::TitleBarStyle::Overlay)
     .hidden_title(true)
     .traffic_light_position(tauri::LogicalPosition::new(21.0, 30.0));
+  // WKWebView 没有下载处理时会直接取消下载：存到「下载」文件夹（重名自动编号），完成后告诉页面。
+  #[cfg(target_os = "macos")]
+  let builder = {
+    let handle = app.clone();
+    builder.on_download(move |_webview, event| {
+      if let tauri::webview::DownloadEvent::Finished { path, success, .. } = event {
+        let name = path.as_ref().and_then(|path| path.file_name()).map(|name| name.to_string_lossy().into_owned());
+        emit(&handle, &desktop, "download", json!({ "name": name, "success": success }));
+      }
+      true
+    })
+  };
   builder.build()
 }
 

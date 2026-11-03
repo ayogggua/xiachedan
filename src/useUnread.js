@@ -40,6 +40,11 @@ export default function useUnread(state, messages, lastRead, connected, historyV
     const seenAhead = exact ? counted.filter(message => message.seq > afterSeq && message.seq <= throughSeq && message.readBy?.includes(userId)).length : 0;
     const count = (exact ? saved.unreadCount - seenAhead : 0) + liveCount;
     const hasUnread = count > 0 || (!exact && !room.lastMessage?.recalledAt && room.lastMessage?.senderId !== userId && room.lastMessage?.seq > afterSeq);
-    return [room.id, { count, exact, hasUnread }];
+    // 未读里有没有 @我 或 @所有人 的消息；旧版主机不返回 mentionCount 时只看已加载的消息。
+    const mentionsMe = message => message.mentions?.some(id => id === userId || id === '*');
+    const liveMentions = counted.filter(message => message.seq > throughSeq && !message.readBy?.includes(userId) && mentionsMe(message)).length;
+    const seenMentions = exact ? counted.filter(message => message.seq > afterSeq && message.seq <= throughSeq && message.readBy?.includes(userId) && mentionsMe(message)).length : 0;
+    const mentioned = hasUnread && (exact ? (saved.mentionCount || 0) - seenMentions : 0) + liveMentions > 0;
+    return [room.id, { count, exact, hasUnread, mentioned }];
   }));
 }

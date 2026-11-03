@@ -59,6 +59,28 @@ export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
   </form></Modal>;
 }
 
+// 转发：选一个目标会话，逐条发送。
+export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
+  const [search, setSearch] = useState('');
+  const [target, setTarget] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()));
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await onForward(target); onClose(); } catch (failure) { setError(failure.message); } finally { setBusy(false); }
+  }
+  return <Modal title={`转发 ${count} 条消息`} subtitle="选择一个会话，消息会逐条发送过去。" onClose={onClose}><form onSubmit={submit}>
+    <div className="search-input"><Search size={16} /><input autoFocus placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
+    <div className="member-picker" role="radiogroup" aria-label="转发到">{filtered.map(room => <label className="member-option" key={room.id}>
+      <input type="radio" name="forward-target" checked={target?.id === room.id} onChange={() => setTarget(room)} />{icon(room)}<span>{room.name}</span>
+      <span className={`selection-check ${target?.id === room.id ? 'checked' : ''}`}>{target?.id === room.id && <Check size={13} />}</span></label>)}
+      {!filtered.length && <div className="compact-empty"><Search size={25} /><p>没有找到这个会话</p></div>}</div>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !target}>{busy ? '正在转发…' : target ? `转发到「${target.name}」` : '转发'}<ArrowRight size={16} /></button></div>
+  </form></Modal>;
+}
+
 function DesktopSettings({ notify }) {
   const [settings, setSettings] = useState(null);
   useEffect(() => {
@@ -144,6 +166,40 @@ export function RemoveMemberDialog({ user, onClose, onRemoved }) {
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button danger-button" disabled={busy} onClick={remove}>{busy ? '正在移除…' : '确认移除'}</button></div>
   </Modal>;
+}
+
+// 通用确认框：onConfirm 抛错时显示错误并允许重试。
+export function ConfirmDialog({ title, subtitle, confirmLabel, busyLabel, danger = false, onConfirm, onClose }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function confirm() {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { await onConfirm(); onClose(); } catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title={title} subtitle={subtitle} onClose={() => !busy && onClose()}>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className={`primary-button ${danger ? 'danger-button' : ''}`} disabled={busy} onClick={confirm}>{busy ? busyLabel : confirmLabel}</button></div>
+  </Modal>;
+}
+
+// 群主修改群名或群公告；公告留空即撤下。
+export function GroupEditDialog({ room, field, onClose, onSaved }) {
+  const isName = field === 'name';
+  const [value, setValue] = useState(isName ? room.name : room.announcement?.text || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await api('room-settings', { roomId: room.id, [field]: value }); await onSaved(); onClose(); }
+    catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title={isName ? '修改群名' : '群公告'} subtitle={isName ? '群里的所有人都会看到新的群名。' : '公告会显示在群聊顶部，留空即撤下公告。'} onClose={() => !busy && onClose()}><form onSubmit={submit}>
+    {isName ? <input autoFocus aria-label="群聊名称" value={value} maxLength={24} required onChange={event => setValue(event.target.value)} />
+      : <><textarea autoFocus className="announcement-input" aria-label="群公告内容" value={value} maxLength={500} rows={5} onChange={event => setValue(event.target.value)} placeholder="例如：周五 18:00 发版，请提前合并代码" /><small className="field-hint">{value.trim().length}/500</small></>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || (isName && !value.trim())}>{busy ? '正在保存…' : '保存'}</button></div>
+  </form></Modal>;
 }
 
 export function RecallDialog({ message, onClose, onRecalled }) {
