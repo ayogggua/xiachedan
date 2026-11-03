@@ -15,9 +15,9 @@ export default function useConversations({ state, spaceId, selected, onSelect, n
   const rooms = (state?.rooms || []).map(room => {
     const preference = preferences[room.id];
     const removed = Number.isSafeInteger(preference?.removedThroughSeq) && preference.removedThroughSeq >= 0;
-    return { ...room, pinned: preference?.pinned === true, muted: preference?.muted === true,
+    return { ...room, pinned: preference?.pinned === true, pinRank: Number(preference?.pinRank) || 0, muted: preference?.muted === true, markedUnread: preference?.unread === true,
       hidden: removed && (room.lastMessage?.seq || 0) <= preference.removedThroughSeq };
-  }).sort((a, b) => Number(b.pinned) - Number(a.pinned) || (b.lastMessage?.seq || 0) - (a.lastMessage?.seq || 0));
+  }).sort((a, b) => Number(b.pinned) - Number(a.pinned) || (a.pinned && a.pinRank - b.pinRank) || (b.lastMessage?.seq || 0) - (a.lastMessage?.seq || 0));
   const current = useRef();
   current.current = { key, scope, preferences, rooms, selected, onSelect, notify };
 
@@ -44,7 +44,11 @@ export default function useConversations({ state, spaceId, selected, onSelect, n
     const preference = { ...context.preferences[id] };
     if (action === 'pin' || action === 'unpin') {
       preference.pinned = action === 'pin';
+      // 新置顶的排在最前；拖动排序后改成 0..n 的名次。
+      if (action === 'pin') preference.pinRank = -Date.now(); else delete preference.pinRank;
       delete preference.removedThroughSeq;
+    } else if (action === 'mark-unread' || action === 'mark-read') {
+      if (action === 'mark-unread') preference.unread = true; else delete preference.unread;
     } else if (action === 'mute' || action === 'unmute') {
       preference.muted = action === 'mute';
     } else if (action === 'remove') {
@@ -55,6 +59,14 @@ export default function useConversations({ state, spaceId, selected, onSelect, n
     if (action === 'remove' && context.selected === id) {
       context.onSelect(context.rooms.find(room => room.id !== id && !room.hidden)?.id || null);
     }
+  }, [save]);
+
+  const reorder = useCallback((ids, expectedScope) => {
+    const context = current.current;
+    if (!context.scope || context.scope !== expectedScope) return;
+    const next = { ...context.preferences };
+    ids.forEach((id, index) => { if (next[id]?.pinned) next[id] = { ...next[id], pinRank: index + 1 }; });
+    save(next);
   }, [save]);
 
   // 收到新消息或重连发现新消息时恢复会话；恢复后清空标记，撤回/清空记录也不会再次隐藏它。
@@ -73,5 +85,5 @@ export default function useConversations({ state, spaceId, selected, onSelect, n
     if (!ids.includes(selected)) onSelect(ids[0] || null);
   }, [scope, selected, visibleIds, onSelect]);
 
-  return { rooms, scope, restore, act };
+  return { rooms, scope, restore, act, reorder };
 }

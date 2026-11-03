@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, socketUrl } from './api';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
 import useMessageReads from './useMessageReads';
+import { isQuiet } from './quiet';
 
 // 空间会话的数据层：启动、状态同步、WebSocket、分页消息、撤回与清空记录、已读回执。
 export default function useChatSession({ selected, notify, privacyRef, mutedRef, onHistoryChanged }) {
@@ -15,6 +16,10 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   const [loggingOut, setLoggingOut] = useState(false);
   const logoutPending = useRef(false);
   const [historyVersion, setHistoryVersion] = useState(0);
+  // 会话置顶消息变化的计数：界面据此重新读取置顶列表。
+  const [pinsVersion, setPinsVersion] = useState(0);
+  const [savedVersion, setSavedVersion] = useState(0);
+  const [threadTick, setThreadTick] = useState({ rootId: null, n: 0 });
   const historyRef = useRef({ throughSeq: 0, recalls: new Map() });
   const reconnect = useRef();
   const activeRoom = useRef(selected);
@@ -75,6 +80,14 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   const applyReactions = useCallback(({ roomId, messageId, reactions }) => {
     setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, reactions } : message) } : previous);
   }, []);
+  const applyPoll = useCallback(({ roomId, messageId, poll }) => {
+    setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, poll } : message) } : previous);
+  }, []);
+  // 编辑后的消息只替换正文等字段，不当作新消息提醒；侧栏预览也跟着更新。
+  const applyEdit = useCallback(message => {
+    setMessages(previous => previous[message.roomId] ? { ...previous, [message.roomId]: merge(previous[message.roomId], [message], historyRef.current) } : previous);
+    setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.lastMessage?.id === message.id ? { ...room, lastMessage: { ...room.lastMessage, ...message } } : room) } : previous);
+  }, []);
   const reportRead = useMessageReads(state?.me.id, connected, applyReceipt);
   const meId = state?.me.id;
   // 先在本地记为已读，未读角标立即更新；回执在后台上报。
@@ -121,21 +134,32 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     if (message.recalledAt) syncHistory([message]);
     message = sanitizeMessage(message, historyRef.current);
     if (!message) return;
-    setMessages(previous => ({ ...previous, [message.roomId]: merge(previous[message.roomId] || [], [message], historyRef.current) }));
-    setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.id === message.roomId && (!room.lastMessage || room.lastMessage.seq < message.seq) ? { ...room, lastMessage: message } : room) } : previous);
+    // 话题里的回复不进主时间线，只通知打开着的话题面板刷新。
+    if (message.threadOf) setThreadTick(tick => ({ rootId: message.threadOf, n: tick.n + 1 }));
+    else {
+      setMessages(previous => ({ ...previous, [message.roomId]: merge(previous[message.roomId] || [], [message], historyRef.current) }));
+      setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.id === message.roomId && (!room.lastMessage || room.lastMessage.seq < message.seq) ? { ...room, lastMessage: message } : room) } : previous);
+    }
     const current = stateRef.current;
     const target = current?.rooms.find(room => room.id === message.roomId);
     const mentionsMe = message.mentions?.some(id => id === current?.me.id || id === '*');
     // 免打扰的会话只在被 @ 时提醒。
-    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id && (!mutedRef?.current.has(message.roomId) || mentionsMe)) {
+    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id && (!mutedRef?.current.has(message.roomId) || mentionsMe) && !isQuiet(mentionsMe)) {
       const sender = current.users.find(user => user.id === message.senderId);
       const hidden = privacyRef.current;
-      const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : ''}${sender?.name || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
+      const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : ''}${sender?.name || message.bot || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
       window.desktop.message({ id: message.id, roomId: message.roomId, privateMode: hidden,
         title: title.slice(0, 120), body: hidden ? '****' : previewText(message).slice(0, 240),
       }).catch(error => notify(error.message));
     }
   }, [notify, syncHistory, privacyRef]);
+  // 自己写的成员备注（只有自己看得到）：空字符串表示删除。
+  const applyNote = useCallback(({ userId, note }) => setState(previous => {
+    if (!previous) return previous;
+    const notes = { ...previous.notes };
+    if (note) notes[userId] = note; else delete notes[userId];
+    return { ...previous, notes };
+  }), []);
   useEffect(() => {
     if (!state?.me.id || loggingOut) { setConnected(false); return; }
     let cancelled = false, socket, delay = 700;
@@ -143,12 +167,23 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       try {
         await refresh();
         const roomId = activeRoom.current;
+        // 其他会话的缓存可能缺了断线期间的消息，丢掉后切过去时重新加载，避免中间出现空洞。
+        setMessages(previous => roomId && previous[roomId] ? { [roomId]: previous[roomId] } : {});
+        setHasMore(previous => roomId && roomId in previous ? { [roomId]: previous[roomId] } : {});
         if (!roomId) return;
-        const result = await api(`messages?roomId=${encodeURIComponent(roomId)}`);
-        if (!cancelled) {
-          setMessages(previous => ({ ...previous, [roomId]: merge(previous[roomId] || [], result.messages, historyRef.current) }));
-          setHasMore(previous => ({ ...previous, [roomId]: result.hasMore }));
+        // 当前会话从本地最后一条往后补齐；断开太久（超过 1000 条）就直接换成最新一页。
+        let after = messagesRef.current[roomId]?.at(-1)?.seq, missed = [], complete = after !== undefined;
+        for (let page = 0; complete && page < 5; page++) {
+          const result = await api(`messages?roomId=${encodeURIComponent(roomId)}&after=${after}`);
+          missed.push(...result.messages);
+          if (!result.hasNewer) break;
+          after = result.messages.at(-1).seq;
+          if (page === 4) complete = false;
         }
+        const latest = await api(`messages?roomId=${encodeURIComponent(roomId)}`);
+        if (cancelled) return;
+        setMessages(previous => ({ ...previous, [roomId]: complete ? merge(merge(previous[roomId] || [], missed, historyRef.current), latest.messages, historyRef.current) : merge([], latest.messages, historyRef.current) }));
+        setHasMore(previous => ({ ...previous, [roomId]: complete && roomId in previous ? previous[roomId] : latest.hasMore }));
       } catch (error) { if (!cancelled) notify(error.message); }
     }
     function connect() {
@@ -160,19 +195,34 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         let data; try { data = JSON.parse(event.data); } catch { return; }
         if (data.type === 'message') { receive(data.message); stopTyping(data.message.roomId, data.message.senderId); }
         if (data.type === 'typing') setTyping(previous => ({ ...previous, [data.roomId]: { ...previous[data.roomId], [data.userId]: Date.now() + 5000 } }));
-        if (data.type === 'message-recalled') syncHistory([data.message]);
+        if (data.type === 'message-recalled') { syncHistory([data.message]); applyEdit(data.message); }
         if (data.type === 'history-cleared') { syncHistory([], data.throughSeq); refresh().catch(error => notify(error.message)); }
         if (data.type === 'message-reads') applyReceipt(data);
         if (data.type === 'message-reactions') applyReactions(data);
+        if (data.type === 'message-edited') applyEdit(data.message);
         if (data.type === 'users') setState(previous => previous ? ({ ...previous, users: data.users, me: { ...previous.me, ...data.users.find(user => user.id === previous.me.id) } }) : previous);
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
+        if (data.type === 'room-pins') setPinsVersion(version => version + 1);
+        if (data.type === 'saved') setSavedVersion(version => version + 1);
+        if (data.type === 'user-note') applyNote(data);
+        if (data.type === 'message-poll') applyPoll(data);
+        if (data.type === 'message-thread') {
+          setMessages(previous => previous[data.roomId] ? { ...previous, [data.roomId]: previous[data.roomId].map(message => message.id === data.rootId ? { ...message, thread: data.thread } : message) } : previous);
+          setThreadTick(tick => ({ rootId: data.rootId, n: tick.n + 1 }));
+        }
+        if (data.type === 'reminder') {
+          const current = stateRef.current, sender = current?.users.find(user => user.id === data.message.senderId);
+          notify(`提醒：${privacyRef.current ? '你设置的消息提醒到了' : previewText(data.message).slice(0, 60)}`);
+          window.desktop?.message?.({ id: `reminder-${data.message.id}`, roomId: data.message.roomId, privateMode: privacyRef.current,
+            title: privacyRef.current ? '虾扯蛋 · 提醒' : `提醒 · ${sender?.name || data.message.bot || '消息'}`, body: privacyRef.current ? '****' : previewText(data.message).slice(0, 240) }).catch(() => {});
+        }
       };
       socket.onclose = event => { if (cancelled || logoutPending.current) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
       socket.onerror = () => socket.close();
     }
     connect();
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
-  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, syncHistory, stopTyping]);
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
@@ -213,5 +263,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, typing, sendTyping };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote };
 }

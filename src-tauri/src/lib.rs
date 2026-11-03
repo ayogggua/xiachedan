@@ -468,6 +468,16 @@ fn desktop_test_notification(app: AppHandle, webview: Webview, desktop: Shared<'
   test_notification(&app, &desktop)
 }
 
+// 消息里的链接交给系统浏览器打开；只接受 http/https。
+#[tauri::command]
+fn desktop_open_url(app: AppHandle, webview: Webview, desktop: Shared<'_>, url: String) -> Result<bool, String> {
+  require_trusted(&webview, &desktop)?;
+  let target = Url::parse(&url).map_err(|_| "链接无效".to_string())?;
+  if !matches!(target.scheme(), "http" | "https") { return Err("只能打开网页链接".into()) }
+  app.opener().open_url(target.as_str(), None::<&str>).map_err(|error| error.to_string())?;
+  Ok(true)
+}
+
 fn open_notification_settings(app: &AppHandle) -> Result<(), String> {
   let target = if cfg!(target_os = "macos") { "x-apple.systempreferences:com.apple.Notifications-Settings.extension" } else { "ms-settings:notifications" };
   app.opener().open_url(target, None::<&str>).map_err(|error| error.to_string())
@@ -639,7 +649,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       desktop_connect, desktop_home, desktop_copy, desktop_context_menu, desktop_ready, desktop_state, desktop_settings, desktop_activity,
-      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install, desktop_identity
+      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install, desktop_identity, desktop_open_url
     ])
     .setup(|app| {
       let handle = app.handle().clone();

@@ -219,6 +219,25 @@ export async function createAuth({ db, app, production, closeUser, changed, rate
     changed();
     res.json({ account: publicAccount(account(target.id)) });
   });
+  // 成员忘记密码时由管理员重置：生成一次性的临时密码，只返回这一次；对方用它登录后必须先改密码，原有登录全部失效。
+  app.post('/api/admin/password', async (req, res) => {
+    const actor = requireAdmin(req);
+    const target = managedAccount(req, actor);
+    if (!['approved', 'suspended'].includes(target.status)) throw fail('只能重置已通过审核的账号');
+    rateLimit(req, 'admin-password', 10, 15 * 60000);
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz';
+    const digits = '23456789';
+    const pick = (chars, count) => [...randomBytes(count)].map(byte => chars[byte % chars.length]).join('');
+    const password = `${pick(alphabet, 4)}-${pick(digits, 4)}-${pick(alphabet + digits, 4)}`;
+    const encoded = await withHashSlot(() => passwordHash(password));
+    transaction(() => {
+      stmt('UPDATE accounts SET password_hash=?,must_change_password=1,updated_at=? WHERE user_id=?').run(encoded, Date.now(), target.id);
+      stmt('DELETE FROM sessions WHERE user_id=?').run(target.id);
+      audit(actor.id, target.id, 'reset-password');
+    });
+    closeUser(target.id);
+    res.json({ password });
+  });
   return { user, account: req => publicAccount(session(req)), activeId: id => active(account(id)), tokenHash: req => hash(token(req)),
     validSocket: socket => Boolean(stmt('SELECT 1 FROM sessions WHERE token_hash=? AND expires_at>?').get(socket.sessionHash, Date.now()) && active(account(socket.userId))),
     cleanup: () => stmt('DELETE FROM sessions WHERE expires_at<=?').run(Date.now()),
