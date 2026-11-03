@@ -23,15 +23,31 @@ pub struct ContextMenuOptions {
   #[serde(default)]
   muted: bool,
   #[serde(default)]
+  unread: bool,
+  #[serde(default)]
   can_reply: bool,
   #[serde(default)]
   can_react: bool,
+  #[serde(default)]
+  can_thread: bool,
   #[serde(default)]
   can_forward: bool,
   #[serde(default)]
   can_copy: bool,
   #[serde(default)]
+  can_edit: bool,
+  #[serde(default)]
+  can_pin: bool,
+  #[serde(default)]
+  can_save: bool,
+  #[serde(default)]
+  saved: bool,
+  #[serde(default)]
+  can_remind: bool,
+  #[serde(default)]
   can_recall: bool,
+  #[serde(default)]
+  can_remove: bool,
 }
 
 #[tauri::command]
@@ -50,17 +66,19 @@ pub async fn desktop_context_menu(app: AppHandle, webview: Webview, desktop: Sha
   let mut build = || -> tauri::Result<()> {
     match value.kind.as_str() {
       "conversation" => {
+        add(if value.unread { "read" } else { "unread" }, if value.unread { "标为已读" } else { "标为未读" })?;
         add(if value.pinned { "unpin" } else { "pin" }, if value.pinned { "取消置顶" } else { "置顶对话" })?;
         add(if value.muted { "unmute" } else { "mute" }, if value.muted { "取消免打扰" } else { "消息免打扰" })?;
+        add("export", "导出聊天记录")?;
         menu.append(&PredefinedMenuItem::separator(&app)?)?;
         add("remove", "移除对话")?;
       }
       "message" => {
         // 分组之间用分隔线隔开，空的分组不占位置。
         let groups: [&[(bool, &str, &str)]; 3] = [
-          &[(value.can_reply, "reply", "回复"), (value.can_react, "react", "回应"), (value.can_forward, "forward", "转发"), (value.can_forward, "select", "多选")],
-          &[(value.can_copy, "copy", "复制")],
-          &[(value.can_recall, "recall", "撤回消息")],
+          &[(value.can_reply, "reply", "回复"), (value.can_thread, "thread", "在话题中回复"), (value.can_react, "react", "回应"), (value.can_forward, "forward", "转发"), (value.can_forward, "select", "多选")],
+          &[(value.can_copy, "copy", "复制"), (value.can_edit, "edit", "编辑"), (value.can_remind, "remind", "提醒我…"), (value.can_save && !value.saved, "save", "收藏"), (value.can_save && value.saved, "unsave", "取消收藏"), (value.can_pin && !value.pinned, "pin", "置顶消息"), (value.can_pin && value.pinned, "unpin", "取消置顶消息")],
+          &[(value.can_recall, "recall", "撤回消息"), (value.can_remove, "remove", "删除消息（管理员）")],
         ];
         let mut first = true;
         for group in groups {

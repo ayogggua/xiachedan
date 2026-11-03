@@ -78,6 +78,7 @@
     },
     home: () => invoke('desktop_home'),
     copy: text => invoke('desktop_copy', { text }),
+    openUrl: url => invoke('desktop_open_url', { url }),
     contextMenu,
     ready: privateMode => invoke('desktop_ready', { privateMode: privateMode === true }),
     getState: () => invoke('desktop_state'),

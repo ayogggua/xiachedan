@@ -30,10 +30,13 @@ describe('表情回应', () => {
     assert.deepEqual(await reactionsOf(alice, 'lobby', message.id), [{ emoji: '🎉', users: [carol.id] }, { emoji: '👍', users: [carol.id] }]);
   });
 
-  test('只能用固定的表情，不能回应看不到、已撤回或不存在的消息', async () => {
+  test('任意单个表情都可以，文字和多个表情不行；不能回应看不到、已撤回或不存在的消息', async () => {
     const message = (await send(alice, 'lobby', '测试')).body.message;
-    assert.equal((await bob.post('/api/reactions', { messageId: message.id, emoji: '💩' })).status, 400);
+    assert.equal((await bob.post('/api/reactions', { messageId: message.id, emoji: '💩' })).status, 200);
+    assert.equal((await bob.post('/api/reactions', { messageId: message.id, emoji: '👍🏽' })).status, 200);
     assert.equal((await bob.post('/api/reactions', { messageId: message.id, emoji: '<b>' })).status, 400);
+    assert.equal((await bob.post('/api/reactions', { messageId: message.id, emoji: '👍👍' })).status, 400);
+    assert.equal((await bob.post('/api/reactions', { messageId: message.id, emoji: 'a' })).status, 400);
     const secret = (await send(alice, direct, '私聊')).body.message;
     assert.equal((await carol.post('/api/reactions', { messageId: secret.id, emoji: '👍' })).status, 403);
     await alice.post('/api/recall-message', { messageId: message.id });
@@ -71,5 +74,24 @@ describe('账号模式下的表情回应', () => {
     const message = (await send(alice, 'lobby', '云端')).body.message;
     assert.equal((await bob.post('/api/reactions', { messageId: message.id, emoji: '👍' })).status, 200);
     assert.equal((await (await space.register('待审核')).post('/api/reactions', { messageId: message.id, emoji: '👍' })).status, 401);
+  });
+});
+
+describe('表情种类上限', () => {
+  let space, alice, members;
+  before(async () => {
+    space = await startLocal();
+    alice = await space.join('Alice');
+    members = [];
+    for (let index = 0; index < 3; index++) members.push(await space.join(`成员${index}`));
+  });
+  after(() => space.close());
+
+  test('同一条消息最多 20 种不同表情，已有的表情还能继续加', async () => {
+    const message = (await send(alice, 'lobby', '热门')).body.message;
+    const emojis = ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚'];
+    for (const emoji of emojis) assert.equal((await alice.post('/api/reactions', { messageId: message.id, emoji })).status, 200);
+    assert.equal((await members[0].post('/api/reactions', { messageId: message.id, emoji: '🥳' })).status, 400);
+    assert.equal((await members[0].post('/api/reactions', { messageId: message.id, emoji: '😀' })).status, 200);
   });
 });
