@@ -66,6 +66,38 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 禁言：管理员可以让成员一段时间（或一直）不能发言；until 为空表示直到解除。
+    CREATE TABLE IF NOT EXISTS member_mutes (user_id TEXT PRIMARY KEY, until INTEGER, muted_by TEXT NOT NULL, muted_at INTEGER NOT NULL);
+    -- 空间设置：retention_days 消息保留天数，0 表示永久保留。
+    CREATE TABLE IF NOT EXISTS space_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    -- 话题：话题里的回复属于同一会话，但不出现在主时间线，也不计入会话未读；根消息上显示回复数。
+    CREATE TABLE IF NOT EXISTS message_threads (message_id TEXT PRIMARY KEY, root_id TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS message_threads_root ON message_threads(root_id);
+    -- 个人资料：部门和签名（可选）；最后在线时间在最后一个连接断开时记下。
+    CREATE TABLE IF NOT EXISTS user_profiles (user_id TEXT PRIMARY KEY, department TEXT NOT NULL DEFAULT '', bio TEXT NOT NULL DEFAULT '', last_seen INTEGER);
+    -- 定时消息：到点由服务器以发送人的身份发出（只支持文字，不带 @提醒）；提醒：到点只通知设置的人自己。
+    CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, sender_id TEXT NOT NULL, text TEXT NOT NULL, send_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS reminders (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, message_id TEXT NOT NULL, remind_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
+    -- 投票：投票本身是一条消息（正文是问题），选项与投票人另存；投票公开，大家能看到谁投了什么。
+    CREATE TABLE IF NOT EXISTS polls (message_id TEXT PRIMARY KEY, options TEXT NOT NULL, multiple INTEGER NOT NULL DEFAULT 0, closed_at INTEGER);
+    CREATE TABLE IF NOT EXISTS poll_votes (message_id TEXT NOT NULL, user_id TEXT NOT NULL, option_index INTEGER NOT NULL, voted_at INTEGER NOT NULL, PRIMARY KEY (message_id, user_id, option_index));
+    -- 收藏：每人自己的收藏夹，只记消息标识；消息撤回或自己失去访问权后不再列出。
+    CREATE TABLE IF NOT EXISTS saved_messages (user_id TEXT NOT NULL, message_id TEXT NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY (user_id, message_id));
+    -- 会话内置顶的消息：群主、空间管理者或私聊双方可以置顶，每个会话最多 20 条。
+    CREATE TABLE IF NOT EXISTS room_pins (room_id TEXT NOT NULL, message_id TEXT NOT NULL, pinned_by TEXT NOT NULL, pinned_at INTEGER NOT NULL, PRIMARY KEY (room_id, message_id));
+    -- 管理员删除的消息：与撤回一样清空内容，另记下是谁删的，界面显示「管理员删除了一条消息」。
+    CREATE TABLE IF NOT EXISTS message_removals (message_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, removed_at INTEGER NOT NULL);
+    -- 链接预览缓存：成功的保留一天，失败的保留一小时，避免反复抓取同一个网址。
+    CREATE TABLE IF NOT EXISTS link_previews (url TEXT PRIMARY KEY, data TEXT, error TEXT, fetched_at INTEGER NOT NULL);
+    -- 图片缩略图：客户端上传原图后再传一张小图，发送时随附件一起记录；聊天里显示小图，查看大图时才加载原图。
+    CREATE TABLE IF NOT EXISTS upload_thumbnails (upload_id TEXT PRIMARY KEY, thumb_id TEXT NOT NULL);
+    -- 账号模式的登录设备：按登录会话记下设备描述、来源地址和最后活跃时间，用于「登录设备」列表。
+    CREATE TABLE IF NOT EXISTS session_devices (token_hash TEXT PRIMARY KEY, user_agent TEXT NOT NULL, ip TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL);
+    -- 编辑过的消息记下最后一次编辑时间，界面显示「已编辑」。
+    CREATE TABLE IF NOT EXISTS message_edits (message_id TEXT PRIMARY KEY, edited_at INTEGER NOT NULL);
+    -- 群机器人：外部系统凭地址里的令牌向一个会话发消息；只保存令牌摘要。机器人发的消息另记名字，删掉机器人后仍能显示。
+    CREATE TABLE IF NOT EXISTS webhooks (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS message_bots (message_id TEXT PRIMARY KEY, name TEXT NOT NULL);
     -- 群聊设置：群主（为空或已不在群里时由最早的成员接任）与群公告。
     CREATE TABLE IF NOT EXISTS room_settings (room_id TEXT PRIMARY KEY, owner_id TEXT, announcement TEXT NOT NULL DEFAULT '', announcement_at INTEGER, announcement_by TEXT);
     -- 每条消息、每位接收者仅保存一次实际查看时间。

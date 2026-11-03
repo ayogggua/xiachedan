@@ -38,8 +38,8 @@ async function start(options) {
 }
 
 // 局域网模式：创建空间的人（owner）已登录；join(name) 用邀请码加入一位新成员。
-export async function startLocal({ setup = true } = {}) {
-  const context = await start({ mode: 'local' });
+export async function startLocal({ setup = true, ...options } = {}) {
+  const context = await start({ mode: 'local', ...options });
   const setupKey = new URL(context.server.setupUrl).hash.replace('#setup=', '');
   const owner = client(context.base);
   context.setupKey = setupKey;

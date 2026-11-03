@@ -7,6 +7,8 @@ if (setup) {
 export const nativeTitlebar = Boolean(window.desktop) && window.desktop.platform !== 'windows';
 const backend = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const endpoint = route => `${backend}/api/${route}`;
+// 给外部系统用的完整地址（如机器人地址）：开发时指向后端，其余情况与页面同源。
+export const absoluteUrl = path => `${backend || location.origin}${path}`;
 export const socketUrl = () => {
   const url = new URL('/socket', backend || location.origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -46,6 +48,13 @@ export function upload(file, query, onProgress) {
   });
 }
 
+// 导出会话聊天记录：按本机时区排时间，通过下载保存为文本文件。
+export function downloadExport(roomId) {
+  const link = document.createElement('a');
+  link.href = endpoint(`export?roomId=${encodeURIComponent(roomId)}&tz=${new Date().getTimezoneOffset()}`);
+  link.download = '';
+  link.click();
+}
 export const mediaUrl = (id, download = false) => endpoint(`media?id=${encodeURIComponent(id)}${download ? '&download=1' : ''}`);
 export const uid = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 export const randomName = () => {
@@ -54,4 +63,15 @@ export const randomName = () => {
   return descriptions[Math.floor(Math.random() * descriptions.length)] + animals[Math.floor(Math.random() * animals.length)];
 };
 export const formatTime = timestamp => new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+// 最后在线：刚刚、N 分钟前、今天 / 昨天 HH:mm、更早显示日期。
+export function seenText(time) {
+  const minutes = Math.floor((Date.now() - time) / 60000);
+  if (minutes < 1) return '刚刚在线';
+  if (minutes < 60) return `${minutes} 分钟前在线`;
+  const date = new Date(time), today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return `今天 ${formatTime(time)} 在线`;
+  if (date.toDateString() === yesterday.toDateString()) return `昨天 ${formatTime(time)} 在线`;
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日在线`;
+}
 export const formatSize = bytes => bytes < 1048576 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1048576).toFixed(1)} MB`;

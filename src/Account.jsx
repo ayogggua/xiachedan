@@ -95,6 +95,8 @@ export function AdminDialog({ me, onClose, onUpdated, notify }) {
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
   const [confirmRole, setConfirmRole] = useState(null);
+  const [confirmReset, setConfirmReset] = useState(null);
+  const [issued, setIssued] = useState(null);
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError('');
@@ -109,9 +111,23 @@ export function AdminDialog({ me, onClose, onUpdated, notify }) {
       setConfirmRole(null); setVersion(value => value + 1); await onUpdated(); notify('账号状态已更新');
     } catch (error) { setError(error.message); } finally { setBusy(false); }
   }
+  async function resetPassword(user) {
+    if (busy) return;
+    if (confirmReset !== user.id) return setConfirmReset(user.id);
+    setBusy(true); setError('');
+    try { const { password } = await api('admin/password', { userId: user.id }); setConfirmReset(null); setIssued({ name: user.name, password }); }
+    catch (error) { setError(error.message); } finally { setBusy(false); }
+  }
+  async function copyPassword() {
+    try { await (window.desktop ? window.desktop.copy(issued.password) : navigator.clipboard.writeText(issued.password)); notify('临时密码已复制'); }
+    catch { setError('复制失败，请手动选中复制'); }
+  }
   return <Modal title="用户管理" subtitle="审核注册申请，管理成员权限。" wide onClose={onClose}>
     <div className="account-tabs" role="group" aria-label="审核状态">{Object.entries(statusNames).map(([key, label]) => <button className={`secondary-button ${status === key ? 'selected' : ''}`} aria-pressed={status === key} disabled={busy} key={key} onClick={() => { setStatus(key); setPage(1); setConfirmRole(null); }}>{label}</button>)}<button className="text-button" disabled={busy || loading} onClick={() => setVersion(value => value + 1)} aria-label="刷新用户列表"><RefreshCw size={15} /></button></div>
     {error && <p className="form-error" role="alert">{error}</p>}
+    {issued && <section className="webhook-issued" aria-live="polite"><b>{issued.name} 的临时密码</b><input aria-label="临时密码" value={issued.password} readOnly onFocus={event => event.target.select()} />
+      <button type="button" className="primary-button full" onClick={copyPassword}>复制临时密码</button>
+      <p className="inline-note">只显示这一次。请私下告诉对方，对方登录后需要先设置新密码；原来的登录已全部退出。</p></section>}
     {loading ? <p className="compact-empty" role="status">正在加载…</p> : <>
       <div className="account-list">{result?.users.map(user => {
         const editable = user.id !== me.id && user.role !== 'super_admin' && (me.role === 'super_admin' || user.role === 'user');
@@ -120,6 +136,7 @@ export function AdminDialog({ me, onClose, onUpdated, notify }) {
             {user.status !== 'approved' && <button className="primary-button" disabled={busy} onClick={() => update(user, { status: 'approved' })}>{user.status === 'suspended' ? '恢复使用' : '通过'}</button>}
             {user.status === 'pending' && <button className="secondary-button" disabled={busy} onClick={() => update(user, { status: 'rejected' })}>拒绝</button>}
             {user.status === 'approved' && <button className="secondary-button" disabled={busy} onClick={() => update(user, { status: 'suspended' })}>停用</button>}
+            {['approved', 'suspended'].includes(user.status) && <button className="text-button" disabled={busy} onClick={() => resetPassword(user)}>{confirmReset === user.id ? '确认重置密码' : '重置密码'}</button>}
             {me.role === 'super_admin' && user.status === 'approved' && <button className="text-button" disabled={busy} onClick={() => confirmRole === user.id ? update(user, { role: user.role === 'admin' ? 'user' : 'admin' }) : setConfirmRole(user.id)}>{confirmRole === user.id ? '确认修改权限' : user.role === 'admin' ? '设为普通成员' : '设为管理员'}</button>}
           </div>}
         </div>;
