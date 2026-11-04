@@ -10,12 +10,12 @@ import { openStore, serializeMessage as baseMessage } from './store.js';
 import { lanAddresses } from './network.js';
 import { createAuth } from './auth.js';
 import { fetchPreview } from './linkPreview.js';
+import { isPresetAvatar } from '../shared/avatars.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_FILE = 100 * 1024 * 1024;
 // 表情回应的默认常用项（客户端在本机按使用次数排序），随会话状态下发；回应本身可以用任意单个表情。
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '🙏', '✅', '👀'];
-const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout'];
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const textValue = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -191,7 +191,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (groupSettings(room).ownerId !== userId) throw fail('只有群主可以这样设置', 403);
     return room;
   };
-  const roomAvatar = id => { const row = stmt('SELECT upload_id FROM room_avatars WHERE room_id=?').get(id); return row ? `upload:${row.upload_id}` : null; };
+  const roomAvatar = id => {
+    const value = stmt('SELECT upload_id FROM room_avatars WHERE room_id=?').get(id)?.upload_id;
+    return value ? value.startsWith('preset:') ? value.slice(7) : `upload:${value}` : null;
+  };
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
       members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 1`).get(room.id)),
@@ -228,7 +231,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
   const userCreated = (req, res, name, avatar) => {
     const token = randomBytes(32).toString('hex');
-    const user = { id: randomUUID(), name, avatar: PRESETS.includes(avatar) ? avatar : 'cat' };
+    const user = { id: randomUUID(), name, avatar: isPresetAvatar(avatar) ? avatar : 'cat' };
     stmt('INSERT INTO users (id,name,avatar,token_hash,created_at) VALUES (?,?,?,?,?)').run(user.id, name, user.avatar, hash(token), Date.now());
     setSession(res, token);
     broadcast({ type: 'users', users: users() });
@@ -713,7 +716,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const name = textValue(req.body.name, 24);
     if (!name) throw fail('昵称不能为空');
     if (req.body.nameColor !== undefined && req.body.nameColor !== null && !(Number.isInteger(req.body.nameColor) && req.body.nameColor >= 0 && req.body.nameColor <= 6)) throw fail('名字颜色无效');
-    const avatar = PRESETS.includes(req.body.avatar) ? req.body.avatar : req.user.avatar;
+    const avatar = isPresetAvatar(req.body.avatar) ? req.body.avatar : req.user.avatar;
     stmt('UPDATE users SET name=?, avatar=? WHERE id=?').run(name, avatar, req.user.id);
     // 部门和签名可选；不传时保持原样。
     if (req.body.department !== undefined || req.body.bio !== undefined) {
@@ -1154,10 +1157,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!allowed) throw fail(room.kind === 'direct' ? '私聊没有群头像' : '只有群主可以更换群头像', 403);
     return room;
   };
-  const setRoomAvatar = (room, uploadId) => {
+  const setRoomAvatar = (room, avatar) => {
+    // 兼容原有上传 UUID；内置头像带独立前缀，避免被当作待清理的上传文件。
+    const value = avatar ? avatar.startsWith('upload:') ? avatar.slice(7) : `preset:${avatar}` : null;
     const previous = stmt('SELECT upload_id FROM room_avatars WHERE room_id=?').get(room.id);
-    if (previous) { stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(previous.upload_id); stmt('DELETE FROM uploads WHERE id=?').run(previous.upload_id); }
-    if (uploadId) stmt('INSERT OR REPLACE INTO room_avatars VALUES (?,?)').run(room.id, uploadId);
+    if (previous?.upload_id === value) return;
+    if (previous && !previous.upload_id.startsWith('preset:')) { stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(previous.upload_id); stmt('DELETE FROM uploads WHERE id=?').run(previous.upload_id); }
+    if (value) stmt('INSERT OR REPLACE INTO room_avatars VALUES (?,?)').run(room.id, value);
     else stmt('DELETE FROM room_avatars WHERE room_id=?').run(room.id);
     cleanFiles();
     broadcast({ type: 'rooms' }, room.id);
@@ -1167,9 +1173,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const mime = detectMime(file.path);
     if (!mime?.startsWith('image/') || file.size > 5 * 1024 * 1024) throw fail('群头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片');
     stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(file.filename, req.user.id, room.id, 'room-avatar', mime, file.size, 'room-avatar', 1, Date.now());
-    setRoomAvatar(room, file.filename);
+    setRoomAvatar(room, `upload:${file.filename}`);
     return `upload:${file.filename}`;
   };
+  app.post('/api/room-avatar', (req, res) => {
+    const room = requireRoomAvatarOwner(req);
+    rateLimit(req, 'room-avatar', 20);
+    const avatar = req.body?.avatar;
+    if (!isPresetAvatar(avatar)) throw fail('请选择有效的群头像');
+    setRoomAvatar(room, avatar);
+    res.json({ avatar });
+  });
   app.post('/api/room-avatar/remove', (req, res) => { setRoomAvatar(requireRoomAvatarOwner(req), null); res.json({ ok: true }); });
   // 缩略图只能挂在自己刚上传、还没发送的图片上，本身也必须是 2 MB 以内的静态图片。
   const thumbnailTarget = req => {

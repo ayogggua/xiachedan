@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell, LoaderCircle, LogOut, KeyRound, Copy, Bot } from 'lucide-react';
+import { Camera, Check, Search, Users, Hash, ArrowRight, Wifi, ExternalLink, Bell, LoaderCircle, LogOut, KeyRound, Copy, Bot } from 'lucide-react';
 import { api, upload, formatSize, absoluteUrl, mediaUrl, formatTime } from './api';
 import { FormattedText } from './markdown';
-import { Modal, Avatar, IdentityFields } from './components';
+import { Modal, Avatar, AvatarPicker, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
 import { ACCENTS, FONT_SIZES } from './appearance';
@@ -40,6 +40,46 @@ export function InviteDialog({ cloud, onClose, notify }) {
     {error && <p className="form-error" role="alert">{error}</p>}
     {invite ? cloud ? <div className="cloud-invite"><input aria-label="注册链接" value={invite.url || location.origin} readOnly onFocus={event => event.target.select()} /><button className="primary-button full" onClick={() => navigator.clipboard.writeText(invite.url || location.origin).then(() => notify('注册链接已复制')).catch(() => setError('复制失败，请选中上方链接复制'))}><Copy size={15} />复制注册链接</button></div> : <InvitationShare invite={invite} notify={notify} /> : !error && <p className="inline-note">正在获取邀请信息…</p>}
   </Modal>;
+}
+
+export function RoomAvatarDialog({ room, onClose, onSaved, notify }) {
+  const [avatar, setAvatar] = useState(room.avatar || null);
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const fileInput = useRef();
+  useEffect(() => {
+    if (!file) { setPreview(''); return; }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  const choose = value => { setFile(null); setAvatar(value); setError(''); };
+  const chooseFile = selected => {
+    if (!selected) return;
+    if (selected.size > 5 * 1024 * 1024) return setError('群头像不能超过 5 MB');
+    if (selected.type && !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(selected.type)) return setError('群头像请使用 JPG、PNG、GIF 或 WebP 图片');
+    setError(''); setFile(selected);
+  };
+  async function save(event) {
+    event.preventDefault();
+    if (busy || (!file && avatar === (room.avatar || null))) return;
+    setBusy(true); setError('');
+    try {
+      if (file) await upload(file, { purpose: 'room-avatar', roomId: room.id });
+      else if (avatar) await api('room-avatar', { roomId: room.id, avatar });
+      else await api('room-avatar/remove', { roomId: room.id });
+      await onSaved(); onClose(); notify('群头像已更新');
+    } catch (error) { setError(error.message); } finally { setBusy(false); }
+  }
+  return <Modal title="设置群头像" subtitle={room.name} onClose={() => { if (!busy) onClose(); }}><form className="room-avatar-form" onSubmit={save}>
+    <fieldset disabled={busy}><div className="profile-avatar">
+      {file && preview ? <span className="avatar avatar-photo" style={{ width: 88, height: 88 }}><img src={preview} alt="待保存的群头像" /></span> : avatar ? <Avatar user={{ avatar }} size={88} /> : <span className="room-avatar room-avatar-preview">{room.kind === 'public' ? <Hash size={36} /> : <Users size={36} />}</span>}
+      <div className="room-avatar-actions"><button type="button" className="secondary-button" onClick={() => fileInput.current.click()}><Camera size={16} />上传图片</button>{(file || avatar) && <button type="button" className="text-button" onClick={() => choose(null)}>恢复默认</button>}</div><small>JPG、PNG、GIF、WebP · 最大 5 MB</small>
+    </div><input ref={fileInput} type="file" aria-label="上传群头像" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { chooseFile(event.target.files[0]); event.target.value = ''; }} /><AvatarPicker avatar={file ? null : avatar} setAvatar={choose} /></fieldset>
+    {error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || (!file && avatar === (room.avatar || null))}>{busy ? '正在保存…' : '保存头像'}</button></div>
+  </form></Modal>;
 }
 
 export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {

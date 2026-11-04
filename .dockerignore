@@ -3,5 +3,7 @@
 !package-lock.json
 !server/
 !server/**
+!shared/
+!shared/**
 !deploy/
 !deploy/Dockerfile.backend

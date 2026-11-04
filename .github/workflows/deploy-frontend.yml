@@ -2,7 +2,7 @@ name: Deploy frontend
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'shared/**', 'index.html', 'vite.config.js', 'package.json', 'package-lock.json', '.github/workflows/deploy-frontend.yml']
+    paths: ['src/**', 'shared/**', 'public/**', 'index.html', 'vite.config.js', 'package.json', 'package-lock.json', '.github/workflows/deploy-frontend.yml']
   workflow_dispatch:
 permissions:
   contents: read

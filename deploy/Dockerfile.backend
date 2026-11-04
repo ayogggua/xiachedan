@@ -5,6 +5,7 @@ ENV NODE_ENV=production CHAT_MODE=cloud CHAT_SERVE_WEB=false PORT=4318 CHAT_DATA
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
 COPY server ./server
+COPY shared ./shared
 USER node
 EXPOSE 4318
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \

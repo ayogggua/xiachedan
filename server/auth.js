@@ -1,13 +1,13 @@
 import { randomBytes, randomUUID, createHash, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { readFileSync } from 'node:fs';
+import { isPresetAvatar } from '../shared/avatars.js';
 
 const derive = promisify(scrypt);
 const ADMIN_PHONE = '19977167586';
 const SESSION_MS = 7 * 86400000;
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const hash = value => createHash('sha256').update(value).digest('hex');
-const presets = new Set(['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout']);
 
 function identifier(value) {
   if (typeof value !== 'string' || value.length > 254) throw fail('请输入有效的手机号或邮箱');
@@ -130,7 +130,7 @@ export async function createAuth({ db, app, production, closeUser, changed, rate
     const id = randomUUID();
     try {
       transaction(() => {
-        stmt('INSERT INTO users VALUES (?,?,?,?,?)').run(id, name, presets.has(req.body.avatar) ? req.body.avatar : 'cat', hash(randomBytes(32)), Date.now());
+        stmt('INSERT INTO users VALUES (?,?,?,?,?)').run(id, name, isPresetAvatar(req.body.avatar) ? req.body.avatar : 'cat', hash(randomBytes(32)), Date.now());
         stmt(`INSERT INTO accounts (user_id,${login.column},password_hash,updated_at) VALUES (?,?,?,?)`).run(id, login.value, encoded, Date.now());
       });
     } catch (error) { if (String(error.code).includes('CONSTRAINT') || error.errcode === 2067) throw fail('该账号已注册，请直接登录', 409); throw error; }
