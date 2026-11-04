@@ -1,5 +1,6 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine } from 'lucide-react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName, seenText } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
@@ -7,16 +8,18 @@ import { GROUPS as EMOJI_GROUPS } from './EmojiPicker';
 import { disintegrate } from './dust';
 import { readStorage } from './history';
 import appIcon from './assets/brand/app-icon.svg';
+import { PRESETS, HEXTECH_AVATARS, HEXTECH_TIERS, getHextechAvatar } from '../shared/avatars.js';
 
-export const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout'];
+export { PRESETS } from '../shared/avatars.js';
 const avatarIcons = { cat: Cat, bird: Bird, rabbit: Rabbit, fish: Fish, coffee: Coffee, mountain: Mountain, planet: Orbit, sprout: Sprout, bot: Bot };
 const avatarNames = { cat: '小猫', bird: '小鸟', rabbit: '兔子', fish: '小鱼', coffee: '咖啡', mountain: '山峰', planet: '星球', sprout: '幼苗' };
 
 export function Avatar({ user, size = 40, online, className = '' }) {
   const value = user?.avatar || 'cat';
+  const hextech = getHextechAvatar(value);
   const Icon = avatarIcons[value] || Cat;
-  return <span className={`avatar avatar-${value.startsWith('upload:') ? 'photo' : value} ${className}`} style={{ width: size, height: size }} aria-hidden="true">
-    {value.startsWith('upload:') ? <img src={mediaUrl(value.slice(7))} alt="" /> : <Icon size={Math.round(size * .52)} strokeWidth={1.65} />}
+  return <span className={`avatar avatar-${hextech ? 'hextech' : value.startsWith('upload:') ? 'photo' : value} ${className}`} data-tier={hextech?.tier} style={{ width: size, height: size }} aria-hidden="true">
+    {hextech ? <img src={hextech.icon} alt="" loading="lazy" decoding="async" draggable="false" /> : value.startsWith('upload:') ? <img src={mediaUrl(value.slice(7))} alt="" /> : <Icon size={Math.round(size * .52)} strokeWidth={1.65} />}
     {online !== undefined && <i className={`presence-dot ${online ? 'online' : ''}`} />}
   </span>;
 }
@@ -29,21 +32,54 @@ export function IconButton({ icon: Icon, label, className = '', size = 17, ...pr
   return <button type="button" title={label} aria-label={label} className={`icon-button ${className}`} {...props}><Icon size={size} strokeWidth={1.7} /></button>;
 }
 
-export function Modal({ title, subtitle, children, onClose, wide = false }) {
+export function Modal({ title, subtitle, children, onClose, wide = false, className = '' }) {
   const ref = useRef();
+  const titleId = useId();
   useEffect(() => {
     const old = document.activeElement;
     ref.current?.showModal();
     return () => old?.focus?.();
   }, []);
-  return <dialog ref={ref} className={`modal ${wide ? 'wide' : ''}`} onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => { if (event.target === ref.current) onClose(); }}>
-    <div className="modal-content"><div className="modal-heading"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton icon={X} label="关闭" onClick={onClose} /></div>{children}</div>
+  return <dialog ref={ref} aria-labelledby={titleId} className={`modal ${wide ? 'wide' : ''} ${className}`} onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose(); }} onClick={event => { if (event.target === ref.current) onClose(); }}>
+    <div className="modal-content"><div className="modal-heading"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton icon={X} label="关闭" onClick={onClose} /></div>{children}</div>
   </dialog>;
 }
 
+const hextechTierName = value => HEXTECH_TIERS.find(tier => tier.id === value)?.name;
+const searchKey = value => value.normalize('NFKC').toLowerCase().replace(/[\s-]+/g, '');
+
+function HextechAvatarLibrary({ avatar, onSelect, onClose, withName = false }) {
+  const [tier, setTier] = useState('all');
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState(() => getHextechAvatar(avatar));
+  const term = searchKey(query);
+  const matches = HEXTECH_AVATARS.filter(item => searchKey(item.name).includes(term) || searchKey(item.slug).includes(term));
+  const visible = matches.filter(item => tier === 'all' || item.tier === tier);
+  const randomize = () => {
+    const others = visible.filter(item => item.id !== selected?.id);
+    const pool = others.length ? others : visible;
+    if (pool.length) setSelected(pool[Math.floor(Math.random() * pool.length)]);
+  };
+  return createPortal(<Modal title="海克斯大乱斗头像库" className="hextech-library" onClose={onClose}>
+    <div className="hextech-tools"><div className="search-input"><Search size={16} /><input type="search" aria-label="搜索海克斯名称" placeholder="搜索海克斯名称" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} />{query && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setQuery('')} />}</div><button type="button" className="secondary-button" onClick={randomize} disabled={!visible.length} title="从当前筛选结果中随机选择"><Shuffle size={15} />随机一个</button></div>
+    <div className="hextech-tiers" role="group" aria-label="海克斯品阶">{[{ id: 'all', name: '全部' }, ...HEXTECH_TIERS].map(item => <button type="button" key={item.id} data-tier={item.id} aria-pressed={tier === item.id} onClick={() => setTier(item.id)}>{item.name}<span>{item.id === 'all' ? matches.length : matches.filter(avatar => avatar.tier === item.id).length}</span></button>)}</div>
+    <div className="hextech-results" key={`${tier}:${query}`}>
+      {visible.length ? <div className="hextech-grid" role="group" aria-label="海克斯头像">{visible.map(item => <button type="button" key={item.id} className="hextech-option" data-tier={item.tier} aria-label={`${item.name}，${hextechTierName(item.tier)}`} aria-pressed={selected?.id === item.id} title={`${item.name} · ${hextechTierName(item.tier)}`} onClick={() => setSelected(item)}><Avatar user={{ avatar: item.id }} size={52} /><span className="hextech-option-name">{item.name}</span><small>{hextechTierName(item.tier)}</small>{selected?.id === item.id && <span className="hextech-check"><Check size={12} /></span>}</button>)}</div> : <div className="hextech-empty" role="status"><Search size={24} /><p>没有找到匹配的海克斯</p><button type="button" className="text-button" onClick={() => { setQuery(''); setTier('all'); }}>清除筛选</button></div>}
+    </div>
+    <div className="hextech-footer"><div className="hextech-selection" aria-live="polite">{selected ? <><Avatar user={{ avatar: selected.id }} size={42} /><span><b>{selected.name}</b><small>{hextechTierName(selected.tier)}</small></span></> : <span className="hextech-placeholder">选择一个海克斯</span>}</div><button type="button" className="primary-button" disabled={!selected} onClick={() => { onSelect(selected); onClose(); }}>{withName ? '使用头像和名字' : '使用头像'}</button></div>
+  </Modal>, document.body);
+}
+
+export function AvatarPicker({ avatar, setAvatar, onNameChange }) {
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const hextech = getHextechAvatar(avatar);
+  return <><span className="field-label avatar-label">选一个头像</span><div className="avatar-picker">{PRESETS.map(preset => <button type="button" key={preset} className={avatar === preset ? 'selected' : ''} aria-label={`选择${avatarNames[preset]}头像`} aria-pressed={avatar === preset} onClick={() => setAvatar(preset)}><Avatar user={{ avatar: preset }} size={36} />{avatar === preset && <span className="avatar-check"><Check size={10} /></span>}</button>)}</div>
+    <button type="button" className={`hextech-entry ${hextech ? 'selected' : ''}`} aria-haspopup="dialog" onClick={() => setLibraryOpen(true)}>{hextech ? <Avatar user={{ avatar }} size={42} /> : <span className="hextech-entry-icons">{HEXTECH_TIERS.map(tier => <Avatar key={tier.id} user={{ avatar: HEXTECH_AVATARS.find(item => item.tier === tier.id).id }} size={30} />)}</span>}<span className="hextech-entry-copy"><b>海克斯大乱斗</b><small>{hextech ? `${hextech.name} · ${hextechTierName(hextech.tier)}` : '白银阶 · 黄金阶 · 棱彩阶'}</small></span><ChevronRight size={17} /></button>
+    {libraryOpen && <HextechAvatarLibrary avatar={avatar} withName={Boolean(onNameChange)} onSelect={item => { setAvatar(item.id); onNameChange?.(item.name); }} onClose={() => setLibraryOpen(false)} />}</>;
+}
+
 export function IdentityFields({ name, setName, avatar, setAvatar }) {
-  return <><label className="field-label" htmlFor="nickname">你的昵称</label><div className="input-with-action"><input id="nickname" value={name} onChange={event => setName(event.target.value)} placeholder="给自己起个名字" maxLength={24} required autoComplete="nickname" /><button type="button" className="random-button" onClick={() => setName(randomName())} title="随机生成有趣的昵称"><Shuffle size={16} />随机起名</button></div>
-    <span className="field-label avatar-label">选一个头像</span><div className="avatar-picker">{PRESETS.map(preset => <button type="button" key={preset} className={avatar === preset ? 'selected' : ''} aria-label={`选择${avatarNames[preset]}头像`} aria-pressed={avatar === preset} onClick={() => setAvatar(preset)}><Avatar user={{ avatar: preset }} size={36} />{avatar === preset && <span className="avatar-check"><Check size={10} /></span>}</button>)}</div></>;
+  return <><label className="field-label" htmlFor="nickname">你的昵称</label><div className="input-with-action"><input id="nickname" value={name} onChange={event => setName(event.target.value)} placeholder="给自己起个名字" maxLength={24} required autoComplete="nickname" /><button type="button" className="random-button" onClick={() => setName(randomName())} title="随机生成有趣的昵称"><Shuffle size={16} />随机起名</button></div><AvatarPicker avatar={avatar} setAvatar={setAvatar} onNameChange={setName} /></>;
 }
 
 export function PrivatePreview({ privateMode, children }) {

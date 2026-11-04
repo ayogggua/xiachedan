@@ -72,7 +72,7 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS space_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     -- 合并转发：一条消息里打包多条消息的快照（发送人、时间、正文、附件），附件已复制到目标会话。
     CREATE TABLE IF NOT EXISTS message_bundles (message_id TEXT PRIMARY KEY, title TEXT NOT NULL, items TEXT NOT NULL);
-    -- 群头像：群主（大厅由空间管理者）上传的图片；没有时客户端显示默认图标。
+    -- 群头像：群主（大厅由空间管理者）设置；upload_id 保存上传 UUID 或 preset:<内置头像 ID>，没有记录时显示默认图标。
     CREATE TABLE IF NOT EXISTS room_avatars (room_id TEXT PRIMARY KEY, upload_id TEXT NOT NULL);
     -- 名字颜色：每人在 7 种昵称色里自选一种（编号 0–6），没选时按身份自动分配。
     CREATE TABLE IF NOT EXISTS user_name_colors (user_id TEXT PRIMARY KEY, color INTEGER NOT NULL);
