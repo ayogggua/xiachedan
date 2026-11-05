@@ -3,9 +3,10 @@ import { ChevronLeft, ArrowUp, LoaderCircle } from 'lucide-react';
 import { api, formatTime, uid } from './api';
 import { Avatar, IconButton, PrivatePreview } from './components';
 import { FormattedText } from './markdown';
+import { isSendKey } from './chatPrefs';
 
 // 话题面板：根消息在上，回复按时间排在下面，底部可以直接在话题里回复。
-export default function ThreadPanel({ rootId, userMap, viewerId, privateMode, threadTick, onBack, notify }) {
+export default function ThreadPanel({ rootId, userMap, viewerId, privateMode, threadTick, onBack, notify, sendKey = 'enter' }) {
   const [thread, setThread] = useState(null);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -36,7 +37,7 @@ export default function ThreadPanel({ rootId, userMap, viewerId, privateMode, th
     <div className="members-panel-heading"><IconButton icon={ChevronLeft} label="返回" size={16} onClick={onBack} /><h3 className="history-title">话题{thread ? ` · ${thread.replies.filter(item => !item.recalledAt).length} 条回复` : ''}</h3></div>
     <div className="thread-list" ref={list}>{!thread ? <p className="history-empty"><LoaderCircle className="spin" size={14} />正在加载…</p> : <>{row(thread.root, true)}{thread.replies.map(message => row(message))}</>}</div>
     <div className="thread-composer"><textarea aria-label="在话题中回复" placeholder="在话题中回复" rows={2} value={text} maxLength={10000} onChange={event => setText(event.target.value)}
-      onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } }} />
+      onKeyDown={event => { if (isSendKey(event, sendKey)) { event.preventDefault(); send(); } }} />
       <button type="button" className="send-button round-button" aria-label="发送到话题" disabled={!text.trim() || sending || !thread} onClick={send}>{sending ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={17} strokeWidth={2.2} />}</button></div>
   </>;
 }

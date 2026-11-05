@@ -17,7 +17,26 @@ function openLink(event, href) {
   event.preventDefault();
   window.desktop.openUrl(href).catch(() => {});
 }
-const Link = ({ href, children }) => href ? <a href={href} target="_blank" rel="noopener noreferrer" onClick={event => openLink(event, href)}>{children}</a> : children;
+// 站内消息链接：任意 http(s) 地址后面跟 #msg=会话/消息。局域网里每个人连主机用的地址可能不同，所以只看 # 后面的部分。
+export function messageLink(href) {
+  const match = /^https?:\/\/[^#\s]*#msg=([^/\s#]+)\/([^/\s#]+)$/i.exec(href || '');
+  try { return match ? { roomId: decodeURIComponent(match[1]), id: decodeURIComponent(match[2]) } : null; } catch { return null; }
+}
+// 群邀请链接：#join-group=群/令牌，同样只看 # 后面的部分。
+export function groupInviteLink(href) {
+  const match = /^https?:\/\/[^#\s]*#join-group=([^/\s#.]+)\.([\w-]+)$/i.exec(href || '');
+  try { return match ? { roomId: decodeURIComponent(match[1]), token: match[2] } : null; } catch { return null; }
+}
+const openMessage = (event, target) => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent('linliao:open-message', { detail: target })); };
+function Link({ href, children }) {
+  if (!href) return children;
+  const invite = groupInviteLink(href);
+  if (invite) return <a href={href} className="message-link" title="加入这个群聊" onClick={event => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent('linliao:join-group', { detail: invite })); }}>👥 群聊邀请</a>;
+  const target = messageLink(href);
+  if (!target) return <a href={href} target="_blank" rel="noopener noreferrer" onClick={event => openLink(event, href)}>{children}</a>;
+  const label = React.Children.toArray(children);
+  return <a href={href} className="message-link" title="跳到这条消息" onClick={event => openMessage(event, target)}>{label.length === 1 && label[0] === href ? '🔗 消息链接' : children}</a>;
+}
 
 // 文字节点里补上 GFM 认不出的网址（紧贴汉字的网址），并把 @提及标成高亮。
 const mentionNode = token => ({ type: 'mention', data: { hName: 'span', hProperties: { className: token.self ? ['mention', 'self'] : ['mention'] } }, children: [{ type: 'text', value: token.label }] });
@@ -127,8 +146,8 @@ export function FormattedText({ text, mentions = [], nameOf, viewerId, tail = nu
 }
 
 // 正文里第一个网页链接（代码里的不算），用来显示链接预览。
-export const firstLink = text => text.replace(/```[\s\S]*?(```|$)/g, '').replace(/`[^`\n]+`/g, '')
-  .match(new RegExp(URL_PATTERN.source, 'u'))?.[0] || null;
+export const firstLink = text => [...text.replace(/```[\s\S]*?(```|$)/g, '').replace(/`[^`\n]+`/g, '')
+  .matchAll(URL_PATTERN)].map(match => match[0]).find(url => !messageLink(url) && !groupInviteLink(url)) || null;
 
 const previews = new Map();
 export function LinkPreview({ url }) {

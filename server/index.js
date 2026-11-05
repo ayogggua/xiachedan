@@ -80,9 +80,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!row) return null;
     if (!row.id || row.seq <= clearedThroughSeq()) return { id: row.replyTo, missing: true };
     if (recalledAt(row.id)) return { id: row.id, seq: row.seq, senderId: row.sender_id, recalled: true };
-    return { id: row.id, seq: row.seq, senderId: row.sender_id, text: row.text.slice(0, 200),
+    const quote = stmt('SELECT quote FROM message_reply_quotes WHERE message_id=?').get(id)?.quote;
+    return { id: row.id, seq: row.seq, senderId: row.sender_id, text: row.text.slice(0, 200), ...(quote ? { quote } : {}),
       attachments: JSON.parse(row.attachments).map(file => ({ name: file.name, mime: file.mime })) };
   };
+  // 比较引用片段和原文时忽略格式符号和空白：原文是 Markdown，用户选中的是渲染后的文字。
+  const looseText = text => text.replace(/[*_~`#>|\\[\]()!-]/g, '').replace(/\s+/g, '').toLowerCase();
   const mentionsOf = id => stmt('SELECT user_id FROM message_mentions WHERE message_id=? ORDER BY rowid').all(id).map(row => row.user_id);
   // 按表情第一次出现的先后排列，每个表情附上回应的成员。
   const reactionsOf = id => {
@@ -116,7 +119,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     return { count: row.count, lastAt: row.lastAt, participants };
   };
   const bundleOf = id => { const row = stmt('SELECT title, items FROM message_bundles WHERE message_id=?').get(id); return row ? { title: row.title, items: JSON.parse(row.items) } : null; };
-  const serializeMessage = row => row ? { ...baseMessage(row), bundle: bundleOf(row.id), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
+  const serializeMessage = row => row ? { ...baseMessage(row), bundle: bundleOf(row.id), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id), nudge: nudgeOf(row.id) } : null;
+  const nudgeOf = id => { const row = stmt('SELECT target_id FROM message_nudges WHERE message_id=?').get(id); return row ? { targetId: row.target_id } : null; };
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -172,19 +176,31 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const mutes = new Map(stmt('SELECT user_id, until FROM member_mutes').all().map(row => [row.user_id, row.until]));
     const colors = new Map(stmt('SELECT user_id, color FROM user_name_colors').all().map(row => [row.user_id, row.color]));
     return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); const profile = profiles.get(user.id);
-      return { ...user, removed, online: !removed && online.has(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, nameColor: colors.get(user.id) ?? null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; });
+      return { ...user, removed, online: !removed && online.has(user.id), status: removed ? null : statusOf(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, nameColor: colors.get(user.id) ?? null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; });
   };
   // 群主：记录的群主不在群里（或旧数据没有记录）时，由成员列表里最早的人接任；创建群聊时创建者排在第一位。
   const groupSettings = room => {
     const members = JSON.parse(room.members);
     const row = stmt('SELECT * FROM room_settings WHERE room_id=?').get(room.id);
-    return { ownerId: row?.owner_id && members.includes(row.owner_id) ? row.owner_id : members[0] || null,
+    const ownerId = row?.owner_id && members.includes(row.owner_id) ? row.owner_id : members[0] || null;
+    const adminIds = stmt('SELECT user_id FROM room_admins WHERE room_id=?').all(room.id).map(item => item.user_id).filter(id => id !== ownerId && members.includes(id));
+    const policy = stmt('SELECT all_muted, join_approval FROM room_group_policy WHERE room_id=?').get(room.id);
+    const nicknames = Object.fromEntries(stmt('SELECT user_id, nickname FROM room_nicknames WHERE room_id=?').all(room.id).filter(row => members.includes(row.user_id)).map(row => [row.user_id, row.nickname]));
+    return { ownerId, adminIds, nicknames, allMuted: Boolean(policy?.all_muted), joinApproval: Boolean(policy?.join_approval),
       announcement: row?.announcement ? { text: row.announcement, updatedAt: row.announcement_at, updatedBy: row.announcement_by } : null };
   };
   const saveSettings = (roomId, change) => {
     const current = stmt('SELECT * FROM room_settings WHERE room_id=?').get(roomId) || { owner_id: null, announcement: '', announcement_at: null, announcement_by: null };
     const next = { ...current, ...change };
     stmt('INSERT OR REPLACE INTO room_settings (room_id,owner_id,announcement,announcement_at,announcement_by) VALUES (?,?,?,?,?)').run(roomId, next.owner_id, next.announcement, next.announcement_at, next.announcement_by);
+  };
+  // 群主或群管理员。
+  const requireGroupManager = (roomId, userId) => {
+    const room = requireRoom(roomId, userId);
+    if (room.kind !== 'group') throw fail('只有群聊可以这样设置');
+    const { ownerId, adminIds } = groupSettings(room);
+    if (ownerId !== userId && !adminIds.includes(userId)) throw fail('只有群主或管理员可以这样设置', 403);
+    return room;
   };
   const requireGroupOwner = (roomId, userId) => {
     const room = requireRoom(roomId, userId);
@@ -199,7 +215,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
       members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 1`).get(room.id)),
-      avatar: roomAvatar(room.id), ...(room.kind === 'group' ? groupSettings(room) : {}) }));
+      avatar: roomAvatar(room.id), ...managerView(room, userId), autoDelete: stmt('SELECT seconds FROM room_auto_delete WHERE room_id=?').get(room.id)?.seconds || 0, ...(room.kind === 'group' ? groupSettings(room) : {}) }));
   // 禁言状态：返回截止时间，一直禁言为 Infinity，没有禁言为 null；过期的记录顺手清掉。
   const muteOf = id => {
     const row = stmt('SELECT until FROM member_mutes WHERE user_id=?').get(id);
@@ -211,13 +227,50 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const until = muteOf(user.id);
     if (until) throw fail(until === Infinity ? '你已被管理员禁言' : `你已被管理员禁言，${new Date(until).toLocaleString('zh-CN', { hour12: false })} 后恢复`, 403);
   };
+  // 群里开了全员禁言时，只有群主和管理员可以发言。
+  const groupMuted = (room, userId) => {
+    if (room?.kind !== 'group') return false;
+    const { ownerId, adminIds, allMuted } = groupSettings(room);
+    return allMuted && userId !== ownerId && !adminIds.includes(userId);
+  };
+  const requireRoomVoice = (room, user) => {
+    requireVoice(user);
+    if (groupMuted(room, user.id)) throw fail('全员禁言中，只有群主和管理员可以发言', 403);
+  };
+  const savePolicy = (roomId, change) => {
+    const current = stmt('SELECT * FROM room_group_policy WHERE room_id=?').get(roomId) || { all_muted: 0, join_approval: 0, invite_token: null, invite_at: null };
+    const next = { ...current, ...change };
+    stmt('INSERT OR REPLACE INTO room_group_policy (room_id,all_muted,join_approval,invite_token,invite_at) VALUES (?,?,?,?,?)').run(roomId, next.all_muted, next.join_approval, next.invite_token, next.invite_at);
+  };
   const retentionDays = () => Number(stmt("SELECT value FROM space_settings WHERE key='retention_days'").get()?.value || 0);
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
+  const foldersFor = id => stmt('SELECT id, name, room_ids FROM user_folders WHERE user_id=? ORDER BY created_at').all(id).map(row => ({ id: row.id, name: row.name, roomIds: JSON.parse(row.room_ids) }));
+  const keywordsFor = id => JSON.parse(stmt('SELECT keywords FROM user_keywords WHERE user_id=?').get(id)?.keywords || '[]');
+  const statusOf = id => {
+    const row = stmt('SELECT emoji, text, until FROM user_status WHERE user_id=?').get(id);
+    return row && (!row.until || row.until > Date.now()) ? { emoji: row.emoji, text: row.text, until: row.until } : null;
+  };
+  // 只给群主和管理员看的：邀请链接令牌和入群申请。
+  const managerView = (room, userId) => {
+    if (room.kind !== 'group') return {};
+    const { ownerId, adminIds } = groupSettings(room);
+    if (userId !== ownerId && !adminIds.includes(userId)) return {};
+    const policy = stmt('SELECT invite_token FROM room_group_policy WHERE room_id=?').get(room.id);
+    return { inviteToken: policy?.invite_token || null, joinRequests: stmt('SELECT id, user_id, invited_by, created_at FROM room_join_requests WHERE room_id=? ORDER BY created_at').all(room.id)
+      .map(row => ({ id: row.id, userId: row.user_id, invitedBy: row.invited_by, createdAt: row.created_at })) };
+  };
+  const addToGroup = (room, ids) => {
+    const members = [...new Set([...JSON.parse(room.members), ...ids])];
+    if (members.length > 100) throw fail('单个群聊最多 100 人');
+    stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
+    for (const id of ids) stmt('DELETE FROM room_join_requests WHERE room_id=? AND user_id=?').run(room.id, id);
+  };
+  const requestJoin = (room, userId, invitedBy) => stmt('INSERT OR IGNORE INTO room_join_requests VALUES (?,?,?,?,?)').run(randomUUID(), room.id, userId, invitedBy, Date.now());
   const stateFor = user => {
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
+    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -450,11 +503,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('INSERT INTO message_recalls VALUES (?,?)').run(id, Date.now());
         stmt("UPDATE messages SET text='', attachments='[]' WHERE id=?").run(id);
         stmt('DELETE FROM message_reads WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_reply_quotes WHERE message_id=? OR message_id IN (SELECT message_id FROM message_replies WHERE reply_to=?)').run(id, id);
         stmt('DELETE FROM message_replies WHERE message_id=?').run(id);
         stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
         stmt('DELETE FROM message_reactions WHERE message_id=?').run(id);
         stmt('DELETE FROM message_forwards WHERE message_id=?').run(id);
         stmt('DELETE FROM message_edits WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_versions WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_nudges WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
@@ -481,6 +537,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json({ message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(row.id)) });
   });
   // 禁言与解除：minutes 为 0 或不传表示一直禁言；不能禁言自己和其他管理者。
+  // 管理员帮成员设置部门（通讯录按部门分组）。
+  app.post('/api/admin/department', (req, res) => {
+    requireManager(req);
+    const target = typeof req.body?.userId === 'string' && userById(req.body.userId);
+    if (!target) throw fail('请选择有效成员');
+    const department = textValue(req.body.department, 40);
+    stmt('INSERT INTO user_profiles (user_id,department,bio,last_seen) VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET department=excluded.department').run(target.id, department, '', null);
+    broadcast({ type: 'users', users: users() });
+    res.json({ department });
+  });
   app.post('/api/admin/mute', (req, res) => {
     requireManager(req);
     const target = typeof req.body?.userId === 'string' && userById(req.body.userId);
@@ -532,6 +598,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     requireRoom(row.room_id, req.user.id);
     if (row.sender_id !== req.user.id) throw fail('只能编辑自己发送的消息', 403);
     if (pollOf(id)) throw fail('投票不能编辑');
+    if (nudgeOf(id)) throw fail('拍一拍不能编辑');
     if (recalledAt(id)) throw fail('消息已撤回');
     const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
     if (text.length > 10000) throw fail('每条消息最多 10000 个字符');
@@ -540,6 +607,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       const kept = mentionsOf(id).filter(target => target === '*' ? text.includes('@所有人') : text.includes(`@${userById(target)?.name}`));
       db.exec('BEGIN');
       try {
+        const lost = editedAt(id) && !stmt('SELECT 1 FROM message_versions WHERE message_id=?').get(id) ? 1 : 0;
+        stmt('INSERT INTO message_versions (message_id, text, replaced_at, earlier_lost) VALUES (?,?,?,?)').run(id, row.text, Date.now(), lost);
         stmt('UPDATE messages SET text=? WHERE id=?').run(text, id);
         stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
         for (const target of kept) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
@@ -549,6 +618,15 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       broadcast({ type: 'message-edited', message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)) }, row.room_id);
     }
     res.json({ message: withReads([serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id))])[0] });
+  });
+  // 编辑历史：会话成员可以看到每个版本和写下的时间；撤回或清空后不再提供。
+  app.get('/api/message-history', (req, res) => {
+    const row = typeof req.query.id === 'string' && req.query.id.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(req.query.id);
+    if (!row || row.seq <= clearedThroughSeq() || recalledAt(row.id)) throw fail('消息不存在或已撤回', 404);
+    requireRoom(row.room_id, req.user.id);
+    const saved = stmt('SELECT text, replaced_at, earlier_lost FROM message_versions WHERE message_id=? ORDER BY id').all(row.id);
+    const versions = saved.map((version, index) => ({ text: version.text, at: index ? saved[index - 1].replaced_at : saved[0].earlier_lost ? null : row.created_at }));
+    res.json({ versions, current: { text: row.text, at: editedAt(row.id) || row.created_at }, complete: !saved[0]?.earlier_lost && (saved.length > 0 || !editedAt(row.id)) });
   });
   app.get('/api/storage', (req, res) => {
     if (req.user.id !== ownerId()) throw fail('只有空间创建者可以管理聊天记录', 403);
@@ -562,7 +640,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_nudges; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -621,11 +699,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     requireVoice(req.user);
     rateLimit(req, 'forward', 20);
     const target = requireRoom(req.body?.roomId, req.user.id);
+    requireRoomVoice(target, req.user);
     const ids = req.body?.messageIds;
     if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string' || !id || id.length > 100)) throw fail('请选择要转发的消息');
     const unique = [...new Set(ids)];
     const rows = stmt(`SELECT * FROM messages WHERE id IN (${unique.map(() => '?').join(',')}) ORDER BY seq`).all(...unique);
     if (rows.length !== unique.length || rows.some(row => row.seq <= clearedThroughSeq() || recalledAt(row.id))) throw fail('有消息已撤回或已被清空', 404);
+    if (rows.some(row => nudgeOf(row.id))) throw fail('拍一拍不能转发');
     for (const row of rows) requireRoom(row.room_id, req.user.id);
     const bundleFiles = row => JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(row.id)?.items || '[]').flatMap(item => item.attachments);
     const files = rows.flatMap(row => [...JSON.parse(row.attachments), ...(req.body.merge === true ? [] : bundleFiles(row))]);
@@ -700,6 +780,61 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json(event);
   });
   // 给别人写备注：只存给自己看，空白表示删除；同步到自己的其他设备。
+  // 会话文件夹：只存自己能访问的会话；改动推给自己的其他设备。
+  const folderInput = req => {
+    const name = textValue(req.body?.name, 12);
+    if (!name) throw fail('请填写文件夹名称');
+    if (!Array.isArray(req.body.roomIds) || req.body.roomIds.length > 200) throw fail('请选择会话');
+    const allowed = new Set(roomsFor(req.user.id).map(room => room.id));
+    return { name, roomIds: [...new Set(req.body.roomIds)].filter(id => typeof id === 'string' && allowed.has(id)) };
+  };
+  const pushFolders = userId => deliver({ type: 'folders', folders: foldersFor(userId) }, socket => socket.userId === userId);
+  // 关键词提醒：最多 20 个，每个 1–20 个字，去重；推给自己的其他设备。
+  app.post('/api/keywords', (req, res) => {
+    rateLimit(req, 'keywords', 30);
+    if (!Array.isArray(req.body?.keywords)) throw fail('关键词格式无效');
+    const keywords = [...new Set(req.body.keywords.map(word => textValue(word, 40)).filter(Boolean))];
+    if (keywords.length > 20) throw fail('最多设置 20 个关键词');
+    if (keywords.some(word => word.length > 20)) throw fail('每个关键词最多 20 个字');
+    stmt('INSERT INTO user_keywords VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET keywords=excluded.keywords').run(req.user.id, JSON.stringify(keywords));
+    deliver({ type: 'keywords', keywords }, socket => socket.userId === req.user.id);
+    res.json({ keywords });
+  });
+  app.post('/api/folders', (req, res) => {
+    rateLimit(req, 'folders', 30);
+    const { name, roomIds } = folderInput(req);
+    if (stmt('SELECT COUNT(*) AS count FROM user_folders WHERE user_id=?').get(req.user.id).count >= 10) throw fail('最多建 10 个文件夹');
+    stmt('INSERT INTO user_folders VALUES (?,?,?,?,?)').run(randomUUID(), req.user.id, name, JSON.stringify(roomIds), Date.now());
+    pushFolders(req.user.id);
+    res.status(201).json({ folders: foldersFor(req.user.id) });
+  });
+  app.post('/api/folders/update', (req, res) => {
+    rateLimit(req, 'folders', 30);
+    const row = typeof req.body?.id === 'string' && stmt('SELECT * FROM user_folders WHERE id=? AND user_id=?').get(req.body.id, req.user.id);
+    if (!row) throw fail('文件夹不存在', 404);
+    const { name, roomIds } = folderInput(req);
+    stmt('UPDATE user_folders SET name=?, room_ids=? WHERE id=?').run(name, JSON.stringify(roomIds), row.id);
+    pushFolders(req.user.id);
+    res.json({ folders: foldersFor(req.user.id) });
+  });
+  app.post('/api/folders/delete', (req, res) => {
+    const removed = typeof req.body?.id === 'string' && stmt('DELETE FROM user_folders WHERE id=? AND user_id=?').run(req.body.id, req.user.id).changes;
+    if (!removed) throw fail('文件夹不存在', 404);
+    pushFolders(req.user.id);
+    res.json({ folders: foldersFor(req.user.id) });
+  });
+  // 自定义状态：表情最多 8 个字符、文字最多 40 字；until 只能是将来 30 天内的时间；表情和文字都为空表示清除。
+  app.post('/api/status', (req, res) => {
+    rateLimit(req, 'status', 30);
+    const emoji = textValue(req.body?.emoji, 16), text = textValue(req.body?.text, 80);
+    if (emoji.length > 8 || text.length > 40) throw fail('状态最多 40 个字');
+    const until = req.body.until === null || req.body.until === undefined ? null : Number(req.body.until);
+    if (until !== null && (!Number.isSafeInteger(until) || until <= Date.now() || until > Date.now() + 30 * 86400000)) throw fail('状态的清除时间无效');
+    if (emoji || text) stmt('INSERT INTO user_status VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET emoji=excluded.emoji, text=excluded.text, until=excluded.until').run(req.user.id, emoji, text, until);
+    else stmt('DELETE FROM user_status WHERE user_id=?').run(req.user.id);
+    broadcast({ type: 'users', users: users() });
+    res.json({ status: statusOf(req.user.id) });
+  });
   app.post('/api/user-note', (req, res) => {
     rateLimit(req, 'notes', 60);
     const id = req.body?.userId;
@@ -761,7 +896,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 群主改群名、写群公告（留空即撤下公告）。
   app.post('/api/room-settings', (req, res) => {
     rateLimit(req, 'room-settings', 30);
-    const room = requireGroupOwner(req.body?.roomId, req.user.id);
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
     const { name, announcement } = req.body;
     if ((name !== undefined && typeof name !== 'string') || (announcement !== undefined && typeof announcement !== 'string') || (name === undefined && announcement === undefined)) throw fail('群设置无效');
     if (name !== undefined) {
@@ -784,6 +919,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const members = JSON.parse(room.members).filter(id => id !== req.user.id);
     const ownerId = groupSettings(room).ownerId;
     stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
+    stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
+    stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
     if (ownerId === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
@@ -838,7 +975,95 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const target = req.body?.userId;
     if (typeof target !== 'string' || target === req.user.id || !JSON.parse(room.members).includes(target) || !userById(target)) throw fail('请选择群里的另一位成员');
     saveSettings(room.id, { owner_id: target });
+    stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
     broadcast({ type: 'rooms' }, room.id);
+    res.json({ ok: true });
+  });
+  // 群昵称：只能设自己的，最多 16 个字，清空即恢复原名。
+  app.post('/api/room-nickname', (req, res) => {
+    rateLimit(req, 'nickname', 30);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    if (room.kind !== 'group') throw fail('只有群聊可以设置群昵称');
+    if (typeof req.body.nickname !== 'string' || req.body.nickname.trim().length > 16) throw fail('群昵称最多 16 个字');
+    const nickname = req.body.nickname.trim();
+    if (nickname) stmt('INSERT INTO room_nicknames VALUES (?,?,?) ON CONFLICT(room_id, user_id) DO UPDATE SET nickname=excluded.nickname').run(room.id, req.user.id, nickname);
+    else stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ nickname });
+  });
+  // 邀请链接：群主或管理员生成（或重置）、停用；令牌只有群主和管理员看得到。
+  app.post('/api/room-invite', (req, res) => {
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
+    if (!['create', 'disable'].includes(req.body.action)) throw fail('操作无效');
+    const token = req.body.action === 'create' ? randomBytes(16).toString('base64url') : null;
+    savePolicy(room.id, { invite_token: token, invite_at: token ? Date.now() : null });
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ inviteToken: token });
+  });
+  // 用邀请链接入群：空间成员都可以用；开了入群审批时先进申请。
+  app.post('/api/room-join', (req, res) => {
+    rateLimit(req, 'room-join', 20);
+    const room = typeof req.body?.roomId === 'string' && stmt("SELECT * FROM rooms WHERE id=? AND kind='group'").get(req.body.roomId);
+    const expected = room && stmt('SELECT invite_token FROM room_group_policy WHERE room_id=?').get(room.id)?.invite_token;
+    const given = typeof req.body.token === 'string' ? Buffer.from(req.body.token) : Buffer.alloc(0);
+    if (!expected || given.length !== Buffer.byteLength(expected) || !timingSafeEqual(given, Buffer.from(expected))) throw fail('邀请链接无效或已停用', 404);
+    if (JSON.parse(room.members).includes(req.user.id)) return res.json({ joined: true, roomId: room.id });
+    if (groupSettings(room).joinApproval) {
+      requestJoin(room, req.user.id, null);
+      broadcast({ type: 'rooms' }, room.id);
+      return res.json({ pending: true });
+    }
+    addToGroup(room, [req.user.id]);
+    broadcast({ type: 'rooms' }, room.id);
+    deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
+    res.json({ joined: true, roomId: room.id });
+  });
+  // 处理入群申请：同意后加入，拒绝就删掉申请。
+  app.post('/api/room-requests', (req, res) => {
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
+    const request = typeof req.body.requestId === 'string' && stmt('SELECT * FROM room_join_requests WHERE id=? AND room_id=?').get(req.body.requestId, room.id);
+    if (!request) throw fail('申请不存在或已处理', 404);
+    if (req.body.approve && userById(request.user_id)) addToGroup(room, [request.user_id]);
+    else stmt('DELETE FROM room_join_requests WHERE id=?').run(request.id);
+    broadcast({ type: 'rooms' }, room.id);
+    deliver({ type: 'rooms' }, socket => socket.userId === request.user_id);
+    res.json({ ok: true });
+  });
+  // 全员禁言、入群审批：群主和管理员可以开关。
+  app.post('/api/room-policy', (req, res) => {
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
+    const { allMuted, joinApproval } = req.body;
+    if ((allMuted !== undefined && typeof allMuted !== 'boolean') || (joinApproval !== undefined && typeof joinApproval !== 'boolean') || (allMuted === undefined && joinApproval === undefined)) throw fail('群设置无效');
+    savePolicy(room.id, { ...(allMuted !== undefined ? { all_muted: allMuted ? 1 : 0 } : {}), ...(joinApproval !== undefined ? { join_approval: joinApproval ? 1 : 0 } : {}) });
+    broadcast({ type: 'rooms' }, room.id);
+    const { allMuted: muted, joinApproval: approval } = groupSettings(room);
+    res.json({ allMuted: muted, joinApproval: approval });
+  });
+  // 群主设置或取消群管理员，最多 10 个。
+  app.post('/api/room-admins', (req, res) => {
+    const room = requireGroupOwner(req.body?.roomId, req.user.id);
+    const target = req.body?.userId;
+    if (typeof target !== 'string' || target === req.user.id || !JSON.parse(room.members).includes(target) || !userById(target)) throw fail('请选择群里的另一位成员');
+    if (req.body.admin) {
+      if (groupSettings(room).adminIds.length >= 10) throw fail('最多设置 10 位管理员');
+      stmt('INSERT OR IGNORE INTO room_admins VALUES (?,?)').run(room.id, target);
+    } else stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ adminIds: groupSettings(stmt('SELECT * FROM rooms WHERE id=?').get(room.id)).adminIds });
+  });
+  // 移出群成员：群主可以移出任何人；管理员只能移出普通成员。
+  app.post('/api/room-remove', (req, res) => {
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
+    const { ownerId, adminIds } = groupSettings(room);
+    const target = req.body?.userId;
+    const members = JSON.parse(room.members);
+    if (typeof target !== 'string' || target === req.user.id || !members.includes(target)) throw fail('请选择群里的另一位成员');
+    if (target === ownerId || (req.user.id !== ownerId && adminIds.includes(target))) throw fail('只有群主可以移出管理员', 403);
+    stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members.filter(id => id !== target)), room.id);
+    stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
+    stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, target);
+    broadcast({ type: 'rooms' }, room.id);
+    deliver({ type: 'rooms' }, socket => socket.userId === target);
     res.json({ ok: true });
   });
   app.post('/api/room-members', (req, res) => {
@@ -847,9 +1072,15 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (room.kind !== 'group') throw fail('只能向群聊邀请成员');
     const ids = Array.isArray(req.body.memberIds) ? [...new Set(req.body.memberIds)] : [];
     if (!ids.length || ids.length > 100 || ids.some(id => typeof id !== 'string' || !userById(id))) throw fail('请选择有效成员');
-    const members = [...new Set([...JSON.parse(room.members), ...ids])];
-    if (members.length > 100) throw fail('单个群聊最多 100 人');
-    stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
+    const { ownerId, adminIds, joinApproval } = groupSettings(room);
+    // 开了入群审批时，普通成员拉的人先进申请，群主或管理员同意后才加入。
+    const fresh = ids.filter(id => !JSON.parse(room.members).includes(id));
+    if (joinApproval && req.user.id !== ownerId && !adminIds.includes(req.user.id)) {
+      for (const id of fresh) requestJoin(room, id, req.user.id);
+      broadcast({ type: 'rooms' }, room.id);
+      return res.json({ ok: true, pending: fresh.length });
+    }
+    addToGroup(room, ids);
     broadcast({ type: 'rooms' }, room.id);
     res.json({ ok: true });
   });
@@ -864,6 +1095,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq<? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 51`).all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
+  });
+  // 消息链接：按消息标识找到所在会话和位置，供客户端跳转。没有权限与不存在一律返回 404，不泄露消息是否存在。
+  app.get('/api/message-location', (req, res) => {
+    const row = typeof req.query.id === 'string' && req.query.id.length <= 100 && stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(req.query.id);
+    const room = row && row.seq > clearedThroughSeq() && stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
+    if (!room || !canAccess(room, req.user.id)) throw fail('消息不存在或你无权查看', 404);
+    const threadOf = stmt('SELECT root_id FROM message_threads WHERE message_id=?').get(row.id)?.root_id || null;
+    res.json({ id: row.id, roomId: row.room_id, seq: row.seq, threadOf });
   });
   // 话题：根消息和它的全部回复（最多 500 条，按时间先后）。
   app.get('/api/thread', (req, res) => {
@@ -883,6 +1122,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/scheduled', (req, res) => {
     rateLimit(req, 'scheduled', 20);
     const room = requireRoom(req.body?.roomId, req.user.id);
+    requireRoomVoice(room, req.user);
     const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
     if (!text || text.length > 10000) throw fail('请输入 1–10000 个字的消息');
     const sendAt = timeValue(req.body.sendAt);
@@ -911,23 +1151,21 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
   // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
   let retentionCheckedAt = 0;
-  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
-  const purgeExpired = () => {
-    const days = retentionDays();
-    if (!days || Date.now() - retentionCheckedAt < 3600000) return 0;
-    retentionCheckedAt = Date.now();
-    const rows = stmt('SELECT id, attachments FROM messages WHERE created_at<? ORDER BY seq LIMIT 500').all(Date.now() - days * 86400000)
-      .map(row => ({ ...row, attachments: JSON.stringify([...JSON.parse(row.attachments), ...JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(row.id)?.items || '[]').flatMap(item => item.attachments)]) }));
+  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_nudges', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
+  // 删除一批消息：附件、所有关联数据一起清掉，再通知各会话的成员。
+  const deleteMessages = rows => {
     if (!rows.length) return 0;
     db.exec('BEGIN');
     try {
       for (const row of rows) {
-        for (const file of JSON.parse(row.attachments)) for (const id of [file.id, file.thumbId].filter(Boolean)) {
+        const files = [...JSON.parse(row.attachments), ...JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(row.id)?.items || '[]').flatMap(item => item.attachments)];
+        for (const file of files) for (const id of [file.id, file.thumbId].filter(Boolean)) {
           stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(id);
           stmt('DELETE FROM uploads WHERE id=?').run(id);
           stmt('DELETE FROM upload_thumbnails WHERE upload_id=?').run(id);
         }
         for (const table of MESSAGE_TABLES) stmt(`DELETE FROM ${table} WHERE message_id=?`).run(row.id);
+        stmt('DELETE FROM message_reply_quotes WHERE message_id IN (SELECT message_id FROM message_replies WHERE reply_to=?)').run(row.id);
         stmt('DELETE FROM message_replies WHERE reply_to=?').run(row.id);
         stmt('DELETE FROM message_threads WHERE root_id=?').run(row.id);
         stmt('DELETE FROM messages WHERE id=?').run(row.id);
@@ -935,16 +1173,35 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     cleanFiles();
-    if (rows.length === 500) retentionCheckedAt = 0;
+    const byRoom = Map.groupBy(rows, row => row.room_id);
+    for (const [roomId, items] of byRoom) broadcast({ type: 'messages-deleted', roomId, ids: items.map(item => item.id) }, roomId);
     return rows.length;
+  };
+  const purgeExpired = () => {
+    const days = retentionDays();
+    if (!days || Date.now() - retentionCheckedAt < 3600000) return 0;
+    retentionCheckedAt = Date.now();
+    const count = deleteMessages(stmt('SELECT id, room_id, attachments FROM messages WHERE created_at<? ORDER BY seq LIMIT 500').all(Date.now() - days * 86400000));
+    if (count === 500) retentionCheckedAt = 0;
+    return count;
+  };
+  // 按会话自动删除：每分钟检查一次，每次最多 500 条。
+  let autoDeleteCheckedAt = 0;
+  const purgeAutoDelete = () => {
+    if (Date.now() - autoDeleteCheckedAt < 60000) return 0;
+    autoDeleteCheckedAt = Date.now();
+    const count = deleteMessages(stmt('SELECT m.id, m.room_id, m.attachments FROM messages m JOIN room_auto_delete a ON a.room_id=m.room_id WHERE m.created_at < ? - a.seconds * 1000 ORDER BY m.seq LIMIT 500').all(Date.now()));
+    if (count === 500) autoDeleteCheckedAt = 0;
+    return count;
   };
   const runSchedules = () => {
     const now = Date.now();
     purgeExpired();
+    purgeAutoDelete();
     for (const row of stmt('SELECT * FROM scheduled_messages WHERE send_at<=? ORDER BY send_at').all(now)) {
       stmt('DELETE FROM scheduled_messages WHERE id=?').run(row.id);
       const room = stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
-      if (!canAccess(room, row.sender_id) || muteOf(row.sender_id)) continue;
+      if (!canAccess(room, row.sender_id) || muteOf(row.sender_id) || groupMuted(room, row.sender_id)) continue;
       const id = randomUUID();
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, row.sender_id, row.text, '[]', `scheduled:${row.id}`, Date.now());
       broadcast({ type: 'message', message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } }, room.id);
@@ -963,7 +1220,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/polls', (req, res) => {
     rateLimit(req, 'polls', 10);
     const room = requireRoom(req.body?.roomId, req.user.id);
-    requireVoice(req.user);
+    requireRoomVoice(room, req.user);
     const question = textValue(req.body?.question, 200);
     const options = Array.isArray(req.body?.options) ? req.body.options.map(option => textValue(option, 100)).filter(Boolean) : [];
     if (!question) throw fail('请输入投票问题');
@@ -999,9 +1256,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const count = JSON.parse(poll.options).length;
     const choices = Array.isArray(req.body?.options) ? [...new Set(req.body.options)] : null;
     if (!choices || choices.some(index => !Number.isInteger(index) || index < 0 || index >= count) || (!poll.multiple && choices.length > 1)) throw fail('选项无效');
+    if (!choices.length) throw fail('请选择选项');
+    // 投过票就不能再改。
+    if (stmt('SELECT 1 FROM poll_votes WHERE message_id=? AND user_id=?').get(row.id, req.user.id)) throw fail('已经投过票，不能更改');
     db.exec('BEGIN');
     try {
-      stmt('DELETE FROM poll_votes WHERE message_id=? AND user_id=?').run(row.id, req.user.id);
       for (const index of choices) stmt('INSERT INTO poll_votes VALUES (?,?,?,?)').run(row.id, req.user.id, index, Date.now());
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -1097,7 +1356,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       else {
         const quote = message.replyTo;
         if (quote) lines.push(`↪ 回复 ${quote.senderId ? nameOf(quote.senderId) : ''}：${quote.missing ? '原消息已不存在' : quote.recalled ? '原消息已撤回' : quote.text.replace(/\s+/g, ' ').slice(0, 40) || '[附件]'}`);
-        if (message.bundle) lines.push(`[聊天记录] ${message.bundle.title}`, ...message.bundle.items.map(item => `  ${item.senderName}：${item.text || item.attachments.map(file => `[${file.name}]`).join(' ')}`));
+        if (message.nudge) lines.push(`[拍一拍] 拍了拍 ${message.nudge.targetId === message.senderId ? '自己' : nameOf(message.nudge.targetId)}`);
+        else if (message.bundle) lines.push(`[聊天记录] ${message.bundle.title}`, ...message.bundle.items.map(item => `  ${item.senderName}：${item.text || item.attachments.map(file => `[${file.name}]`).join(' ')}`));
         else if (message.poll) lines.push(`[投票${message.poll.multiple ? '，多选' : ''}${message.poll.closedAt ? '，已结束' : ''}] ${message.text}`, ...message.poll.options.map(option => `  · ${option.text}：${option.voters.length} 票`));
         else if (message.text) lines.push(message.text);
         for (const file of message.attachments) lines.push(`[附件] ${file.name}（${sizeText(file.size)}）`);
@@ -1152,6 +1412,20 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
   // 群头像：群主（大厅为空间管理者）才能换；旧图片随后清理。
+  // 自动删除的时长：关闭、1 天、1 周、1 个月。群聊由群主、大厅由管理者设置，私聊双方都可以设置。
+  const AUTO_DELETE = [0, 86400, 604800, 2592000];
+  app.post('/api/room-auto-delete', (req, res) => {
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const allowed = room.kind === 'direct' || (room.kind === 'group' ? groupSettings(room).ownerId === req.user.id : isManager(req.user));
+    if (!allowed) throw fail(room.kind === 'group' ? '只有群主可以设置自动删除' : '只有管理员可以设置大厅的自动删除', 403);
+    const seconds = Number(req.body.seconds);
+    if (!AUTO_DELETE.includes(seconds)) throw fail('自动删除只能是关闭、1 天、1 周或 1 个月');
+    if (seconds) stmt('INSERT INTO room_auto_delete VALUES (?,?,?,?) ON CONFLICT(room_id) DO UPDATE SET seconds=excluded.seconds, set_by=excluded.set_by, set_at=excluded.set_at').run(room.id, seconds, req.user.id, Date.now());
+    else stmt('DELETE FROM room_auto_delete WHERE room_id=?').run(room.id);
+    autoDeleteCheckedAt = 0;
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ autoDelete: seconds });
+  });
   const requireRoomAvatarOwner = req => {
     const room = requireRoom(req.query.roomId ?? req.body?.roomId, req.user.id);
     const allowed = room.kind === 'group' ? groupSettings(room).ownerId === req.user.id : room.kind === 'public' && isManager(req.user);
@@ -1245,7 +1519,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/messages', (req, res) => {
     rateLimit(req, 'messages', 120);
     const room = requireRoom(req.body.roomId, req.user.id);
-    requireVoice(req.user);
+    requireRoomVoice(room, req.user);
     const clientId = textValue(req.body.clientId, 80);
     if (!clientId) throw fail('消息标识缺失，请重试');
     const existing = stmt('SELECT * FROM messages WHERE sender_id=? AND client_id=?').get(req.user.id, clientId);
@@ -1264,10 +1538,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!messageText && !attachments.length) throw fail('消息不能为空');
     // 只能引用同一会话里仍然可见的消息，避免借引用读取其他会话的内容。
     const replyTo = req.body.replyTo === undefined || req.body.replyTo === null ? null : req.body.replyTo;
+    let replyTarget = null;
     if (replyTo !== null) {
       const target = typeof replyTo === 'string' && replyTo.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(replyTo);
       if (!target || target.room_id !== room.id || target.seq <= clearedThroughSeq() || recalledAt(target.id)) throw fail('引用的消息不可用');
+      replyTarget = target;
     }
+    const replyQuote = replyTarget && typeof req.body.replyQuote === 'string' ? req.body.replyQuote.trim() : '';
+    if (replyQuote && (replyQuote.length > 500 || !looseText(replyQuote) || !looseText(replyTarget.text).includes(looseText(replyQuote)))) throw fail('引用的文字不在原消息里');
     // 话题回复：根消息必须是同一会话里仍可见的普通消息（话题里的回复不能再开话题）。
     const threadRoot = req.body.threadOf === undefined || req.body.threadOf === null ? null : req.body.threadOf;
     if (threadRoot !== null) {
@@ -1294,6 +1572,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, messageText, JSON.stringify(attachments), clientId, Date.now());
       for (const file of attachments) stmt('UPDATE uploads SET claimed=1 WHERE id IN (?,?)').run(file.id, file.thumbId || file.id);
       if (replyTo) stmt('INSERT INTO message_replies VALUES (?,?)').run(id, replyTo);
+      if (replyQuote) stmt('INSERT INTO message_reply_quotes VALUES (?,?)').run(id, replyQuote);
       if (threadRoot) stmt('INSERT INTO message_threads VALUES (?,?)').run(id, threadRoot);
       for (const target of mentions) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
       db.exec('COMMIT');
@@ -1301,6 +1580,24 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
     broadcast({ type: 'message', message }, room.id);
     if (threadRoot) broadcast({ type: 'message-thread', roomId: room.id, rootId: threadRoot, thread: threadInfo(threadRoot) }, room.id);
+    res.status(201).json({ message });
+  });
+  // 拍一拍：会话里出现「A 拍了拍 B」；只能拍会话里的成员（也可以拍自己），每人每分钟最多 10 次。
+  app.post('/api/nudge', (req, res) => {
+    rateLimit(req, 'nudge', 10);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    requireRoomVoice(room, req.user);
+    const target = typeof req.body.userId === 'string' && userById(req.body.userId);
+    if (!target || !canAccess(room, target.id)) throw fail('只能拍会话里的成员');
+    const id = randomUUID();
+    db.exec('BEGIN');
+    try {
+      stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, '', '[]', `nudge:${randomUUID()}`, Date.now());
+      stmt('INSERT INTO message_nudges VALUES (?,?)').run(id, target.id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
+    broadcast({ type: 'message', message }, room.id);
     res.status(201).json({ message });
   });
   app.get('/api/media', (req, res) => {

@@ -54,3 +54,21 @@ describe('名字颜色', () => {
     assert.equal((await alice.post('/api/profile', { name: 'Alice', nameColor: 9 })).status, 400);
   });
 });
+
+describe('管理员设置成员部门', () => {
+  let space, alice, bob;
+  before(async () => {
+    space = await startLocal();
+    alice = await space.join('Alice');
+    bob = await space.join('Bob');
+  });
+  after(() => space.close());
+
+  test('空间创建者可以改成员部门，所有人看到；普通成员不行', async () => {
+    assert.equal((await alice.post('/api/admin/department', { userId: bob.id, department: '研发部' })).status, 403);
+    const saved = await space.owner.post('/api/admin/department', { userId: bob.id, department: '  研发部 ' });
+    assert.equal(saved.status, 200);
+    assert.equal((await alice.get('/api/state')).body.users.find(user => user.id === bob.id).department, '研发部');
+    assert.equal((await space.owner.post('/api/admin/department', { userId: 'missing', department: 'x' })).status, 400);
+  });
+});

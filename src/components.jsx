@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight } from 'lucide-react';
+import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName, seenText } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
@@ -115,15 +115,20 @@ function PollCard({ message, viewerId, nameOf, onVote, onClosePoll }) {
   const mine = poll.options.map((option, index) => option.voters.includes(viewerId) ? index : -1).filter(index => index >= 0);
   const voters = new Set(poll.options.flatMap(option => option.voters));
   const top = Math.max(1, ...poll.options.map(option => option.voters.length));
-  const toggle = index => onVote?.(message, poll.multiple ? (mine.includes(index) ? mine.filter(item => item !== index) : [...mine, index]) : (mine.includes(index) ? [] : [index]));
+  // 投过票就不能再改：单选点一下就投；多选先勾好再点「投票」。
+  const voted = mine.length > 0, locked = voted || Boolean(poll.closedAt);
+  const [picked, setPicked] = useState([]);
+  const toggle = index => { if (locked) return; if (poll.multiple) setPicked(previous => previous.includes(index) ? previous.filter(item => item !== index) : [...previous, index]); else onVote?.(message, [index]); };
+  const marked = index => voted ? mine.includes(index) : picked.includes(index);
   return <div className="poll-card">
     <div className="poll-question">{message.text}</div>
     <small className="poll-kind">{poll.closedAt ? '投票已结束' : poll.multiple ? '多选投票' : '单选投票'}</small>
-    {poll.options.map((option, index) => <button type="button" key={index} className={`poll-option ${mine.includes(index) ? 'chosen' : ''}`} disabled={Boolean(poll.closedAt)} aria-pressed={mine.includes(index)}
+    {poll.options.map((option, index) => <button type="button" key={index} className={`poll-option ${marked(index) ? 'chosen' : ''}`} disabled={locked} aria-pressed={marked(index)}
       title={option.voters.map(id => id === viewerId ? '我' : nameOf?.(id) || '成员').join('、') || '还没有人选'} onClick={() => toggle(index)}>
-      <i style={{ transform: `scaleX(${option.voters.length / top})` }} aria-hidden="true" /><span>{mine.includes(index) && <Check size={13} />}{option.text}</span><b>{option.voters.length}</b>
+      <i style={{ transform: `scaleX(${option.voters.length / top})` }} aria-hidden="true" /><span>{marked(index) && <Check size={13} />}{option.text}</span><b>{option.voters.length}</b>
     </button>)}
-    <div className="poll-footer"><span>{voters.size} 人参与</span>{onClosePoll && !poll.closedAt && <button type="button" className="text-button" onClick={() => onClosePoll(message)}>结束投票</button>}</div>
+    {poll.multiple && !locked && <button type="button" className="secondary-button poll-submit" disabled={!picked.length} onClick={() => onVote?.(message, picked)}>{picked.length ? `投票（已选 ${picked.length} 项）` : '选好后投票'}</button>}
+    <div className="poll-footer"><span>{voters.size} 人参与{voted && ' · 你已投票'}</span>{onClosePoll && !poll.closedAt && <button type="button" className="text-button" onClick={() => onClosePoll(message)}>结束投票</button>}</div>
   </div>;
 }
 
@@ -178,13 +183,17 @@ function MessageText({ text, mentions = [], nameOf, viewerId, meta = null }) {
 
 // 群聊里按成员给昵称着色：同一个人颜色固定。
 // 自己选了颜色就用选的，否则按身份固定分配。
+// 自定义状态：过期的不显示（成员列表要等下一次推送才更新，这里再判断一次）。
+export const activeStatus = user => user?.status && (!user.status.until || user.status.until > Date.now()) ? user.status : null;
+const StatusEmoji = ({ user }) => { const status = activeStatus(user); return status?.emoji ? <span className="status-emoji" title={status.text || undefined}>{status.emoji}</span> : null; };
+export { StatusEmoji };
 export const nameColor = (id, user) => `var(--name-${Number.isInteger(user?.nameColor) ? user.nameColor : [...(id || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 7})`;
 
 // 引用块：原消息被撤回或清空时只说明状态；点击跳到原消息。
 // 引用块的竖条和名字用被引用者的名字颜色（Telegram 式）。
 export function Quote({ reply, author, onOpen, className = '', color }) {
   const unavailable = reply.recalled ? '引用的消息已撤回' : reply.missing ? '引用的消息已被清空' : '';
-  const body = <><b>{author}</b><span>{unavailable || previewText(reply)}</span></>;
+  const body = <><b>{author}</b><span className={reply.quote ? 'quote-excerpt' : undefined}>{unavailable || (reply.quote ? `“${reply.quote}”` : previewText(reply))}</span></>;
   const style = color ? { '--quote-color': color } : undefined;
   return unavailable || !onOpen ? <div className={`message-quote ${unavailable ? 'unavailable' : ''} ${className}`} style={style}>{unavailable ? <span>{unavailable}</span> : body}</div>
     : <button type="button" className={`message-quote ${className}`} style={style} onClick={onOpen} title="查看原消息">{body}</button>;
@@ -244,7 +253,7 @@ function ReactionChip({ item, viewerId, nameOf, userOf, live, onToggle }) {
 }
 
 // users 只用来在成员资料变化时让消息重新渲染（引用里的名字、回应者头像都取自成员资料）。
-export const Message = React.memo(function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf, onOpenProfile }) {
+export const Message = React.memo(function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf, onOpenProfile, showName: nameShown, reEditable = false, onReEdit, quickReact = false, onShowHistory }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -288,13 +297,16 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   }, [message.recalledAt, mine, readingEnabled, hidden, visible, alreadyRead, message.id, message.roomId, message.readBy, onRead, privateMode]);
   const readCount = recipients.filter(id => message.readBy?.includes(id)).length;
   const readLabel = direct ? readCount ? '已读' : '未读' : readCount ? `${readCount}/${recipients.length} 人已读` : '未读';
-  if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id} data-seq={message.seq}>{message.removedBy ? '管理员删除了一条消息' : mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}</article>;
+  if (message.nudge && !message.recalledAt) return <NudgeLine message={message} mine={mine} user={user} viewerId={viewerId} nameOf={nameOf} fresh={fresh} onContextMenu={onContextMenu} />;
+  if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id} data-seq={message.seq}>{message.removedBy ? '管理员删除了一条消息' : mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}
+    {reEditable && <button type="button" className="text-button" onClick={() => onReEdit?.(message)}>重新编辑</button>}</article>;
   const time = <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>;
   // 时间与已读状态放在气泡右下角（Telegram 式）；自己的群消息点「x/n 人已读」查看名单。
   const readNode = mine && recipients.length > 0 && Array.isArray(message.readBy) && (direct
     ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
     : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>);
-  const meta = <span className="bubble-meta">{message.editedAt && <span className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}`}>已编辑</span>}{time}</span>;
+  const meta = <span className="bubble-meta">{message.editedAt && (hidden || !onShowHistory ? <span className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}`}>已编辑</span>
+    : <button type="button" className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}，点击查看编辑历史`} onClick={event => { event.stopPropagation(); onShowHistory(message); }}>已编辑</button>)}{time}</span>;
   const reactions = message.reactions || [];
   // 有表情回应时，回应和时间一起放在气泡底部同一行（Telegram 式）。
   const reactionRow = reactions.length > 0 && <div className="bubble-reactions">
@@ -303,17 +315,21 @@ export const Message = React.memo(function Message({ message, user, mine, contin
     {meta}</div>;
   const lastFile = message.attachments.at(-1);
   const mediaLast = !message.text && lastFile && /^(image|video)\//.test(lastFile.mime);
-  const showName = !mine && !direct && !continued;
-  const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''}`;
+  const showName = nameShown ?? (!mine && !direct && !continued);
+  // 两个及以上的图片或视频排成相册网格，其他文件照常列在下面。
+  const media = message.attachments.filter(file => /^(image|video)\//.test(file.mime));
+  const album = media.length > 1;
+  const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''} ${album ? 'has-album' : ''}`;
   const content = hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} />{meta}</div> : <>
-    {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId, user) }}>{user && !message.bot && onOpenProfile && !selecting
-      ? <button type="button" className="name-button" onClick={event => onOpenProfile(user, event.currentTarget)}>{user.name}</button> : user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
+    {showName && <div className="bubble-name" style={mine ? undefined : { color: nameColor(message.senderId, user) }}>{user && !message.bot && onOpenProfile && !selecting
+      ? <button type="button" className="name-button" onClick={event => onOpenProfile(user, event.currentTarget)}>{user.name}</button> : user?.name || '成员'}{!mine && <StatusEmoji user={user} />}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo, message)} />}
     {message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
       : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={reactionRow ? null : meta} />}
     {message.text && !message.poll && !message.bundle && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
-    {message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}
+    {album && <div className={`album album-${media.length}`}>{media.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}</div>}
+    {message.attachments.filter(file => !album || !media.includes(file)).map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}
     {!message.text && !reactionRow && (mediaLast ? <span className="bubble-meta-overlay">{meta}</span> : <div className="bubble-meta-row">{meta}</div>)}
     {reactionRow}
   </>;
@@ -335,10 +351,16 @@ export const Message = React.memo(function Message({ message, user, mine, contin
     <div className="message-column">
       <div className="bubble-line"><div ref={bubble} className={bubbleClass} tabIndex={privateMode ? 0 : undefined}
         style={privateMode && revealed ? revealSize.current : undefined}
+        onDoubleClick={quickReact && reactionOptions.length > 0 ? event => {
+          // 双击气泡点 👍；双击链接、按钮、图片和附件时照常。
+          if (event.target.closest('a, button, input, img, video, .attachment, .code-block')) return;
+          window.getSelection()?.removeAllRanges();
+          if (!(message.reactions || []).some(item => item.emoji === '👍' && item.users.includes(viewerId))) onReact?.(message, '👍');
+        } : undefined}
         onPointerEnter={reveal} onPointerMove={reveal} onPointerLeave={() => setRevealed(false)} onBlur={() => setRevealed(false)}
         onKeyDown={event => { if (event.code === 'Space' && privateMode) { event.preventDefault(); setRevealed(true); } }} onKeyUp={event => { if (event.code === 'Space') setRevealed(false); }}
         aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>{content}</div>
-      {onReply && <div className={`message-actions ${picking ? 'open' : ''}`}>
+      {onReply && <div className={`message-actions ${picking ? 'open' : ''}`} onMouseDown={event => { if (event.target.closest('.icon-button')) event.preventDefault(); }}>
         {reactionOptions.length > 0 && <IconButton icon={SmilePlus} label="回应" size={14} aria-expanded={picking} onClick={() => onPick?.(picking ? null : message.id)} />}
         <IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} />
         {picking && <ReactionPalette options={reactionOptions} chosen={(message.reactions || []).filter(item => item.users.includes(viewerId)).map(item => item.emoji)} onPick={emoji => onReact?.(message, emoji)} onClose={() => onPick?.(null)} />}
@@ -395,7 +417,23 @@ export function ContextMenu({ menu, onClose }) {
 }
 
 // 资料卡：点头像或名字弹出，显示在线状态、部门、签名；可以直接发消息（自己的卡片是编辑资料）。
-export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose }) {
+// 拍一拍：居中一行「A 拍了拍 B」；刚收到时被拍的人在屏幕上的头像抖一下。
+function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu }) {
+  const target = message.nudge.targetId;
+  useEffect(() => {
+    if (!fresh) return;
+    const avatars = document.querySelectorAll(`[data-user-id="${CSS.escape(target)}"]`);
+    avatars.forEach(element => { element.classList.remove('nudged'); void element.offsetWidth; element.classList.add('nudged'); });
+    const timer = setTimeout(() => avatars.forEach(element => element.classList.remove('nudged')), 800);
+    return () => clearTimeout(timer);
+  }, []);
+  const actor = mine ? '我' : user?.name || '成员';
+  const targetName = target === message.senderId ? '自己' : target === viewerId ? '我' : nameOf?.(target) || '成员';
+  return <article className="recalled-message nudge-message" data-message-id={message.id} data-seq={message.seq} onContextMenu={event => onContextMenu?.(event, message)}>{actor} 拍了拍 {targetName}</article>;
+}
+
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus, onSetDepartment, groupActions = [], groupNickname }) {
+  const [department, setDepartment] = useState(null);
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
   const [draftNote, setDraftNote] = useState(note);
@@ -410,32 +448,44 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
   useEffect(() => {
     ref.current?.focus();
     const dismiss = event => { if (!ref.current?.contains(event.target)) onClose(); };
-    const key = event => { if (event.key === 'Escape') onClose(); };
+    // 在弹窗里打开时，Esc 只关资料卡，不连带关掉弹窗。
+    const key = event => {
+      if (event.key !== 'Escape' || (ref.current?.contains(event.target) && event.target.tagName === 'INPUT')) return;
+      event.preventDefault(); event.stopPropagation(); onClose();
+    };
     document.addEventListener('pointerdown', dismiss);
-    document.addEventListener('keydown', key);
+    document.addEventListener('keydown', key, true);
     window.addEventListener('resize', onClose);
-    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('resize', onClose); };
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key, true); window.removeEventListener('resize', onClose); };
   }, [onClose]);
   const status = user.removed ? '已离开空间' : user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线';
   return <div ref={ref} role="dialog" aria-label={`${user.name}的资料`} tabIndex={-1} className="profile-card"
     style={{ left: Math.max(8, Math.min(anchor.x, innerWidth - 268)), top }}>
     <Avatar user={user} size={64} online={user.removed ? undefined : user.online} />
     <h3 style={{ color: nameColor(user.id, user) }}>{user.name}{self && <small className="me-tag">我</small>}</h3>
+    {groupNickname && <p className="profile-status">群昵称：{groupNickname}</p>}
     <p className={`profile-status ${user.online ? 'online' : ''}`}>{status}</p>
-    {(user.department || user.bio) && <dl>
-      {user.department && <><dt>部门</dt><dd>{user.department}</dd></>}
+    {activeStatus(user) && <p className="profile-custom-status">{activeStatus(user).emoji} {activeStatus(user).text}{activeStatus(user).until && <small>到 {new Date(activeStatus(user).until).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small>}</p>}
+    {department !== null ? <form className="profile-note editing" onSubmit={async event => { event.preventDefault(); try { await onSetDepartment(department.trim()); setDepartment(null); } catch {} }}>
+      <input autoFocus aria-label={`设置${user.name}的部门`} placeholder="部门，如：研发部" maxLength={40} value={department} onChange={event => setDepartment(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setDepartment(null); } }} />
+      <span><button type="button" className="secondary-button" onClick={() => setDepartment(null)}>取消</button><button className="primary-button">保存</button></span></form>
+    : (user.department || user.bio || onSetDepartment) && <dl>
+      {(user.department || onSetDepartment) && <><dt>部门{onSetDepartment && <button type="button" className="text-button dept-edit" onClick={() => setDepartment(user.department || '')}>{user.department ? '修改' : '设置'}</button>}</dt><dd>{user.department || '未设置'}</dd></>}
       {user.bio && <><dt>签名</dt><dd>{user.bio}</dd></>}
     </dl>}
     {/* 备注只有自己看得到，也只显示在资料卡里 */}
     {!self && (editingNote ? <form className="profile-note editing" onSubmit={saveNote}>
       <input autoFocus aria-label={`给${user.name}写备注`} placeholder="只有你自己能看到" maxLength={200} value={draftNote} disabled={savingNote}
-        onChange={event => setDraftNote(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setDraftNote(note); setEditingNote(false); } }} />
+        onChange={event => setDraftNote(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setDraftNote(note); setEditingNote(false); } }} />
       <span><button type="button" className="secondary-button" onClick={() => { setDraftNote(note); setEditingNote(false); }}>取消</button><button className="primary-button" disabled={savingNote}>保存</button></span>
     </form> : <button type="button" className={`profile-note ${note ? '' : 'empty'}`} onClick={() => { setDraftNote(note); setEditingNote(true); }} title="只有你自己能看到备注">
       <small>备注</small><span>{note || '添加备注'}</span><PencilLine size={13} />
     </button>)}
+    {self && onSetStatus && <button type="button" className="secondary-button" onClick={onSetStatus}>{activeStatus(user) ? '修改状态' : '设置状态'}</button>}
     {self ? <button type="button" className="secondary-button" onClick={onEdit}>编辑资料</button>
       : !user.removed && <button type="button" className="primary-button" onClick={onMessage}><MessageCircle size={15} />发送消息</button>}
+    {onNudge && <button type="button" className="secondary-button" onClick={onNudge}><Hand size={15} />{self ? '拍拍自己' : '拍一拍'}</button>}
+    {groupActions.length > 0 && <div className="profile-group-actions">{groupActions.map(item => <button type="button" key={item.label} className={`text-button ${item.danger ? 'danger-text' : ''}`} onClick={item.action}>{item.label}</button>)}</div>}
   </div>;
 }
 
