@@ -1,14 +1,18 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile } from 'lucide-react';
+import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile, Crop } from 'lucide-react';
 import EmojiPicker from './EmojiPicker';
 import { api, upload, uid, formatSize } from './api';
 import { Avatar, IconButton, PrivatePreview, ContextMenu } from './components';
 import { previewText } from './history';
 import { matchFormats, applyFormat, insideCodeFence } from './slashCommands';
+import { isSendKey, modKey } from './chatPrefs';
+import { htmlToMarkdown } from './htmlToMarkdown';
+import { compressImage } from './imageTools';
+import ImageEditor from './ImageEditor';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -17,6 +21,9 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  // 发图默认压缩大图，勾选「原图」时按原文件上传；选择记在本机。
+  const [sendOriginal, setSendOriginal] = useState(() => localStorage.getItem('linliao.sendOriginal') === '1');
+  const [editingImage, setEditingImage] = useState(null);
   // 编辑时输入框临时换成这条消息的正文，草稿原样保留，退出编辑后恢复。
   const [editText, setEditText] = useState('');
   const input = useRef();
@@ -99,9 +106,31 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
       if (file.size > 100 * 1024 * 1024) { notify(`${file.name} 超过 100 MB`); return false; }
       if (!file.size) { notify(`${file.name} 是空文件`); return false; }
       return true;
-    }).map(file => ({ id: uid(), file, url: URL.createObjectURL(file), progress: 0 }));
+    }).map(file => ({ id: uid(), original: file, file, url: URL.createObjectURL(file), progress: 0 }));
     update(roomId, state => ({ ...state, files: [...state.files, ...items] }));
-    for (const item of items) uploadItem(item, roomId);
+    for (const item of items) chooseVersion(item.original, sendOriginal).then(file => sendVersion(item, roomId, file));
+  }
+  const compressible = file => /^image\/(jpeg|png|webp)$/.test(file.type);
+  const chooseVersion = (original, keepOriginal) => keepOriginal || !compressible(original) ? Promise.resolve(original) : compressImage(original).catch(() => original);
+  // 换成另一个版本（压缩、原图或编辑后的）再上传。
+  function sendVersion(item, roomId, file) {
+    let next = item;
+    if (file !== item.file) {
+      URL.revokeObjectURL(item.url);
+      next = { ...item, file, url: URL.createObjectURL(file), attachment: null, progress: 0, error: '' };
+      update(roomId, state => ({ ...state, files: state.files.map(entry => entry.id === item.id ? { ...entry, file: next.file, url: next.url, attachment: null, progress: 0, error: '', edited: next.edited } : entry) }));
+    }
+    uploadItem(next, roomId);
+  }
+  async function toggleOriginal(value) {
+    setSendOriginal(value);
+    try { localStorage.setItem('linliao.sendOriginal', value ? '1' : '0'); } catch {}
+    const roomId = room.id;
+    for (const item of draftsRef.current[roomId]?.files || []) {
+      if (item.edited || !item.original || !compressible(item.original)) continue;
+      const file = await chooseVersion(item.original, value);
+      if (file !== item.file) sendVersion(item, roomId, file);
+    }
   }
   function removeFile(item) {
     URL.revokeObjectURL(item.url);
@@ -129,9 +158,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     const node = textarea.current;
     const current = editing ? editText : draft.text;
     const start = node?.selectionStart ?? current.length, end = node?.selectionEnd ?? current.length;
-    const next = current.slice(0, start) + value + current.slice(end);
-    if (editing) setEditText(next); else update(room.id, state => ({ ...state, text: next }));
-    requestAnimationFrame(() => { node?.focus({ preventScroll: true }); node?.setSelectionRange(start + value.length, start + value.length); });
+    setText(current.slice(0, start) + value + current.slice(end), [start + value.length, start + value.length]);
   }
   async function saveEdit() {
     const text = editText.trim();
@@ -153,7 +180,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     const mentions = (snapshot.mentions || []).filter(id => nameOf(id) && snapshot.text.includes(`@${nameOf(id)}`));
     textarea.current?.focus({ preventScroll: true });
     // 交给发件箱发送，输入框立即清空；失败的消息留在会话底部，可重试或删除。
-    onQueue({ roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId: uid(), ...(replyTo ? { replyTo } : {}), ...(mentions.length ? { mentions } : {}) },
+    onQueue({ roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId: uid(), ...(replyTo ? { replyTo, ...(reply.quote ? { replyQuote: reply.quote } : {}) } : {}), ...(mentions.length ? { mentions } : {}) },
       { text: snapshot.text, files: snapshot.files.map(file => file.file.name) });
     if (replyTo) onCancelReply?.();
     for (const file of snapshot.files) URL.revokeObjectURL(file.url);
@@ -175,6 +202,18 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     requestAnimationFrame(() => { const node = textarea.current; node?.focus({ preventScroll: true }); node?.setSelectionRange(node.value.length, node.value.length); });
   }, [editing?.id]);
   useEffect(() => { setPicker(null); setSlash(null); }, [room.id]);
+  // 撤回后「重新编辑」：原文放回对应会话的输入框，已有草稿时接在后面。
+  useEffect(() => {
+    if (!injectDraft) return;
+    const current = draftsRef.current[injectDraft.roomId]?.text || '';
+    const next = current ? `${current}\n${injectDraft.text}` : injectDraft.text;
+    if (injectDraft.roomId === room.id) pendingSelection.current = [next.length, next.length];
+    update(injectDraft.roomId, state => ({ ...state, text: next }));
+  }, [injectDraft?.nonce]);
+  // 离开会话时把剩下的草稿交给侧栏，显示「[草稿]」。
+  const onDraftRef = useRef(onDraft);
+  onDraftRef.current = onDraft;
+  useEffect(() => { const id = room.id; return () => onDraftRef.current?.(id, draftsRef.current[id]?.text.trim() || ''); }, [room.id]);
   return <div className="composer-area">
     {slashOptions.length > 0 && <div className="mention-picker slash-picker" role="listbox" id="slash-picker" aria-label="插入格式">
       {slashOptions.map((item, index) => <button type="button" role="option" id={`slash-option-${index}`} key={item.id} aria-selected={index === slash.index} className={index === slash.index ? 'active' : ''}
@@ -188,13 +227,17 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     </div>}
     {notice}
     {editing && <div className="reply-bar editing-bar" role="status"><span className="reply-copy"><b>编辑消息</b><PrivatePreview privateMode={privateMode}>{previewText(editing)}</PrivatePreview></span><IconButton icon={X} label="取消编辑" size={14} onClick={onCancelEdit} /></div>}
-    {reply && !editing && <div className="reply-bar" role="status"><span className="reply-copy"><b>回复 {replyAuthor}</b><PrivatePreview privateMode={privateMode}>{previewText(reply)}</PrivatePreview></span><IconButton icon={X} label="取消回复" size={14} onClick={onCancelReply} /></div>}
+    {reply && !editing && <div className="reply-bar" role="status"><span className="reply-copy"><b>回复 {replyAuthor}</b><PrivatePreview privateMode={privateMode}>{reply.quote ? `“${reply.quote}”` : previewText(reply)}</PrivatePreview></span><IconButton icon={X} label="取消回复" size={14} onClick={onCancelReply} /></div>}
     {draft.files.length > 0 && !editing && <div className="attachment-queue">{draft.files.map(item => <div className={`queued-file ${item.error ? 'failed' : ''}`} key={item.id}>
       {item.file.type.startsWith('image/') ? <img src={item.url} alt="待发送图片" /> : <span className="queued-video">{item.file.type.startsWith('video/') ? <Film size={18} /> : <FileText size={18} />}</span>}
       <div><span>{item.file.name}</span><small>{item.error ? '上传失败' : item.attachment ? formatSize(item.file.size) : `上传 ${item.progress}%`}</small></div>
       {item.error && <IconButton icon={RotateCcw} label="重试上传" size={15} onClick={() => uploadItem(item, room.id)} />}
+      {compressible(item.file) && item.attachment && <IconButton icon={Crop} label="裁剪或标注图片" size={15} onClick={() => setEditingImage(item)} disabled={sending} />}
       <IconButton icon={X} label="移除附件" size={15} onClick={() => removeFile(item)} disabled={sending} />
-    </div>)}</div>}
+    </div>)}
+      {draft.files.some(item => item.original && compressible(item.original)) && <label className="original-toggle" title="不勾选时，大图会压缩后再发送"><input type="checkbox" checked={sendOriginal} onChange={event => toggleOriginal(event.target.checked)} />原图</label>}
+    </div>}
+    {editingImage && <ImageEditor file={editingImage.file} onClose={() => setEditingImage(null)} onDone={file => { const item = editingImage; setEditingImage(null); sendVersion({ ...item, edited: true }, room.id, file); }} />}
     <div className="composer-row">
     {/* 附件统一收进回形针菜单：图片或视频、文件 */}
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
@@ -219,7 +262,12 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
           // 有内容时每 3 秒最多告诉别人一次「正在输入」。
           if (event.target.value.trim() && Date.now() - typedAt.current > 3000) { typedAt.current = Date.now(); onTyping?.(room.id); }
         }} onSelect={event => { detectMention(event.currentTarget); detectSlash(event.currentTarget); }} onBlur={() => { setPicker(null); setSlash(null); }}
-        onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); } }}
+        onPaste={event => {
+          if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); return; }
+          // 从网页、文档复制的带格式内容转成 Markdown 再粘贴；没有格式时照常粘贴纯文本。
+          const markdown = htmlToMarkdown(event.clipboardData.getData('text/html'));
+          if (markdown && markdown !== event.clipboardData.getData('text/plain').trim()) { event.preventDefault(); insertText(markdown); }
+        }}
         onKeyDown={event => {
           if (slashOptions.length && !event.nativeEvent.isComposing) {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const step = event.key === 'ArrowDown' ? 1 : slashOptions.length - 1; setSlash(value => ({ ...value, index: (value.index + step) % slashOptions.length })); return; }
@@ -236,12 +284,12 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
           if (event.key === 'Escape' && reply) { event.preventDefault(); onCancelReply?.(); }
           // 输入框为空时按 ↑ 编辑自己最近发的一条消息。
           if (event.key === 'ArrowUp' && !editing && !draft.text && !draft.files.length && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onEditLast?.(); }
-          // 在没闭合的 ``` 代码块里回车是换行；闭合后回车照常发送。
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229 && !matchMedia('(pointer: coarse)').matches && !insideCodeFence(event.currentTarget.value, event.currentTarget.selectionStart)) { event.preventDefault(); send(); }
+          // Enter 发送模式下，触屏设备和没闭合的 ``` 代码块里回车是换行；⌘Enter 发送模式下回车本来就是换行。
+          if (isSendKey(event, sendKey) && !(sendKey === 'enter' && (matchMedia('(pointer: coarse)').matches || insideCodeFence(event.currentTarget.value, event.currentTarget.selectionStart)))) { event.preventDefault(); send(); }
         }} />
       <IconButton icon={Smile} label="表情" className={`emoji-button ${emojiOpen ? 'selected' : ''}`} aria-expanded={emojiOpen} disabled={sending} onClick={() => setEmojiOpen(value => !value)} />
     </div>
-    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行 · 输入 / 插入格式，支持 Markdown'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
+    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? `${sendKey === 'enter' ? 'Enter' : `${modKey} Enter`} 保存 · Esc 取消` : `${sendKey === 'enter' ? 'Enter 发送 · Shift + Enter 换行' : `${modKey} Enter 发送 · Enter 换行`} · 输入 / 插入格式，支持 Markdown`}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
     <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
