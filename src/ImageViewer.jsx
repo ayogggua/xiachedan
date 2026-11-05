@@ -1,14 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, X, ZoomIn, ZoomOut, Copy, Download } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, ZoomIn, ZoomOut, Copy, Download, Share2 } from 'lucide-react';
 import { mediaUrl } from './api';
 import { IconButton } from './components';
+import { mobileClient, nativeMobile, mobileHeaders } from './mobile/session';
+import { saveDownload } from './mobile/runtime';
 
 const MAX_SCALE = 6;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 // 剪贴板只稳定支持 PNG：其他格式先画到画布上转成 PNG。
 async function copyImage(file) {
-  const blob = await (await fetch(mediaUrl(file.id), { credentials: 'include' })).blob();
+  const response = await fetch(mediaUrl(file.id), { credentials: mobileClient ? 'omit' : 'include', headers: mobileHeaders() });
+  if (!response.ok) throw new Error('图片读取失败');
+  const blob = await response.blob();
   let png = blob;
   if (blob.type !== 'image/png') {
     const bitmap = await createImageBitmap(blob);
@@ -80,7 +84,7 @@ export default function ImageViewer({ images, index, onIndex, onClose, notify })
     gesture.current = pointers.current.size ? { kind: 'pan', x: [...pointers.current.values()][0][0], y: [...pointers.current.values()][0][1] } : null;
   }
   async function copy() {
-    try { await copyImage(file); notify('图片已复制'); }
+    try { if (nativeMobile) await saveDownload(mediaUrl(file.id), file.name); else { await copyImage(file); notify('图片已复制'); } }
     catch { notify('无法复制这张图片，可以下载后使用'); }
   }
   if (!file) return null;
@@ -90,8 +94,8 @@ export default function ImageViewer({ images, index, onIndex, onClose, notify })
       <IconButton icon={ZoomOut} label="缩小（-）" onClick={() => zoomAt(0.8)} disabled={view.scale <= 1} />
       <button type="button" className="viewer-scale" onClick={() => setView({ scale: 1, x: 0, y: 0 })} title="适应窗口（0）">{Math.round(view.scale * 100)}%</button>
       <IconButton icon={ZoomIn} label="放大（+）" onClick={() => zoomAt(1.25)} disabled={view.scale >= MAX_SCALE} />
-      <IconButton icon={Copy} label="复制图片" onClick={copy} />
-      <a className="icon-button" href={mediaUrl(file.id, true)} download title="下载图片" aria-label="下载图片"><Download size={17} strokeWidth={1.7} /></a>
+      <IconButton icon={nativeMobile ? Share2 : Copy} label={nativeMobile ? '分享图片' : '复制图片'} onClick={copy} />
+      <a className="icon-button" href={mediaUrl(file.id, true)} download={file.name} title="下载图片" aria-label="下载图片"><Download size={17} strokeWidth={1.7} /></a>
       <IconButton icon={X} label="关闭（Esc）" onClick={onClose} />
     </header>
     <div ref={stage} className={`viewer-stage ${view.scale > 1 ? 'zoomed' : ''}`}

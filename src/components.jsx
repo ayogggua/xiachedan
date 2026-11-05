@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName, seenText } from './api';
@@ -9,12 +9,14 @@ import { disintegrate } from './dust';
 import { readStorage } from './history';
 import appIcon from './assets/brand/app-icon.svg';
 import { PRESETS, HEXTECH_AVATARS, HEXTECH_TIERS, getHextechAvatar } from '../shared/avatars.js';
+import { MediaAccessContext } from './mobile/MediaAccessContext';
 
 export { PRESETS } from '../shared/avatars.js';
 const avatarIcons = { cat: Cat, bird: Bird, rabbit: Rabbit, fish: Fish, coffee: Coffee, mountain: Mountain, planet: Orbit, sprout: Sprout, bot: Bot };
 const avatarNames = { cat: '小猫', bird: '小鸟', rabbit: '兔子', fish: '小鱼', coffee: '咖啡', mountain: '山峰', planet: '星球', sprout: '幼苗' };
 
 export function Avatar({ user, size = 40, online, className = '' }) {
+  useContext(MediaAccessContext);
   const value = user?.avatar || 'cat';
   const hextech = getHextechAvatar(value);
   const Icon = avatarIcons[value] || Cat;
@@ -91,7 +93,7 @@ export function PrivatePreview({ privateMode, children }) {
 // 普通文件：只显示名称和大小，点击下载，不在页面内打开。
 function FileCard({ file }) {
   const extension = file.name.includes('.') ? file.name.split('.').pop().slice(0, 4).toUpperCase() : '';
-  return <a className="file-card" href={mediaUrl(file.id, true)} download title={`下载 ${file.name}`}>
+  return <a className="file-card" href={mediaUrl(file.id, true)} download={file.name} title={`下载 ${file.name}`}>
     <span className="file-icon"><FileText size={20} strokeWidth={1.6} />{extension && <small>{extension}</small>}</span>
     <span className="file-copy"><span>{file.name}</span><small>{formatSize(file.size)}</small></span><Download size={15} />
   </a>;
@@ -126,13 +128,29 @@ function PollCard({ message, viewerId, nameOf, onVote, onClosePoll }) {
 }
 
 function Attachment({ file, privateMode, onPreview }) {
+  const mediaVersion = useContext(MediaAccessContext);
   const [failed, setFailed] = useState(false);
+  const [videoSource, setVideoSource] = useState(() => mediaUrl(file.id));
+  const video = useRef(null), playback = useRef(null);
+  useEffect(() => {
+    if (!file.mime.startsWith('video/')) return;
+    const next = mediaUrl(file.id);
+    if (next === videoSource) return;
+    playback.current = video.current ? { time: video.current.currentTime, playing: !video.current.paused } : null;
+    setFailed(false); setVideoSource(next);
+  }, [file.id, mediaVersion]);
+  const restorePlayback = () => {
+    if (!playback.current || !video.current) return;
+    video.current.currentTime = playback.current.time;
+    if (playback.current.playing) video.current.play().catch(() => {});
+    playback.current = null;
+  };
   if (!/^(image|video)\//.test(file.mime)) return <FileCard file={file} />;
   return <div className={`attachment ${file.mime.startsWith('image/') ? 'image-attachment' : 'video-attachment'}`}>
     {file.mime.startsWith('image/') ? <button className="image-button" type="button" onClick={() => !privateMode && onPreview(file)} aria-label={privateMode ? '图片内容' : '放大查看图片'}><img src={mediaUrl(file.thumbId || file.id)} alt={file.name} loading="lazy" /></button> : <>
-      {failed ? <div className="video-fallback"><Film size={26} /><p>这个视频格式暂时无法预览</p><a href={mediaUrl(file.id, true)} download>下载后播放<ArrowUpRight size={14} /></a></div> : <video src={mediaUrl(file.id)} controls preload="metadata" playsInline onError={() => setFailed(true)} />}
+      {failed ? <div className="video-fallback"><Film size={26} /><p>这个视频格式暂时无法预览</p><a href={mediaUrl(file.id, true)} download={file.name}>下载后播放<ArrowUpRight size={14} /></a></div> : <video ref={video} src={videoSource} controls preload="metadata" playsInline onLoadedMetadata={restorePlayback} onError={() => setFailed(true)} />}
     </>}
-    <div className="attachment-caption"><span>{file.mime.startsWith('image/') ? <ImageIcon size={13} /> : <Film size={13} />}{file.name}</span><small>{formatSize(file.size)}</small><a href={mediaUrl(file.id, true)} download title="下载文件" aria-label="下载文件"><Download size={14} /></a></div>
+    <div className="attachment-caption"><span>{file.mime.startsWith('image/') ? <ImageIcon size={13} /> : <Film size={13} />}{file.name}</span><small>{formatSize(file.size)}</small><a href={mediaUrl(file.id, true)} download={file.name} title="下载文件" aria-label="下载文件"><Download size={14} /></a></div>
   </div>;
 }
 
@@ -352,6 +370,9 @@ export function OutboxMessage({ item, avatarColumn, onRetry, onDiscard }) {
 
 export function ContextMenu({ menu, onClose }) {
   const ref = useRef();
+  const smallScreen = matchMedia('(max-width: 760px)').matches;
+  const menuWidth = smallScreen ? 220 : 152;
+  const viewportHeight = window.visualViewport?.height || innerHeight;
   useEffect(() => {
     const dismiss = event => { if (!ref.current?.contains(event.target)) onClose(); };
     const key = event => {
@@ -370,7 +391,7 @@ export function ContextMenu({ menu, onClose }) {
     document.addEventListener('scroll', onClose, true);
     return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); document.removeEventListener('scroll', onClose, true); };
   }, [onClose]);
-  return <div ref={ref} role="menu" aria-label={menu.label} className="message-context-menu" onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }} style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 152)), top: Math.max(8, Math.min(menu.y, innerHeight - menu.items.length * 36 - 16)) }}>{menu.items.map((item, index) => <button key={item.id} autoFocus={index === 0} role="menuitem" onClick={() => { onClose(); item.action(); }}>{item.label}</button>)}</div>;
+  return <div ref={ref} role="menu" aria-label={menu.label} className="message-context-menu" onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }} style={{ left: Math.max(8, Math.min(menu.x, innerWidth - menuWidth - 8)), top: Math.max(8, Math.min(menu.y, viewportHeight - menu.items.length * (smallScreen ? 44 : 36) - 16)), maxHeight: viewportHeight - 16, overflowY: 'auto' }}>{menu.items.map((item, index) => <button key={item.id} autoFocus={index === 0} role="menuitem" onClick={() => { onClose(); item.action(); }}>{item.label}</button>)}</div>;
 }
 
 // 资料卡：点头像或名字弹出，显示在线状态、部门、签名；可以直接发消息（自己的卡片是编辑资料）。

@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, createHash, scrypt, timingSafeEqual } from 'no
 import { promisify } from 'node:util';
 import { readFileSync } from 'node:fs';
 import { isPresetAvatar } from '../shared/avatars.js';
+import { createMediaAccess, isMediaRequest, isMobileClient, mobileOrigins, mobileToken } from './mobile.js';
 
 const derive = promisify(scrypt);
 const ADMIN_PHONE = '19977167586';
@@ -38,6 +39,7 @@ async function verify(password, encoded) {
 }
 
 export async function createAuth({ db, app, production, closeUser, changed, rateLimit }) {
+  const mediaAccess = createMediaAccess();
   const stmt = sql => db.prepare(sql);
   const secure = production;
   const sameSite = process.env.CHAT_COOKIE_SAME_SITE || 'lax';
@@ -52,13 +54,16 @@ export async function createAuth({ db, app, production, closeUser, changed, rate
   const accountSQL = 'SELECT u.id,u.name,u.avatar,u.created_at,a.* FROM accounts a JOIN users u ON u.id=a.user_id';
   const account = id => stmt(`${accountSQL} WHERE u.id=?`).get(id);
   const token = req => {
+    if (req.headers.authorization || req.headers['sec-websocket-protocol']) return mobileToken(req);
+    if (isMobileClient(req) || mobileOrigins.has(req.headers.origin)) return '';
     const value = req.headers.cookie?.split(';').map(part => part.trim()).find(part => part.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
     return /^[0-9a-f]{64}$/.test(value || '') ? value : '';
   };
+  const sessionHash = req => isMediaRequest(req) && req.query?.access !== undefined ? mediaAccess.sessionHash(req) : token(req) ? hash(token(req)) : '';
   const session = req => {
-    const value = token(req);
+    const value = sessionHash(req);
     if (!value) return null;
-    const row = stmt('SELECT user_id FROM sessions WHERE token_hash=? AND expires_at>?').get(hash(value), Date.now());
+    const row = stmt('SELECT user_id FROM sessions WHERE token_hash=? AND expires_at>?').get(value, Date.now());
     return row ? account(row.user_id) : null;
   };
   const active = row => Boolean(row && row.status === 'approved' && !row.must_change_password && !stmt('SELECT 1 FROM removed_users WHERE user_id=?').get(row.id));
@@ -68,6 +73,7 @@ export async function createAuth({ db, app, production, closeUser, changed, rate
     stmt('DELETE FROM sessions WHERE expires_at<=?').run(Date.now());
     stmt('INSERT INTO sessions VALUES (?,?,?,?)').run(hash(value), id, Date.now(), Date.now() + SESSION_MS);
     stmt('DELETE FROM sessions WHERE user_id=? AND token_hash NOT IN (SELECT token_hash FROM sessions WHERE user_id=? ORDER BY created_at DESC LIMIT 10)').run(id, id);
+    if (isMobileClient(res.req)) return { token: value, expiresAt: Date.now() + SESSION_MS, mediaTicket: active(account(id)) ? mediaAccess.issue(hash(value)) : '' };
     res.cookie(cookieName, value, { ...cookieOptions, maxAge: SESSION_MS });
   };
   const audit = (actor, id, action, detail = '') => stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(actor, id, action, detail, Date.now());
@@ -134,8 +140,8 @@ export async function createAuth({ db, app, production, closeUser, changed, rate
         stmt(`INSERT INTO accounts (user_id,${login.column},password_hash,updated_at) VALUES (?,?,?,?)`).run(id, login.value, encoded, Date.now());
       });
     } catch (error) { if (String(error.code).includes('CONSTRAINT') || error.errcode === 2067) throw fail('该账号已注册，请直接登录', 409); throw error; }
-    setSession(res, id);
-    res.status(201).json({ account: publicAccount(account(id)) });
+    const mobile = setSession(res, id);
+    res.status(201).json({ account: publicAccount(account(id)), ...(mobile ? { mobile } : {}) });
   });
   app.post('/api/auth/login', async (req, res) => {
     rateLimit(req, 'login', 60, 15 * 60000);
@@ -145,8 +151,8 @@ export async function createAuth({ db, app, production, closeUser, changed, rate
     const valid = await withHashSlot(() => verify(req.body?.password, row?.password_hash || dummyHash));
     if (!row || !valid) throw fail('手机号、邮箱或密码不正确', 401);
     // 哈希计算期间账号状态可能被管理员修改，返回最新状态。
-    setSession(res, row.id);
-    res.json({ account: publicAccount(account(row.id)) });
+    const mobile = setSession(res, row.id);
+    res.json({ account: publicAccount(account(row.id)), ...(mobile ? { mobile } : {}) });
   });
   app.get('/api/auth/me', (req, res) => res.json({ account: publicAccount(requireSession(req)) }));
   app.post('/api/auth/logout', (req, res) => {
@@ -174,8 +180,8 @@ export async function createAuth({ db, app, production, closeUser, changed, rate
       stmt('DELETE FROM sessions WHERE user_id=?').run(row.id);
       audit(row.id, row.id, 'password');
     });
-    setSession(res, row.id);
-    res.json({ account: publicAccount(account(row.id)) });
+    const mobile = setSession(res, row.id);
+    res.json({ account: publicAccount(account(row.id)), ...(mobile ? { mobile } : {}) });
     setImmediate(() => closeUser(row.id));
   });
   app.get('/api/admin/users', (req, res) => {
@@ -238,7 +244,13 @@ export async function createAuth({ db, app, production, closeUser, changed, rate
     closeUser(target.id);
     res.json({ password });
   });
-  return { user, account: req => publicAccount(session(req)), activeId: id => active(account(id)), tokenHash: req => hash(token(req)),
+  app.get('/api/mobile/session', (req, res) => {
+    const row = requireSession(req);
+    if (!isMobileClient(req) || !mobileToken(req)) throw fail('请先登录', 401);
+    res.json({ mobile: { mediaTicket: active(row) ? mediaAccess.issue(sessionHash(req)) : '' } });
+  });
+  return { user, account: req => publicAccount(session(req)), activeId: id => active(account(id)), tokenHash: sessionHash,
+    mobileAccess: req => isMobileClient(req) && user(req) ? { mobile: { mediaTicket: mediaAccess.issue(sessionHash(req)) } } : {},
     validSocket: socket => Boolean(stmt('SELECT 1 FROM sessions WHERE token_hash=? AND expires_at>?').get(socket.sessionHash, Date.now()) && active(account(socket.userId))),
     cleanup: () => stmt('DELETE FROM sessions WHERE expires_at<=?').run(Date.now()),
   };

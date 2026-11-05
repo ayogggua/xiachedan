@@ -1,3 +1,4 @@
+import { copyText } from './mobile/runtime';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download } from 'lucide-react';
 import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText } from './api';
@@ -20,6 +21,8 @@ import RoomFiles from './RoomFiles';
 import ThreadPanel from './ThreadPanel';
 import HistorySearch, { SearchResult, SearchStatus, useMessageSearch } from './HistorySearch';
 import { previewText, readStorage } from './history';
+import { MobileHome, MobileTabs } from './mobile/MobileHome';
+import { mobileClient, chooseServer } from './mobile/session';
 
 const NO_REACTIONS = [];
 
@@ -68,6 +71,7 @@ export default function App() {
   const [awaySeq, setAwaySeq] = useState(null);
   const [unreadAnchor, setUnreadAnchor] = useState(null);
   const [mobileChat, setMobileChat] = useState(false);
+  const [mobileTab, setMobileTab] = useState('chats');
   const [theme, setTheme] = useTheme();
   const [appearance, setAppearance] = useAppearance();
   const [update, setUpdate] = useState(null);
@@ -79,6 +83,23 @@ export default function App() {
   const longPress = useRef({ timer: 0, fired: false });
   const notify = useCallback(text => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(''), 3500); }, []);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
+  useEffect(() => {
+    const receiveNotice = event => notify(event.detail);
+    window.addEventListener('linliao:notice', receiveNotice);
+    return () => window.removeEventListener('linliao:notice', receiveNotice);
+  }, [notify]);
+  useEffect(() => {
+    const back = event => {
+      const dialog = [...document.querySelectorAll('dialog[open]')].at(-1);
+      if (dialog) { event.preventDefault(); dialog.dispatchEvent(new Event('cancel', { cancelable: true })); return; }
+      if (document.querySelector('[role="menu"], .emoji-picker')) { event.preventDefault(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return; }
+      const closers = [[contextMenu, () => setContextMenu(null)], [profileCard, () => setProfileCard(null)], [readDetail, () => setReadDetail(null)], [reactingTo, () => setReactingTo(null)], [selection, () => setSelection(null)], [showMembers, () => setShowMembers(false)], [mobileChat, () => setMobileChat(false)], [mobileTab !== 'chats', () => setMobileTab('chats')]];
+      const current = closers.find(([open]) => open);
+      if (current) { event.preventDefault(); current[1](); }
+    };
+    window.addEventListener('linliao:back', back);
+    return () => window.removeEventListener('linliao:back', back);
+  }, [contextMenu, profileCard, readDetail, reactingTo, selection, showMembers, mobileChat, mobileTab]);
   const { privateMode, privacyRef, changePrivacy, windowActive } = useDesktopBridge({ notify, onPendingRoom: openRoom,
     onOpenRoom: roomId => { openRoom(roomId); setModal(null); setSearch(''); } });
   const closeReadDetail = useCallback(() => setReadDetail(null), []);
@@ -347,7 +368,7 @@ export default function App() {
       if (action === 'forward') setForwarding([latest.id]);
       if (action === 'select') setSelection([latest.id]);
       if (action === 'copy' && !current.privateMode) {
-        const copy = window.desktop?.copy ? window.desktop.copy(latest.text) : navigator.clipboard.writeText(latest.text);
+        const copy = window.desktop?.copy ? window.desktop.copy(latest.text) : copyText(latest.text);
         return copy.catch(error => notify(error.message));
       }
     };
@@ -386,7 +407,7 @@ export default function App() {
     onOpenProfile: (user, element) => latest.current.openProfile(user, element),
   }), []);
   const toastElement = toast && <div className="toast" role="status"><Check size={15} />{toast}</div>;
-  if (startupError) return <div className="startup-state"><Logo /><h2>稍等，连接有点慢</h2><p>{startupError}</p><div className="startup-actions"><button className="primary-button" onClick={start}><RefreshCw size={15} />重新连接</button>{window.desktop && <button className="secondary-button" onClick={() => window.desktop.home()}>返回本机空间</button>}</div></div>;
+  if (startupError) return <div className="startup-state"><Logo /><h2>暂时无法连接</h2><p>{startupError}</p><div className="startup-actions"><button className="primary-button" onClick={start}><RefreshCw size={15} />重新连接</button>{mobileClient && <button className="secondary-button" onClick={chooseServer}>连接服务器</button>}{window.desktop && <button className="secondary-button" onClick={() => window.desktop.home()}>返回本机空间</button>}</div></div>;
   if (!bootstrap) return <div className="startup-state"><Logo /><p>正在连接虾扯蛋…</p><LoaderCircle className="spin" size={18} /></div>;
   if (!state?.me) return <>{bootstrap.mode === 'cloud' ? <Account bootstrap={bootstrap} onChanged={start} onLogout={logout} loggingOut={loggingOut} /> : <Onboarding bootstrap={bootstrap} onJoined={start} notify={notify} />}{toastElement}</>;
   const userMap = Object.fromEntries(state.users.map(user => [user.id, user]));
@@ -471,7 +492,8 @@ export default function App() {
     else messageGroups.push({ newDay, messages: [message] });
   }
   return <div className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
-    <aside className="sidebar glass" aria-label="会话列表">{resizer}
+    <aside className="sidebar glass" aria-label="会话列表" data-mobile-tab={mobileTab}>{resizer}
+      <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} connected={connected} onDirect={directMessage} onAction={setModal} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
       <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) && <IconButton icon={CheckCheck} label="全部标为已读" onClick={() => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); }} />}<IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
       <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>
@@ -491,6 +513,7 @@ export default function App() {
       {cloud && isAdmin && <button className="admin-entry" onClick={() => setModal('admin')}><ShieldCheck size={16} /><span>用户管理</span><ChevronRight size={14} /></button>}
       <div className="me-card"><button className="me-profile" title="修改昵称和头像" onClick={() => setModal('profile')}><Avatar user={state.me} size={30} /><span><b>{state.me.name}</b><small className={connected ? '' : 'warning'}>{connected ? cloud ? '已连接' : '局域网已连接' : '正在重新连接…'}</small></span></button><IconButton icon={Settings2} label={update?.available ? '设置（有新版本）' : '设置'} className={update?.available ? 'has-update' : ''} onClick={() => setModal('connection')} /></div>
       <button type="button" className="sidebar-logout" disabled={loggingOut} onClick={logout}>{loggingOut ? <LoaderCircle className="spin" size={14} /> : <LogOut size={14} />}<span>{loggingOut ? '正在退出…' : '退出登录'}</span></button>
+      <MobileTabs tab={mobileTab} onChange={tab => { setMobileTab(tab); setMobileChat(false); }} unread={rooms.reduce((count, target) => count + (!target.muted && !target.hidden ? unread[target.id]?.count || 0 : 0), 0)} />
     </aside>
     <main className="chat-main">
       {room ? <>
