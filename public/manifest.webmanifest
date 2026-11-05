@@ -1,0 +1,17 @@
+{
+  "id": "/",
+  "name": "虾扯蛋",
+  "short_name": "虾扯蛋",
+  "description": "有事说事，没事虾扯蛋。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1c1c1e",
+  "theme_color": "#1c1c1e",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -56,6 +56,10 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS message_recalls (message_id TEXT PRIMARY KEY, recalled_at INTEGER NOT NULL);
     -- 引用回复：只记录被引用消息的标识，引用内容在读取时按原消息的最新状态生成。
     CREATE TABLE IF NOT EXISTS message_replies (message_id TEXT PRIMARY KEY, reply_to TEXT NOT NULL);
+    -- 拍一拍：一条没有正文的特殊消息，记下被拍的人。
+    CREATE TABLE IF NOT EXISTS message_nudges (message_id TEXT PRIMARY KEY, target_id TEXT NOT NULL);
+    -- 引用回复时只引用原消息里选中的一段文字（Telegram 式）；原消息撤回或清空后随之删除。
+    CREATE TABLE IF NOT EXISTS message_reply_quotes (message_id TEXT PRIMARY KEY, quote TEXT NOT NULL);
     -- @提及：user_id 为成员标识，'*' 表示 @所有人。
     -- 转发：记录原发送人与原发送时间，用来显示「转发自」。
     CREATE TABLE IF NOT EXISTS message_forwards (message_id TEXT PRIMARY KEY, original_sender TEXT NOT NULL, original_created_at INTEGER NOT NULL);
@@ -76,6 +80,23 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS room_avatars (room_id TEXT PRIMARY KEY, upload_id TEXT NOT NULL);
     -- 名字颜色：每人在 7 种昵称色里自选一种（编号 0–6），没选时按身份自动分配。
     CREATE TABLE IF NOT EXISTS user_name_colors (user_id TEXT PRIMARY KEY, color INTEGER NOT NULL);
+    -- 群策略：全员禁言、入群审批、邀请链接（令牌只给群主和管理员看，为空表示没有链接）。
+    CREATE TABLE IF NOT EXISTS room_group_policy (room_id TEXT PRIMARY KEY, all_muted INTEGER NOT NULL DEFAULT 0, join_approval INTEGER NOT NULL DEFAULT 0, invite_token TEXT, invite_at INTEGER);
+    -- 入群申请：开了入群审批后，通过链接加入或普通成员拉人都先进申请，由群主或管理员处理。
+    CREATE TABLE IF NOT EXISTS room_join_requests (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, user_id TEXT NOT NULL, invited_by TEXT, created_at INTEGER NOT NULL, UNIQUE (room_id, user_id));
+    -- 群昵称：成员在某个群里显示的名字，只在这个群里生效。
+    CREATE TABLE IF NOT EXISTS room_nicknames (room_id TEXT NOT NULL, user_id TEXT NOT NULL, nickname TEXT NOT NULL, PRIMARY KEY (room_id, user_id));
+    -- 群管理员：由群主指定，可以改群名和公告、移出普通成员。
+    CREATE TABLE IF NOT EXISTS room_admins (room_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (room_id, user_id));
+    -- 自定义状态：一个表情加一段文字，until 到期后不再显示（为空表示不自动清除）。
+    CREATE TABLE IF NOT EXISTS user_status (user_id TEXT PRIMARY KEY, emoji TEXT NOT NULL, text TEXT NOT NULL, until INTEGER);
+    -- 按会话自动删除：消息发出超过 seconds 秒后为所有人删除（阅后即焚，Telegram 式定时）。
+    CREATE TABLE IF NOT EXISTS room_auto_delete (room_id TEXT PRIMARY KEY, seconds INTEGER NOT NULL, set_by TEXT NOT NULL, set_at INTEGER NOT NULL);
+    -- 关键词提醒：消息里出现这些词时像被 @ 一样提醒，跨设备同步。
+    CREATE TABLE IF NOT EXISTS user_keywords (user_id TEXT PRIMARY KEY, keywords TEXT NOT NULL);
+    -- 会话文件夹：每人自建，存会话标识列表，跨设备同步。
+    CREATE TABLE IF NOT EXISTS user_folders (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, room_ids TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS user_folders_user ON user_folders(user_id);
     -- 备注：成员给别人写的私人备注，只有写的人自己能看到。
     CREATE TABLE IF NOT EXISTS user_notes (owner_id TEXT NOT NULL, user_id TEXT NOT NULL, note TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (owner_id, user_id));
     -- 话题：话题里的回复属于同一会话，但不出现在主时间线，也不计入会话未读；根消息上显示回复数。
@@ -103,6 +124,9 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS session_devices (token_hash TEXT PRIMARY KEY, user_agent TEXT NOT NULL, ip TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL);
     -- 编辑过的消息记下最后一次编辑时间，界面显示「已编辑」。
     CREATE TABLE IF NOT EXISTS message_edits (message_id TEXT PRIMARY KEY, edited_at INTEGER NOT NULL);
+    -- 编辑历史：每次编辑前的正文。earlier_lost=1 表示在保存历史之前已经编辑过，更早的版本没有记录。
+    CREATE TABLE IF NOT EXISTS message_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT NOT NULL, text TEXT NOT NULL, replaced_at INTEGER NOT NULL, earlier_lost INTEGER NOT NULL DEFAULT 0);
+    CREATE INDEX IF NOT EXISTS message_versions_message ON message_versions(message_id);
     -- 群机器人：外部系统凭地址里的令牌向一个会话发消息；只保存令牌摘要。机器人发的消息另记名字，删掉机器人后仍能显示。
     CREATE TABLE IF NOT EXISTS webhooks (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS message_bots (message_id TEXT PRIMARY KEY, name TEXT NOT NULL);

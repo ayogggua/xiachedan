@@ -18,4 +18,4 @@ export const merge = (a, b, history) => {
 };
 export const readStorage = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
 const attachmentLabel = files => files.some(file => file.mime.startsWith('video/')) ? '[视频]' : files.some(file => file.mime.startsWith('image/')) ? '[图片]' : `[文件] ${files[0]?.name || ''}`;
-export const previewText = message => message ? message.recalledAt ? message.removedBy ? '消息已被管理员删除' : '消息已撤回' : (message.bundle ? `[聊天记录] ${message.text}` : message.poll ? `[投票] ${message.text}` : message.text && plainText(message.text)) || attachmentLabel(message.attachments) : '还没有消息，来打个招呼吧';
+export const previewText = message => message ? message.recalledAt ? message.removedBy ? '消息已被管理员删除' : '消息已撤回' : (message.nudge ? '[拍一拍]' : message.bundle ? `[聊天记录] ${message.text}` : message.poll ? `[投票] ${message.text}` : message.text && plainText(message.text)) || attachmentLabel(message.attachments) : '还没有消息，来打个招呼吧';

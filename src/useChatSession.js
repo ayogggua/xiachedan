@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, socketUrl } from './api';
+import { chatPref } from './chatPrefs';
+import { playMessageSound } from './sound';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
+import { plainText } from './markdown';
 import useMessageReads from './useMessageReads';
 import { isQuiet } from './quiet';
 
@@ -143,16 +146,28 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     const current = stateRef.current;
     const target = current?.rooms.find(room => room.id === message.roomId);
     const mentionsMe = message.mentions?.some(id => id === current?.me.id || id === '*');
+    // 关键词提醒和被 @ 一样：免打扰的会话也提醒。
+    const words = current?.keywords || [];
+    const keywordHit = Boolean(words.length && message.text && (text => words.some(word => text.includes(word.toLowerCase())))(plainText(message.text).toLowerCase()));
+    const important = mentionsMe || keywordHit;
     // 免打扰的会话只在被 @ 时提醒。
-    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id && (!mutedRef?.current.has(message.roomId) || mentionsMe) && !isQuiet(mentionsMe)) {
-      const sender = current.users.find(user => user.id === message.senderId);
-      const hidden = privacyRef.current;
-      const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : ''}${sender?.name || message.bot || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
-      window.desktop.message({ id: message.id, roomId: message.roomId, privateMode: hidden,
-        title: title.slice(0, 120), body: hidden ? '****' : previewText(message).slice(0, 240),
-      }).catch(error => notify(error.message));
-    }
+    if (message.recalledAt || !current || message.senderId === current.me.id || (mutedRef?.current.has(message.roomId) && !important) || isQuiet(important)) return;
+    // 拍一拍只提醒被拍的人。
+    if (message.nudge && message.nudge.targetId !== current.me.id) return;
+    // 提示音：正在看这个会话时不响；Windows 的系统通知自带声音，弹出时不重复响。
+    const watching = activeRoom.current === message.roomId && document.hasFocus() && !document.hidden;
+    const ring = () => { if (!watching && chatPref('sound')) playMessageSound(); };
+    if (!window.desktop?.message) { ring(); return; }
+    const sender = current.users.find(user => user.id === message.senderId);
+    const hidden = privacyRef.current;
+    const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : keywordHit ? '[关键词] ' : ''}${sender?.name || message.bot || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
+    window.desktop.message({ id: message.id, roomId: message.roomId, privateMode: hidden,
+      title: title.slice(0, 120), body: hidden ? '****' : message.nudge ? '拍了拍你' : previewText(message).slice(0, 240),
+    }).then(shown => { if (!(shown && window.desktop.platform === 'windows')) ring(); }).catch(error => notify(error.message));
   }, [notify, syncHistory, privacyRef]);
+  const applyKeywords = useCallback(keywords => setState(previous => previous ? { ...previous, keywords } : previous), []);
+  // 会话文件夹（跨设备同步）。
+  const applyFolders = useCallback(folders => setState(previous => previous ? { ...previous, folders } : previous), []);
   // 自己写的成员备注（只有自己看得到）：空字符串表示删除。
   const applyNote = useCallback(({ userId, note }) => setState(previous => {
     if (!previous) return previous;
@@ -200,11 +215,19 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'message-reads') applyReceipt(data);
         if (data.type === 'message-reactions') applyReactions(data);
         if (data.type === 'message-edited') applyEdit(data.message);
+        // 到期自动删除（或保留期限清理）的消息：从本地去掉，再刷新侧栏的最后一条。
+        if (data.type === 'messages-deleted') {
+          const ids = new Set(data.ids);
+          setMessages(previous => previous[data.roomId] ? { ...previous, [data.roomId]: previous[data.roomId].filter(message => !ids.has(message.id)) } : previous);
+          refresh().catch(() => {});
+        }
         if (data.type === 'users') setState(previous => previous ? ({ ...previous, users: data.users, me: { ...previous.me, ...data.users.find(user => user.id === previous.me.id) } }) : previous);
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
         if (data.type === 'room-pins') setPinsVersion(version => version + 1);
         if (data.type === 'saved') setSavedVersion(version => version + 1);
         if (data.type === 'user-note') applyNote(data);
+        if (data.type === 'folders') applyFolders(data.folders);
+        if (data.type === 'keywords') applyKeywords(data.keywords);
         if (data.type === 'message-poll') applyPoll(data);
         if (data.type === 'message-thread') {
           setMessages(previous => previous[data.roomId] ? { ...previous, [data.roomId]: previous[data.roomId].map(message => message.id === data.rootId ? { ...message, thread: data.thread } : message) } : previous);
@@ -222,7 +245,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     }
     connect();
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
-  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, syncHistory, stopTyping]);
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, applyFolders, applyKeywords, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
@@ -263,5 +286,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords };
 }
