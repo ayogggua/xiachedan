@@ -74,21 +74,34 @@ jobs:
           PUBLISH_RELEASE: ${{ steps.version.outputs.publish }}
         run: |
           node --input-type=module <<'JS'
-          import { mkdirSync, writeFileSync } from 'node:fs';
-          import { homedir } from 'node:os';
+          import { writeFileSync, appendFileSync } from 'node:fs';
           import path from 'node:path';
           const value = process.env.ANDROID_DEBUG_KEYSTORE;
           if (!value && process.env.PUBLISH_RELEASE === 'true') throw new Error('Configure ANDROID_DEBUG_KEYSTORE for consistent internal app updates');
           if (value) {
-            const directory = path.join(homedir(), '.android');
-            mkdirSync(directory, { recursive: true, mode: 0o700 });
-            writeFileSync(path.join(directory, 'debug.keystore'), Buffer.from(value, 'base64'), { mode: 0o600 });
+            const file = path.join(process.env.RUNNER_TEMP, 'xiachedan-debug.keystore');
+            writeFileSync(file, Buffer.from(value, 'base64'), { mode: 0o600 });
+            appendFileSync(process.env.GITHUB_ENV, `XIACHEDAN_ANDROID_KEYSTORE=${file}\n`);
           }
           JS
       - run: npm ci
       - run: npm run package:android
       - name: Verify APK signature
-        run: '"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify release/*.apk'
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { readdirSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import path from 'node:path';
+          const signer = path.join(process.env.ANDROID_HOME, 'build-tools/36.0.0/apksigner');
+          const keystore = process.env.XIACHEDAN_ANDROID_KEYSTORE;
+          const expected = keystore && createHash('sha256').update(execFileSync('keytool', ['-exportcert', '-alias', 'androiddebugkey', '-keystore', keystore, '-storepass', 'android'])).digest('hex');
+          for (const file of readdirSync('release').filter(name => name.endsWith('.apk'))) {
+            const result = execFileSync(signer, ['verify', '--print-certs', path.join('release', file)], { encoding: 'utf8' });
+            if (expected && !result.includes(`certificate SHA-256 digest: ${expected}`)) throw new Error('APK does not use the configured internal signing key');
+          }
+          console.log('APK signatures verified against configured internal signing key');
+          JS
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: xiachedan-android
@@ -98,7 +111,7 @@ jobs:
           retention-days: 14
       - name: Remove temporary signing key
         if: always()
-        run: rm -f "$HOME/.android/debug.keystore"
+        run: rm -f "$RUNNER_TEMP/xiachedan-debug.keystore"
 
   release:
     name: Publish Android internal release
