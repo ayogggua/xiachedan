@@ -1,7 +1,9 @@
+import { copyText } from './mobile/runtime';
 import React, { useEffect, useState } from 'react';
 import { ArrowRight, ShieldCheck, Clock3, LogOut, RefreshCw, KeyRound } from 'lucide-react';
 import { api, nativeTitlebar } from './api';
 import { Logo, IdentityFields, Modal, Avatar } from './components';
+import { mobileClient, chooseServer } from './mobile/session';
 
 const statusNames = { pending: '待审核', approved: '已通过', rejected: '已拒绝', suspended: '已停用' };
 const roleNames = { user: '成员', admin: '管理员', super_admin: '超级管理员' };
@@ -82,6 +84,7 @@ export default function Account({ bootstrap, onChanged, onLogout, loggingOut }) 
           <button className="primary-button full account-submit" disabled={busy}>{busy ? '请稍等…' : register ? '注册并提交审核' : '登录'}<ArrowRight size={16} /></button>
         </form>
       </>}
+      {mobileClient && <button type="button" className="mobile-server-link text-button" onClick={chooseServer}>连接服务器</button>}
     </div></section>
   </div>;
 }
@@ -119,7 +122,7 @@ export function AdminDialog({ me, onClose, onUpdated, notify }) {
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
   async function copyPassword() {
-    try { await (window.desktop ? window.desktop.copy(issued.password) : navigator.clipboard.writeText(issued.password)); notify('临时密码已复制'); }
+    try { await (window.desktop ? window.desktop.copy(issued.password) : copyText(issued.password)); notify('临时密码已复制'); }
     catch { setError('复制失败，请手动选中复制'); }
   }
   return <Modal title="用户管理" subtitle="审核注册申请，管理成员权限。" wide onClose={onClose}>

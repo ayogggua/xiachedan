@@ -1,3 +1,6 @@
+import { acceptSession, clearSession, mediaAccessQuery, mobileClient, mobileHeaders, serverOrigin } from './mobile/session';
+import { saveDownload } from './mobile/runtime';
+
 const setup = new URLSearchParams(location.hash.slice(1)).get('setup');
 if (setup) {
   sessionStorage.setItem('linliao.setup', setup);
@@ -5,26 +8,28 @@ if (setup) {
 }
 // macOS 隐藏标题栏后需给红绿灯留位；Windows 使用系统标题栏。
 export const nativeTitlebar = Boolean(window.desktop) && window.desktop.platform !== 'windows';
-const backend = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
-const endpoint = route => `${backend}/api/${route}`;
+const endpoint = route => `${serverOrigin()}/api/${route}`;
 // 给外部系统用的完整地址（如机器人地址）：开发时指向后端，其余情况与页面同源。
-export const absoluteUrl = path => `${backend || location.origin}${path}`;
+export const absoluteUrl = path => `${serverOrigin() || location.origin}${path}`;
 export const socketUrl = () => {
-  const url = new URL('/socket', backend || location.origin);
+  const url = new URL('/socket', serverOrigin() || location.origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.href;
 };
 
 export async function api(route, body, options = {}) {
   const response = await fetch(endpoint(route), {
-    credentials: 'include',
+    credentials: mobileClient ? 'omit' : 'include',
     signal: AbortSignal.timeout(20000),
     method: body === undefined ? 'GET' : 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Linliao': '1', 'X-Setup-Key': sessionStorage.getItem('linliao.setup') || '' },
+    headers: { 'Content-Type': 'application/json', 'X-Linliao': '1', 'X-Setup-Key': sessionStorage.getItem('linliao.setup') || '', ...mobileHeaders() },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), ...options,
   });
   const data = await response.json().catch(() => ({ error: '连接暂时不可用，请稍后重试' }));
   if (!response.ok) throw Object.assign(new Error(data.error || '连接暂时不可用'), { status: response.status });
+  if (mobileClient && ['auth/login', 'auth/register', 'auth/password'].includes(route) && !data.mobile?.token) throw new Error('服务器需要更新移动端登录支持，请联系管理员');
+  await acceptSession(data.mobile);
+  if (mobileClient && route === 'auth/logout') await clearSession();
   return data;
 }
 
@@ -32,8 +37,9 @@ export function upload(file, query, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', endpoint(`uploads?${new URLSearchParams(query)}`));
-    xhr.withCredentials = true;
+    xhr.withCredentials = !mobileClient;
     xhr.setRequestHeader('X-Linliao', '1');
+    for (const [key, value] of Object.entries(mobileHeaders())) xhr.setRequestHeader(key, value);
     xhr.timeout = 10 * 60 * 1000;
     xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
     xhr.onerror = () => reject(new Error('上传中断，请检查网络连接'));
@@ -49,13 +55,17 @@ export function upload(file, query, onProgress) {
 }
 
 // 导出会话聊天记录：按本机时区排时间，通过下载保存为文本文件。
-export function downloadExport(roomId) {
+export async function downloadExport(roomId) {
   const link = document.createElement('a');
   link.href = endpoint(`export?roomId=${encodeURIComponent(roomId)}&tz=${new Date().getTimezoneOffset()}`);
-  link.download = '';
+  link.download = `聊天记录-${new Date().toISOString().slice(0, 10)}.txt`;
+  if (mobileClient) {
+    try { await saveDownload(link.href, link.download); } catch (error) { window.dispatchEvent(new CustomEvent('linliao:notice', { detail: error.message || '导出失败，请重试' })); }
+    return;
+  }
   link.click();
 }
-export const mediaUrl = (id, download = false) => endpoint(`media?id=${encodeURIComponent(id)}${download ? '&download=1' : ''}`);
+export const mediaUrl = (id, download = false) => endpoint(`media?id=${encodeURIComponent(id)}${download ? '&download=1' : ''}${mediaAccessQuery()}`);
 export const uid = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 export const randomName = () => {
   const descriptions = ['准点下班的', '正在发呆的', '有点机灵的', '爱喝拿铁的', '慢慢来的', '不熬夜的', '周五快乐的', '认真摸鱼的', '带薪散步的', '灵感满格的'];

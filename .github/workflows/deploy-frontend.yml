@@ -1,8 +1,8 @@
-name: Deploy frontend
+name: Deploy Web and PWA
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'shared/**', 'public/**', 'index.html', 'vite.config.js', 'package.json', 'package-lock.json', '.github/workflows/deploy-frontend.yml']
+    paths: ['src/**', 'shared/**', 'public/**', 'scripts/pwa.mjs', 'index.html', 'vite.config.js', 'package.json', 'package-lock.json', '.github/workflows/deploy-frontend.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,10 +21,8 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build independent frontend
-        env:
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         run: |
-          npm run build
+          npm run build:pwa
           node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync("dist/version.json", JSON.stringify({release: process.env.GITHUB_SHA}));'
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -35,13 +33,13 @@ jobs:
       - name: Deploy frontend
         if: github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
         env:
-          DEPLOY_HOST: ${{ vars.FRONTEND_DEPLOY_HOST || vars.DEPLOY_HOST || '117.50.187.95' }}
+          DEPLOY_HOST: ${{ vars.FRONTEND_DEPLOY_HOST || vars.DEPLOY_HOST }}
           DEPLOY_USER: ${{ vars.FRONTEND_DEPLOY_USER || vars.DEPLOY_USER || 'ubuntu' }}
           DEPLOY_SSH_KEY: ${{ secrets.FRONTEND_DEPLOY_SSH_KEY || secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.FRONTEND_DEPLOY_KNOWN_HOSTS || secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          test -n "$DEPLOY_SSH_KEY" && test -n "$DEPLOY_KNOWN_HOSTS"
+          test -n "$DEPLOY_HOST" && test -n "$DEPLOY_SSH_KEY" && test -n "$DEPLOY_KNOWN_HOSTS"
           install -d -m 700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts

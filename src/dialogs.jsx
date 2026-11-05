@@ -1,3 +1,5 @@
+import { copyText } from './mobile/runtime';
+import { mobileClient } from './mobile/session';
 import React, { useRef, useState, useEffect } from 'react';
 import { Camera, Check, Search, Users, Hash, ArrowRight, Wifi, ExternalLink, Bell, LoaderCircle, LogOut, KeyRound, Copy, Bot } from 'lucide-react';
 import { api, upload, formatSize, absoluteUrl, mediaUrl, formatTime } from './api';
@@ -38,7 +40,7 @@ export function InviteDialog({ cloud, onClose, notify }) {
   useEffect(() => { api('invite').then(setInvite).catch(error => setError(error.message)); }, []);
   return <Modal title="喊上同事，一起扯两句" subtitle={cloud ? '分享注册链接，管理员审核通过后即可加入。' : '复制一份邀请，同事粘贴一次就能加入。'} onClose={onClose}>
     {error && <p className="form-error" role="alert">{error}</p>}
-    {invite ? cloud ? <div className="cloud-invite"><input aria-label="注册链接" value={invite.url || location.origin} readOnly onFocus={event => event.target.select()} /><button className="primary-button full" onClick={() => navigator.clipboard.writeText(invite.url || location.origin).then(() => notify('注册链接已复制')).catch(() => setError('复制失败，请选中上方链接复制'))}><Copy size={15} />复制注册链接</button></div> : <InvitationShare invite={invite} notify={notify} /> : !error && <p className="inline-note">正在获取邀请信息…</p>}
+    {invite ? cloud ? <div className="cloud-invite"><input aria-label="注册链接" value={invite.url || absoluteUrl('')} readOnly onFocus={event => event.target.select()} /><button className="primary-button full" onClick={() => copyText(invite.url || absoluteUrl('')).then(() => notify('注册链接已复制')).catch(() => setError('复制失败，请选中上方链接复制'))}><Copy size={15} />复制注册链接</button></div> : <InvitationShare invite={invite} notify={notify} /> : !error && <p className="inline-note">正在获取邀请信息…</p>}
   </Modal>;
 }
 
@@ -204,10 +206,10 @@ export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, 
         <div className="segmented-control font-size-control" role="radiogroup" aria-label="消息字号">{FONT_SIZES.map(([label, size]) => <button type="button" key={size} role="radio" aria-checked={appearance.fontSize === size} className={appearance.fontSize === size ? 'active' : ''} onClick={() => onAppearance({ ...appearance, fontSize: size })}>{label}</button>)}</div>
       </>}
     </section>
-    <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
+    <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{absoluteUrl('')}</span></div><i className={connected ? 'online' : ''} /></div>
     {!cloud && <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>}
     <section className="account-settings"><h3>账号</h3><p>{cloud ? me.phone || me.email : me.name}</p><div className="account-actions">{cloud && <button className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button>}<button className="secondary-button" disabled={loggingOut} onClick={onLogout}><LogOut size={15} />{loggingOut ? '正在退出…' : '退出登录'}</button></div></section>
-    <QuietSettings notify={notify} />
+    {(window.desktop || (!mobileClient && import.meta.env.MODE !== 'pwa')) && <QuietSettings notify={notify} />}
     {cloud && <DeviceSettings notify={notify} />}
     {onAudit && <section className="device-settings"><h3>管理</h3><button type="button" className="secondary-button" onClick={onAudit}>查看操作日志</button>
       <label className="toggle-row retention-row">消息保留期限<select aria-label="消息保留期限" value={workspace.retentionDays || 0} onChange={async event => { try { await api('admin/retention', { days: Number(event.target.value) }); await onChanged?.(); notify('保留期限已更新'); } catch (error) { notify(error.message); } }}>{[[0, '永久保留'], [30, '30 天'], [90, '90 天'], [180, '180 天'], [365, '1 年']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -289,7 +291,7 @@ export function WebhooksDialog({ room, onClose, notify }) {
   const reset = hook => run(async () => { const result = await api('webhooks/reset', { id: hook.id }); setIssued({ name: hook.name, url: absoluteUrl(result.path) }); });
   const remove = hook => run(async () => { await api('webhooks/delete', { id: hook.id }); if (issued?.name === hook.name) setIssued(null); notify(`已删除机器人「${hook.name}」`); });
   async function copy() {
-    try { await (window.desktop ? window.desktop.copy(issued.url) : navigator.clipboard.writeText(issued.url)); notify('机器人地址已复制'); }
+    try { await (window.desktop ? window.desktop.copy(issued.url) : copyText(issued.url)); notify('机器人地址已复制'); }
     catch { setError('复制失败，请选中上方地址复制'); }
   }
   return <Modal title="群机器人" subtitle={`外部系统可以通过机器人往「${room.name}」发消息，例如告警、构建结果、日报。`} onClose={() => !busy && onClose()}>
@@ -429,7 +431,7 @@ export function BundleDialog({ message, privateMode, onPreview, onClose }) {
       {item.text && (privateMode ? <p className="masked-preview">****</p> : <FormattedText text={item.text} />)}
       {item.attachments.length > 0 && !privateMode && <div className="bundle-files">{item.attachments.map(file => file.mime.startsWith('image/')
         ? <button type="button" key={file.id} className="bundle-image" onClick={() => onPreview(file)}><img src={mediaUrl(file.id)} alt={file.name} loading="lazy" /></button>
-        : <a key={file.id} className="bundle-file" href={mediaUrl(file.id, true)} download>{file.name}<small>{formatSize(file.size)}</small></a>)}</div>}
+        : <a key={file.id} className="bundle-file" href={mediaUrl(file.id, true)} download={file.name}>{file.name}<small>{formatSize(file.size)}</small></a>)}</div>}
     </article>)}</div>
   </Modal>;
 }

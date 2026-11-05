@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, socketUrl } from './api';
+import { socketProtocols } from './mobile/session';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
 import useMessageReads from './useMessageReads';
 import { isQuiet } from './quiet';
@@ -188,10 +189,13 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     }
     function connect() {
       if (cancelled || logoutPending.current) return;
-      socket = socketRef.current = new WebSocket(socketUrl());
-      socket.onopen = () => { if (cancelled || logoutPending.current) return socket.close(); setConnected(true); delay = 700; synchronize(); };
+      if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
+      clearTimeout(reconnect.current);
+      const currentSocket = new WebSocket(socketUrl(), socketProtocols());
+      socket = socketRef.current = currentSocket;
+      socket.onopen = () => { if (cancelled || logoutPending.current || socket !== currentSocket) return currentSocket.close(); setConnected(true); delay = 700; synchronize(); };
       socket.onmessage = event => {
-        if (cancelled || logoutPending.current) return;
+        if (cancelled || logoutPending.current || socket !== currentSocket) return;
         let data; try { data = JSON.parse(event.data); } catch { return; }
         if (data.type === 'message') { receive(data.message); stopTyping(data.message.roomId, data.message.senderId); }
         if (data.type === 'typing') setTyping(previous => ({ ...previous, [data.roomId]: { ...previous[data.roomId], [data.userId]: Date.now() + 5000 } }));
@@ -217,11 +221,19 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
             title: privacyRef.current ? '虾扯蛋 · 提醒' : `提醒 · ${sender?.name || data.message.bot || '消息'}`, body: privacyRef.current ? '****' : previewText(data.message).slice(0, 240) }).catch(() => {});
         }
       };
-      socket.onclose = event => { if (cancelled || logoutPending.current) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
-      socket.onerror = () => socket.close();
+      socket.onclose = event => { if (cancelled || logoutPending.current || socket !== currentSocket) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
+      socket.onerror = () => currentSocket.close();
     }
     connect();
-    return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
+    const resume = () => {
+      if (document.visibilityState === 'hidden' || cancelled || logoutPending.current) return;
+      if (socket?.readyState === WebSocket.OPEN) synchronize();
+      else if (socket?.readyState !== WebSocket.CONNECTING) { clearTimeout(reconnect.current); connect(); }
+    };
+    window.addEventListener('online', resume);
+    window.addEventListener('linliao:resume', resume);
+    document.addEventListener('visibilitychange', resume);
+    return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); window.removeEventListener('online', resume); window.removeEventListener('linliao:resume', resume); document.removeEventListener('visibilitychange', resume); };
   }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }

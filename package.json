@@ -16,7 +16,15 @@
     "desktop": "npm run build && node scripts/prepare-desktop.mjs && tauri dev --no-watch",
     "package:mac": "npm run build && node scripts/prepare-desktop.mjs && CI=true tauri build --bundles app,dmg",
     "package:win": "npm run build && node scripts/prepare-desktop.mjs && tauri build --bundles nsis",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:mobile": "vite --mode mobile --host 127.0.0.1",
+    "dev:pwa": "vite --mode pwa --host 127.0.0.1",
+    "build:pwa": "vite build --mode pwa",
+    "build:mobile": "vite build --mode mobile",
+    "mobile:sync": "npm run build:mobile && cap sync",
+    "mobile:android": "npm run mobile:sync && cap open android",
+    "mobile:ios": "npm run mobile:sync && cap open ios",
+    "package:android": "npm run build:mobile && cap sync android && node scripts/build-mobile.mjs"
   },
   "dependencies": {
     "express": "5.3.0",
@@ -24,6 +32,20 @@
     "ws": "8.22.0"
   },
   "devDependencies": {
+    "@aparajita/capacitor-secure-storage": "8.0.1",
+    "@capacitor/android": "8.6.0",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/browser": "8.0.5",
+    "@capacitor/cli": "8.6.0",
+    "@capacitor/clipboard": "8.0.1",
+    "@capacitor/core": "8.6.0",
+    "@capacitor/file-transfer": "2.0.6",
+    "@capacitor/filesystem": "8.1.5",
+    "@capacitor/ios": "8.6.0",
+    "@capacitor/keyboard": "8.0.6",
+    "@capacitor/share": "8.0.3",
+    "@capacitor/splash-screen": "8.0.2",
+    "@capacitor/status-bar": "8.0.4",
     "@tauri-apps/cli": "^2.12.4",
     "highlight.js": "11.12.0",
     "lucide-react": "^0.468.0",

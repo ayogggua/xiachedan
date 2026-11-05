@@ -1,0 +1,12 @@
+{
+  "appId": "chat.linliao.mobile",
+  "appName": "虾扯蛋",
+  "webDir": "dist-mobile",
+  "android": { "path": "mobile/android", "backgroundColor": "#1c1c1e" },
+  "ios": { "path": "mobile/ios", "contentInset": "never", "backgroundColor": "#1c1c1e" },
+  "server": { "hostname": "localhost", "androidScheme": "https" },
+  "plugins": {
+    "Keyboard": { "resize": "native", "resizeOnFullScreen": true },
+    "SplashScreen": { "launchAutoHide": true, "launchShowDuration": 500, "backgroundColor": "#1c1c1e", "showSpinner": false }
+  }
+}

@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
+import { mobileOrigins } from './mobile.js';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync, linkSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
@@ -244,7 +245,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!current || current.until < Date.now()) limits.set(id, { count: 1, until: Date.now() + duration });
     else if (++current.count > max) throw fail('操作有些频繁，稍后再试', 429);
   };
-  const originOK = req => !req.headers.origin || (cloud ? allowedOrigins.has(req.headers.origin) : req.headers.origin === `http://${req.headers.host}`);
+  const originOK = req => !req.headers.origin || (cloud ? allowedOrigins.has(req.headers.origin) || mobileOrigins.has(req.headers.origin) : req.headers.origin === `http://${req.headers.host}`);
   app.disable('x-powered-by');
   app.use((req, res, next) => {
     res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
@@ -256,7 +257,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       res.vary('Origin');
     }
     if (cloud && req.method === 'OPTIONS') {
-      res.set({ 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Linliao, X-Setup-Key', 'Access-Control-Max-Age': '600' });
+      res.set({ 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Linliao, X-Setup-Key, X-Linliao-Client, Authorization', 'Access-Control-Max-Age': '600' });
       return res.sendStatus(204);
     }
     // 机器人地址由外部服务器调用，凭令牌鉴权，不带浏览器的来源与自定义请求头。
@@ -271,13 +272,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       changed: () => { broadcast({ type: 'users', users: users() }); broadcast({ type: 'rooms' }); },
     }); } catch (error) { db.close(); throw error; }
   }
-  app.get('/api/health', (_req, res) => { stmt('SELECT 1').get(); res.json({ app: 'linliao', version: '1.4.1', mode, ok: true, release: process.env.CHAT_RELEASE || 'development' }); });
+  app.get('/api/health', (_req, res) => { stmt('SELECT 1').get(); res.json({ app: 'linliao', version: '1.4.1', mode, ok: true, mobile: cloud, release: process.env.CHAT_RELEASE || 'development' }); });
   app.get('/api/bootstrap', (req, res) => {
     const ws = workspace();
     const me = authUser(req);
     res.json({ configured: Boolean(ws), workspace: ws ? spaceInfo() : null,
       spaceId: ws ? stmt('SELECT space_id FROM space_identity WHERE id=1').get().space_id : null,
-      mode, account: cloud ? auth.account(req) : null,
+      mode, account: cloud ? auth.account(req) : null, ...(cloud ? auth.mobileAccess(req) : {}),
       canCreate: !cloud && loopback(req.socket.remoteAddress) && req.get('X-Setup-Key') === setupKey,
       me, ...(me ? stateFor(me) : {}) });
   });
@@ -401,7 +402,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     }
     res.json({ revoked: targets.length });
   });
-  app.get('/api/state', (req, res) => res.json(stateFor(req.user)));
+  app.get('/api/state', (req, res) => res.json({ ...stateFor(req.user), ...(cloud ? auth.mobileAccess(req) : {}) }));
   app.post('/api/remove-member', (req, res) => {
     if (req.user.id !== ownerId()) throw fail('只有空间创建者可以移除成员', 403);
     const id = req.body?.userId;
@@ -1331,7 +1332,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (status >= 500) console.error({ message: error.message, code: error.code });
     res.status(status).json({ error: error.code === 'LIMIT_FILE_SIZE' ? '单个文件不能超过 100 MB' : status === 507 ? '空间存储不足，请联系管理员清理附件' : status >= 500 ? '操作未完成，请稍后重试' : error.message });
   });
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 4096, handleProtocols: protocols => protocols.has('linliao') ? 'linliao' : false });
   server.on('upgrade', (req, socket, head) => {
     const user = authUser(req);
     if (req.url !== '/socket' || !originOK(req) || !user) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }

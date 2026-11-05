@@ -1,3 +1,4 @@
+import { copyText } from './mobile/runtime';
 import React, { useId, useRef, useState } from 'react';
 import { ArrowRight, Copy, Laptop } from 'lucide-react';
 import { api, randomName } from './api';
@@ -10,7 +11,7 @@ export function InvitationShare({ invite, notify }) {
   async function copy() {
     try {
       if (window.desktop) await window.desktop.copy(text);
-      else await navigator.clipboard.writeText(text);
+      else await copyText(text);
       setCopied(true);
       notify('整份邀请已复制，同事粘贴一次即可加入');
     } catch { notify('请选中邀请信息，按 Command + C 复制'); }

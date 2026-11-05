@@ -29,7 +29,7 @@ export default function RoomFiles({ room, userMap, privateMode, historyVersion, 
         : <ul className="file-list">{items.map(item => <li key={`${item.messageId}-${item.file.id}`}>
           <button type="button" className="file-jump" onClick={() => onJump({ id: item.messageId, seq: item.seq, roomId: room.id })}><FileText size={18} />
             <span><b>{item.file.name}</b><small>{formatSize(item.file.size)} · {userMap[item.senderId]?.name || '成员'} · {day(item.createdAt)}</small></span></button>
-          <a href={mediaUrl(item.file.id, true)} download aria-label={`下载 ${item.file.name}`} title="下载"><Download size={15} /></a>
+          <a href={mediaUrl(item.file.id, true)} download={item.file.name} aria-label={`下载 ${item.file.name}`} title="下载"><Download size={15} /></a>
         </li>)}</ul>}
       {hasMore && <button type="button" className="secondary-button load-more" onClick={() => load(items.at(-1).seq, true)}>加载更多</button>}
     </div>

@@ -1,9 +1,10 @@
-name: Build and Release
+name: Build Desktop
 
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths: ['src/**', 'shared/**', 'server/**', 'src-tauri/**', 'public/**', 'index.html', 'vite.config.js', 'package.json', 'package-lock.json', 'scripts/prepare-desktop.mjs', 'scripts/desktop-version.mjs', 'scripts/update-manifest.mjs', 'scripts/pwa.mjs', '.github/workflows/build.yml']
   workflow_dispatch:
     inputs:
       version:
@@ -167,7 +168,7 @@ jobs:
       - name: Validate production client address
         if: vars.PRODUCTION_DEPLOY_ENABLED == 'true'
         shell: bash
-        run: node -e 'const value=process.env.LINLIAO_CLOUD_URL; const url=new URL(value); if(url.protocol!=="https:" || url.origin!==value) throw new Error("Set CHAT_PUBLIC_URL to the production HTTPS origin before publishing desktop clients");'
+        run: node -e 'const value=process.env.LINLIAO_CLOUD_URL; const url=new URL(value); if(url.protocol!=="https:" || url.origin!==value || /^[0-9.]+$/.test(url.hostname) || url.hostname.includes(":")) throw new Error("Set CHAT_PUBLIC_URL to the production HTTPS domain before publishing desktop clients");'
       - run: npm run build
       - name: Prepare Node sidecar and local server
         run: node scripts/prepare-desktop.mjs ${{ matrix.target }}

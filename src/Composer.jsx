@@ -21,6 +21,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   const [editText, setEditText] = useState('');
   const input = useRef();
   const fileInput = useRef();
+  const cameraInput = useRef();
   const textarea = useRef();
   const draftsRef = useRef(drafts);
   const draft = drafts[room.id] || empty;
@@ -199,6 +200,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
       onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (2 + Boolean(onCreatePoll) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
         { id: 'media', label: '图片或视频', action: () => input.current.click() },
+        ...(matchMedia('(pointer: coarse)').matches ? [{ id: 'camera', label: '拍照', action: () => cameraInput.current.click() }] : []),
         { id: 'file', label: '文件（最大 100 MB）', action: () => fileInput.current.click() },
         ...(onCreatePoll ? [{ id: 'poll', label: '投票', action: onCreatePoll }] : []),
         ...(onSchedule ? [{ id: 'schedule', label: '定时发送…', action: () => onSchedule(draft.text) }] : []),
@@ -235,13 +237,14 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
           // 输入框为空时按 ↑ 编辑自己最近发的一条消息。
           if (event.key === 'ArrowUp' && !editing && !draft.text && !draft.files.length && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onEditLast?.(); }
           // 在没闭合的 ``` 代码块里回车是换行；闭合后回车照常发送。
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229 && !insideCodeFence(event.currentTarget.value, event.currentTarget.selectionStart)) { event.preventDefault(); send(); }
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229 && !matchMedia('(pointer: coarse)').matches && !insideCodeFence(event.currentTarget.value, event.currentTarget.selectionStart)) { event.preventDefault(); send(); }
         }} />
       <IconButton icon={Smile} label="表情" className={`emoji-button ${emojiOpen ? 'selected' : ''}`} aria-expanded={emojiOpen} disabled={sending} onClick={() => setEmojiOpen(value => !value)} />
     </div>
     <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行 · 输入 / 插入格式，支持 Markdown'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
     <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
+    <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     </div>
   </div>;
 }

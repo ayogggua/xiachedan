@@ -1,3 +1,4 @@
+import { copyText } from './mobile/runtime';
 import React from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -92,7 +93,7 @@ function CodeBlock({ language, text }) {
   }, [language, text]);
   const copy = async event => {
     event.stopPropagation();
-    try { await (window.desktop?.copy ? window.desktop.copy(text) : navigator.clipboard.writeText(text)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
+    try { await (window.desktop?.copy ? window.desktop.copy(text) : copyText(text)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
   };
   return <div className="code-block">
     <div className="code-head"><span>{language || highlighted?.language || '代码'}</span><button type="button" onClick={copy}>{copied ? '已复制' : '复制'}</button></div>
