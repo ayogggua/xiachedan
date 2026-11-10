@@ -75,6 +75,21 @@ describe('转发', () => {
     assert.equal((await alice.post('/api/forward', { roomId: 'lobby', messageIds: [] })).status, 400);
     assert.equal((await alice.post('/api/forward', { roomId: 'lobby', messageIds: ['missing'] })).status, 404);
   });
+
+  test('多选里夹着名片、拍一拍、已撤回的消息时跳过它们，其余照常转发', async () => {
+    const kept = (await send(alice, aliceBob, '留下')).body.message;
+    const card = (await alice.post('/api/contact-card', { roomId: aliceBob, userId: carol.id })).body.message;
+    const recalled = (await send(alice, aliceBob, '撤回')).body.message;
+    await alice.post('/api/recall-message', { messageId: recalled.id });
+    for (const merge of [false, true]) {
+      const result = await alice.post('/api/forward', { roomId: 'lobby', messageIds: [kept.id, card.id, recalled.id, 'missing'], merge });
+      assert.equal(result.status, 201);
+      assert.equal(result.body.skipped, 3);
+      assert.equal(result.body.messages.length, 1);
+      if (merge) assert.deepEqual(result.body.messages[0].bundle.items.map(item => item.text), ['留下']);
+      else assert.equal(result.body.messages[0].text, '留下');
+    }
+  });
 });
 
 describe('账号模式下的转发', () => {
@@ -89,5 +104,41 @@ describe('账号模式下的转发', () => {
     const result = await alice.post('/api/forward', { roomId: direct, messageIds: [message.id] });
     assert.equal(result.status, 201);
     assert.equal(result.body.messages[0].forwardedFrom.senderId, alice.id);
+  });
+});
+
+// 多选一次最多 100 条：逐条转发、合并转发和只对自己删除都按这个数校验，超出时要说清楚是条数超了。
+async function checkBatchLimit(sender, roomId, targetId) {
+  const ids = [];
+  for (let index = 1; index <= 100; index++) ids.push((await send(sender, roomId, `第 ${index} 条`)).body.message.id);
+  const each = await sender.post('/api/forward', { roomId: targetId, messageIds: ids });
+  assert.equal(each.status, 201);
+  assert.deepEqual([each.body.messages.length, each.body.messages.at(-1).text], [100, '第 100 条']);
+  const merged = await sender.post('/api/forward', { roomId: targetId, messageIds: ids, merge: true });
+  assert.equal(merged.status, 201);
+  assert.equal(merged.body.messages[0].bundle.items.length, 100);
+  const over = [...ids, 'one-more'];
+  assert.deepEqual(await sender.post('/api/forward', { roomId: targetId, messageIds: over }), { status: 400, body: { error: '一次最多转发 100 条消息' } });
+  assert.deepEqual(await sender.post('/api/forward', { roomId: targetId, messageIds: over, merge: true }), { status: 400, body: { error: '一次最多转发 100 条消息' } });
+  assert.deepEqual(await sender.post('/api/forward', { roomId: targetId, messageIds: [] }), { status: 400, body: { error: '请选择要转发的消息' } });
+  assert.deepEqual(await sender.post('/api/messages/hide', { messageIds: over }), { status: 400, body: { error: '一次最多删除 100 条消息' } });
+  assert.equal((await sender.post('/api/messages/hide', { messageIds: ids })).status, 200);
+}
+
+describe('一次转发、删除的条数上限', () => {
+  test('局域网模式', async () => {
+    const space = await startLocal();
+    try {
+      const alice = await space.join('Alice'), bob = await space.join('Bob');
+      await checkBatchLimit(alice, 'lobby', (await alice.post('/api/rooms', { userId: bob.id })).body.id);
+    } finally { await space.close(); }
+  });
+
+  test('账号模式', async () => {
+    const space = await startCloud();
+    try {
+      const alice = await space.member('Alice'), bob = await space.member('Bob');
+      await checkBatchLimit(alice, 'lobby', (await alice.post('/api/rooms', { userId: bob.id })).body.id);
+    } finally { await space.close(); }
   });
 });

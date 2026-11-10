@@ -8,11 +8,12 @@ import { matchFormats, applyFormat, insideCodeFence } from './slashCommands';
 import { isSendKey, modKey } from './chatPrefs';
 import { htmlToMarkdown } from './htmlToMarkdown';
 import { compressImage } from './imageTools';
+import { emojiFor, matchShortcodes } from './emojiShortcodes';
 import ImageEditor from './ImageEditor';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft, injectShare, placeholder, phrases = [] }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -43,7 +44,29 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   }
   // 行首或空格后输入「/」弹出格式菜单，「/」后的文字用来筛选（中文名、英文或拼音首字母）。
   const POLL = { id: 'poll', label: '投票', sample: '', keys: 'poll vote toupiao tp' };
-  const slashOptions = slash ? [...matchFormats(slash.query), ...(onCreatePoll && !editing && (!slash.query || POLL.label.includes(slash.query) || POLL.keys.split(' ').some(key => key.startsWith(slash.query.toLowerCase()))) ? [POLL] : [])] : [];
+  // 常用语也能从「/」菜单里找：「/收到」会列出包含「收到」的常用语。
+  const phraseOptions = slash ? phrases.filter(text => !slash.query || text.includes(slash.query)).slice(0, 5).map((text, index) => ({ id: `phrase-${index}`, label: text.replace(/\s+/g, ' '), sample: '常用语', phrase: text })) : [];
+  const slashOptions = slash ? [...(slash.query ? phraseOptions : []), ...matchFormats(slash.query), ...(onCreatePoll && !editing && (!slash.query || POLL.label.includes(slash.query) || POLL.keys.split(' ').some(key => key.startsWith(slash.query.toLowerCase()))) ? [POLL] : []), ...(slash.query ? [] : phraseOptions)] : [];
+  // 表情短码：「:名字」弹出候选（至少两个字母；冒号前不能是字母或数字，避免把 12:30、http: 之类当成短码）。
+  const [shortcode, setShortcode] = useState(null);
+  const shortcodeOptions = shortcode ? matchShortcodes(shortcode.query) : [];
+  function detectShortcode(node) {
+    const match = node.selectionStart === node.selectionEnd && node.value.slice(0, node.selectionStart).match(/(?:^|[^a-z0-9:/]):([a-z0-9_+-]{2,30})$/i);
+    setShortcode(match ? { start: node.selectionStart - match[1].length - 1, query: match[1], index: 0 } : null);
+  }
+  function chooseShortcode(item) {
+    const current = editing ? editText : draft.text, start = shortcode.start, end = start + 1 + shortcode.query.length;
+    setShortcode(null);
+    setText(current.slice(0, start) + item.emoji + current.slice(end), [start + item.emoji.length, start + item.emoji.length]);
+  }
+  // 发自己收藏的表情：先为这个会话另存一份附件，再交给发件箱。
+  async function sendSticker(sticker) {
+    setEmojiOpen(false);
+    try {
+      const { attachment } = await api('stickers/use', { id: sticker.id, roomId: room.id });
+      onQueue({ roomId: room.id, text: '', attachmentIds: [attachment.id], clientId: uid() }, { text: '', files: ['[表情]'] });
+    } catch (error) { notify(error.message); }
+  }
   function detectSlash(node) {
     const match = node.selectionStart === node.selectionEnd && node.value.slice(0, node.selectionStart).match(/(?:^|\s)\/([^\s/]{0,12})$/);
     setSlash(match ? { start: node.selectionStart - match[1].length - 1, query: match[1], index: 0 } : null);
@@ -65,6 +88,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     const current = editing ? editText : draft.text, start = slash.start, end = start + 1 + slash.query.length;
     setSlash(null);
     if (item.id === 'poll') { setText(current.slice(0, start) + current.slice(end), [start, start]); onCreatePoll(); return; }
+    if (item.phrase) { setText(current.slice(0, start) + item.phrase + current.slice(end), [start + item.phrase.length, start + item.phrase.length]); return; }
     const result = applyFormat(current, start, end, item);
     setText(result.text, result.selection);
   }
@@ -186,12 +210,19 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     for (const file of snapshot.files) URL.revokeObjectURL(file.url);
     update(roomId, () => empty);
   }
-  useLayoutEffect(() => {
+  const fitHeight = () => {
     const node = textarea.current;
     if (!node) return;
     node.style.height = 'auto';
     node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
-  }, [draft.text, editText, editing?.id, room.id]);
+  };
+  useLayoutEffect(fitHeight, [draft.text, editText, editing?.id, room.id]);
+  // 切换界面风格后输入框的最小高度不同，按新样式重新量一次。
+  useEffect(() => {
+    const observer = new MutationObserver(fitHeight);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-skin'] });
+    return () => observer.disconnect();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // 新消息断网时也能发，先进发件箱排队；编辑仍需在线。
   const ready = !sending && (editing ? connected : (draft.text.trim() || draft.files.length) && draft.files.every(file => file.attachment));
   // 选择回复时把焦点交给输入框。
@@ -201,7 +232,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     setEditText(editing.text);
     requestAnimationFrame(() => { const node = textarea.current; node?.focus({ preventScroll: true }); node?.setSelectionRange(node.value.length, node.value.length); });
   }, [editing?.id]);
-  useEffect(() => { setPicker(null); setSlash(null); }, [room.id]);
+  useEffect(() => { setPicker(null); setSlash(null); setShortcode(null); }, [room.id]);
   // 撤回后「重新编辑」：原文放回对应会话的输入框，已有草稿时接在后面。
   useEffect(() => {
     if (!injectDraft) return;
@@ -210,6 +241,14 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     if (injectDraft.roomId === room.id) pendingSelection.current = [next.length, next.length];
     update(injectDraft.roomId, state => ({ ...state, text: next }));
   }, [injectDraft?.nonce]);
+  // 系统分享菜单发来的文字和文件：切到选中的会话后放进输入框，由用户确认后发送。
+  const sharedNonce = useRef(null);
+  useEffect(() => {
+    if (!injectShare || injectShare.roomId !== room.id || sharedNonce.current === injectShare.nonce) return;
+    sharedNonce.current = injectShare.nonce;
+    if (injectShare.text) update(room.id, state => ({ ...state, text: state.text ? `${state.text}\n${injectShare.text}` : injectShare.text }));
+    if (injectShare.files.length) addFiles(injectShare.files);
+  }, [injectShare?.nonce, room.id]);
   // 离开会话时把剩下的草稿交给侧栏，显示「[草稿]」。
   const onDraftRef = useRef(onDraft);
   onDraftRef.current = onDraft;
@@ -218,6 +257,10 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     {slashOptions.length > 0 && <div className="mention-picker slash-picker" role="listbox" id="slash-picker" aria-label="插入格式">
       {slashOptions.map((item, index) => <button type="button" role="option" id={`slash-option-${index}`} key={item.id} aria-selected={index === slash.index} className={index === slash.index ? 'active' : ''}
         onPointerDown={event => { event.preventDefault(); chooseFormat(item); }}><span>{item.label}</span>{item.sample && <code>{item.sample}</code>}</button>)}
+    </div>}
+    {shortcodeOptions.length > 0 && <div className="mention-picker slash-picker shortcode-picker" role="listbox" id="shortcode-picker" aria-label="选择表情">
+      {shortcodeOptions.map((item, index) => <button type="button" role="option" id={`shortcode-option-${index}`} key={item.name} aria-selected={index === shortcode.index} className={index === shortcode.index ? 'active' : ''}
+        onPointerDown={event => { event.preventDefault(); chooseShortcode(item); }}><span className="shortcode-emoji">{item.emoji}</span><code>:{item.name}:</code></button>)}
     </div>}
     {picker && candidates.length > 0 && <div className="mention-picker" role="listbox" id="mention-picker" aria-label="选择要提及的成员">
       {candidates.map((user, index) => <button type="button" role="option" id={`mention-option-${index}`} key={user.id} aria-selected={index === picker.index} className={index === picker.index ? 'active' : ''}
@@ -241,27 +284,38 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     <div className="composer-row">
     {/* 附件统一收进回形针菜单：图片或视频、文件 */}
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
-      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (2 + Boolean(onCreatePoll) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
+      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (3 + matchMedia('(pointer: coarse)').matches + Boolean(onCreatePoll) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
         { id: 'media', label: '图片或视频', action: () => input.current.click() },
         ...(matchMedia('(pointer: coarse)').matches ? [{ id: 'camera', label: '拍照', action: () => cameraInput.current.click() }] : []),
         { id: 'file', label: '文件（最大 100 MB）', action: () => fileInput.current.click() },
+        { id: 'phrases', label: '常用语…', action: () => setAttachMenu({ x: rect.left, y: rect.top - 16 - Math.max(1, phrases.length) * 36, label: '常用语', items: phrases.length
+          ? phrases.map((text, index) => ({ id: `phrase-${index}`, label: text.replace(/\s+/g, ' ').slice(0, 40), action: () => insertText(text) }))
+          : [{ id: 'none', label: '还没有常用语，在「设置 → 聊天」里添加', action: () => {} }] }) },
         ...(onCreatePoll ? [{ id: 'poll', label: '投票', action: onCreatePoll }] : []),
         ...(onSchedule ? [{ id: 'schedule', label: '定时发送…', action: () => onSchedule(draft.text) }] : []),
       ] }); }}><Paperclip size={19} strokeWidth={1.7} /></button>
     {attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
-    {emojiOpen && <EmojiPicker onPick={insertText} onClose={() => setEmojiOpen(false)} />}
+    {emojiOpen && <EmojiPicker onPick={insertText} onSticker={editing ? undefined : sendSticker} notify={notify} onClose={() => setEmojiOpen(false)} />}
     <div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
       {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，发送文件</span></div>}
-      <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
+      <textarea ref={textarea} aria-label="消息内容" placeholder={placeholder || `发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
         aria-autocomplete="list" aria-controls={slashOptions.length ? 'slash-picker' : 'mention-picker'} aria-expanded={Boolean(slashOptions.length || (picker && candidates.length))}
         aria-activedescendant={slashOptions.length ? `slash-option-${slash.index}` : picker && candidates.length ? `mention-option-${picker.index}` : undefined}
         onChange={event => {
-          detectSlash(event.target);
+          // 输入完整的「:名字:」直接换成表情。
+          const node = event.target, typed = node.value.slice(0, node.selectionStart).match(/(?:^|[^a-z0-9:/]):([a-z0-9_+-]{1,30}):$/i);
+          if (typed && emojiFor(typed[1])) {
+            const emoji = emojiFor(typed[1]), start = node.selectionStart - typed[1].length - 2;
+            setShortcode(null);
+            setText(node.value.slice(0, start) + emoji + node.value.slice(node.selectionStart), [start + emoji.length, start + emoji.length]);
+            return;
+          }
+          detectSlash(event.target); detectShortcode(event.target);
           if (editing) { setEditText(event.target.value); return; }
           update(room.id, state => ({ ...state, text: event.target.value })); detectMention(event.target);
           // 有内容时每 3 秒最多告诉别人一次「正在输入」。
           if (event.target.value.trim() && Date.now() - typedAt.current > 3000) { typedAt.current = Date.now(); onTyping?.(room.id); }
-        }} onSelect={event => { detectMention(event.currentTarget); detectSlash(event.currentTarget); }} onBlur={() => { setPicker(null); setSlash(null); }}
+        }} onSelect={event => { detectMention(event.currentTarget); detectSlash(event.currentTarget); detectShortcode(event.currentTarget); }} onBlur={() => { setPicker(null); setSlash(null); setShortcode(null); }}
         onPaste={event => {
           if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); return; }
           // 从网页、文档复制的带格式内容转成 Markdown 再粘贴；没有格式时照常粘贴纯文本。
@@ -273,6 +327,11 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const step = event.key === 'ArrowDown' ? 1 : slashOptions.length - 1; setSlash(value => ({ ...value, index: (value.index + step) % slashOptions.length })); return; }
             if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseFormat(slashOptions[slash.index]); return; }
             if (event.key === 'Escape') { event.preventDefault(); setSlash(null); return; }
+          }
+          if (shortcodeOptions.length && !event.nativeEvent.isComposing) {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const step = event.key === 'ArrowDown' ? 1 : shortcodeOptions.length - 1; setShortcode(value => ({ ...value, index: (value.index + step) % shortcodeOptions.length })); return; }
+            if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseShortcode(shortcodeOptions[shortcode.index]); return; }
+            if (event.key === 'Escape') { event.preventDefault(); setShortcode(null); return; }
           }
           if (picker && candidates.length && !event.nativeEvent.isComposing) {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const step = event.key === 'ArrowDown' ? 1 : candidates.length - 1; setPicker(value => ({ ...value, index: (value.index + step) % candidates.length })); return; }

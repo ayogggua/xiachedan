@@ -24,6 +24,9 @@ export default function pwa() {
         id: '/', name: '虾扯蛋', short_name: '虾扯蛋', lang: 'zh-CN',
         start_url: '/', scope: '/', display: 'standalone',
         background_color: '#1c1c1e', theme_color: '#1c1c1e', categories: ['social', 'productivity'], icons,
+        // 安装后出现在系统分享菜单里（安卓 Chrome）；由 Service Worker 接住，再让用户选发到哪个会话。
+        share_target: { action: '/share-target', method: 'POST', enctype: 'multipart/form-data',
+          params: { title: 'title', text: 'text', url: 'url', files: [{ name: 'files', accept: ['image/*', 'video/*', 'audio/*', 'text/*', 'application/*'] }] } },
       }, null, 2);
       const files = [...new Set(['/index.html', '/manifest.webmanifest', '/icons/apple-touch-icon.png',
         ...icons.map(icon => icon.src), ...Object.keys(bundle).filter(file => !file.endsWith('.map')).map(file => `/${file}`)])].sort();

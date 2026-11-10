@@ -52,6 +52,17 @@ pub struct ContextMenuOptions {
   can_recall: bool,
   #[serde(default)]
   can_remove: bool,
+  // 新加的选项：旧版页面不会传，按旧行为处理（多选跟着转发走，其余不显示）。
+  #[serde(default)]
+  can_select: Option<bool>,
+  #[serde(default)]
+  can_hide: bool,
+  #[serde(default)]
+  can_clear: bool,
+  #[serde(default)]
+  can_sticker: bool,
+  #[serde(default)]
+  can_popout: bool,
 }
 
 #[tauri::command]
@@ -70,19 +81,21 @@ pub async fn desktop_context_menu(app: AppHandle, webview: Webview, desktop: Sha
   let mut build = || -> tauri::Result<()> {
     match value.kind.as_str() {
       "conversation" => {
+        if value.can_popout { add("popout", "在独立窗口打开")?; }
         add(if value.unread { "read" } else { "unread" }, if value.unread { "标为已读" } else { "标为未读" })?;
         add(if value.pinned { "unpin" } else { "pin" }, if value.pinned { "取消置顶" } else { "置顶对话" })?;
         add(if value.muted { "unmute" } else { "mute" }, if value.muted { "取消免打扰" } else { "消息免打扰" })?;
         add("export", "导出聊天记录")?;
+        if value.can_clear { add("clear", "清空聊天记录（仅自己）")?; }
         menu.append(&PredefinedMenuItem::separator(&app)?)?;
         add("remove", "移除对话")?;
       }
       "message" => {
         // 分组之间用分隔线隔开，空的分组不占位置。
         let groups: [&[(bool, &str, &str)]; 3] = [
-          &[(value.can_reply, "reply", "回复"), (value.can_quote, "quote", "引用所选文字"), (value.can_thread, "thread", "在话题中回复"), (value.can_react, "react", "回应"), (value.can_forward, "forward", "转发"), (value.can_forward, "select", "多选")],
-          &[(value.can_copy, "copy", "复制"), (value.can_link, "link", "复制消息链接"), (value.can_edit, "edit", "编辑"), (value.can_remind, "remind", "提醒我…"), (value.can_save && !value.saved, "save", "收藏"), (value.can_save && value.saved, "unsave", "取消收藏"), (value.can_pin && !value.pinned, "pin", "置顶消息"), (value.can_pin && value.pinned, "unpin", "取消置顶消息")],
-          &[(value.can_recall, "recall", "撤回消息"), (value.can_remove, "remove", "删除消息（管理员）")],
+          &[(value.can_reply, "reply", "回复"), (value.can_quote, "quote", "引用所选文字"), (value.can_thread, "thread", "在话题中回复"), (value.can_react, "react", "回应"), (value.can_forward, "forward", "转发"), (value.can_select.unwrap_or(value.can_forward), "select", "多选")],
+          &[(value.can_copy, "copy", "复制"), (value.can_link, "link", "复制消息链接"), (value.can_sticker, "sticker", "添加到表情"), (value.can_edit, "edit", "编辑"), (value.can_remind, "remind", "提醒我…"), (value.can_save && !value.saved, "save", "收藏"), (value.can_save && value.saved, "unsave", "取消收藏"), (value.can_pin && !value.pinned, "pin", "置顶消息"), (value.can_pin && value.pinned, "unpin", "取消置顶消息")],
+          &[(value.can_recall, "recall", "撤回消息"), (value.can_hide, "hide", "删除（仅自己）"), (value.can_remove, "remove", "删除消息（管理员）")],
         ];
         let mut first = true;
         for group in groups {

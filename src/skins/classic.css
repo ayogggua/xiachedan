@@ -1,0 +1,277 @@
+/* 经典风格：熟悉的三栏聊天布局。导航栏放在实色的窗口底色上，
+   会话列表（灰）和聊天区（白）合成一整块左侧圆角的卡片；全部实色，不用玻璃浮层。
+   只在 <html data-skin="classic"> 时生效（由 skin.js 写入），虾扯蛋风格不受影响。
+   自己气泡的底色 --bubble-out 由 appearance.js 按主题色推算，文字固定为深色。 */
+
+/* 令牌：深色在前，浅色覆盖 */
+:root[data-skin="classic"] {
+  --rail: 64px;
+  --canvas: #141414;
+  --classic-window: #29292b;
+  --classic-list: #1e1e20;
+  --classic-field: #2c2c2e;
+  --classic-search: #2c2c2e;
+  --classic-box: #1a1a1a;
+  --classic-box-line: rgba(255, 255, 255, .1);
+  --classic-box-focus: rgba(255, 255, 255, .2);
+  --classic-line: rgba(255, 255, 255, .07);
+  --classic-hover: rgba(255, 255, 255, .05);
+  --classic-active: rgba(255, 255, 255, .1);
+  --classic-pinned: rgba(255, 255, 255, .045);
+  --classic-rail-icon: rgba(255, 255, 255, .6);
+  --classic-red: #f25c54;
+  --classic-panel-shadow: -12px 0 32px rgba(0, 0, 0, .35);
+  --glass: #262628;
+  --glass-solid: #262628;
+  --glass-edge: inset 0 0 0 1px rgba(255, 255, 255, .07);
+  --bubble-in: #262628;
+  --bubble-shadow: none;
+  --bubble-out-text: #111;
+  --out-text-2: rgba(0, 0, 0, .6);
+  --out-fill: rgba(0, 0, 0, .08);
+  --out-fill-2: rgba(0, 0, 0, .14);
+  --out-line: rgba(0, 0, 0, .2);
+  --ring: #1e1e20;
+}
+:root[data-skin="classic"][data-theme="light"] {
+  --canvas: #fbfbfb;
+  --classic-window: #e4e4e6;
+  --classic-list: #efeff1;
+  --classic-field: #e3e3e5;
+  --classic-search: #ffffff;
+  --classic-box: #ffffff;
+  --classic-box-line: rgba(0, 0, 0, .1);
+  --classic-box-focus: rgba(0, 0, 0, .22);
+  --classic-line: rgba(0, 0, 0, .07);
+  --classic-hover: rgba(0, 0, 0, .035);
+  --classic-active: rgba(0, 0, 0, .08);
+  --classic-pinned: rgba(0, 0, 0, .045);
+  --classic-rail-icon: rgba(0, 0, 0, .62);
+  --classic-red: #f04a43;
+  --classic-panel-shadow: -12px 0 32px rgba(0, 0, 0, .08);
+  --glass: #ffffff;
+  --glass-solid: #ffffff;
+  --glass-edge: inset 0 0 0 1px rgba(0, 0, 0, .07);
+  --bubble-in: #ededef;
+  --ring: #efeff1;
+}
+/* 桌面端：macOS 左上角的红绿灯由桌面端挪进导航栏（见 src-tauri/src/macos_lights.rs），导航栏加宽一点 */
+:root[data-skin="classic"] .app.native { --rail: 76px; }
+/* 桌面端有系统材质时也全部用实色，导航栏不透出磨砂 */
+:root[data-skin="classic"][data-material]:not([data-theme="light"]) { --canvas: #141414; }
+:root[data-skin="classic"][data-material] .sidebar.glass { background: var(--classic-list); }
+:root[data-skin="classic"][data-material] .chat-main { padding: 0 0 0 calc(var(--rail) + var(--sidebar)); }
+:root[data-skin="classic"][data-material] .conversation-body { border-radius: 0; box-shadow: none; }
+:root[data-skin="classic"][data-material] .app.popout .chat-main { padding-left: 0; }
+
+/* 没有毛玻璃浮层和背景光晕 */
+:root[data-skin="classic"] * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+:root[data-skin="classic"] .app { background: var(--classic-window); }
+:root[data-skin="classic"] .app::before { display: none; }
+:root[data-skin="classic"] .glass { box-shadow: var(--glass-edge), 0 4px 16px rgba(0, 0, 0, .08); }
+:root[data-skin="classic"] .chat-toolbar .glass { background: none; box-shadow: none; }
+:root[data-skin="classic"] .conversation-body { background: var(--canvas); }
+
+/* 头像一律圆角方形 */
+:root[data-skin="classic"] :is(.avatar, .avatar > img, .room-avatar) { border-radius: 12%; }
+:root[data-skin="classic"] .avatar-hextech > img { border-radius: 0; }
+
+/* ── 三栏骨架（宽屏）── */
+@media (min-width: 761px) {
+  :root[data-skin="classic"] .classic-rail { position: absolute; z-index: 5; top: 0; bottom: 0; left: 0; width: var(--rail); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0 14px; }
+  :root[data-skin="classic"] .native .classic-rail { padding-top: 62px; }
+  :root[data-skin="classic"] .app:not(.popout) .sidebar { top: 0; bottom: 0; left: var(--rail); border-radius: 12px 0 0 12px; padding-top: 14px; background: var(--classic-list); box-shadow: none; }
+  :root[data-skin="classic"] .app.native:not(.popout) .sidebar { padding-top: 14px; }
+  :root[data-skin="classic"] .native .sidebar-drag { height: 14px; }
+  :root[data-skin="classic"] .app:not(.popout) .chat-main { padding-left: calc(var(--rail) + var(--sidebar)); }
+  :root[data-skin="classic"] .app:not(.popout) .conversation-body { box-shadow: inset 1px 0 0 var(--classic-line); }
+  :root[data-skin="classic"] .sidebar-resizer { top: 0; bottom: 0; right: -6px; }
+  /* 原来侧栏顶部和底部的入口都搬到了导航栏和「＋」菜单 */
+  :root[data-skin="classic"] :is(.space-heading, .me-card, .sidebar-logout, .admin-entry) { display: none; }
+}
+@media (max-width: 760px) { :root[data-skin="classic"] .classic-rail { display: none; } }
+
+/* 导航栏：线条图标，当前页是实心的主题色 */
+:root[data-skin="classic"] .rail-drag { position: absolute; inset: 0 0 auto; height: 40px; }
+:root[data-skin="classic"] .native .rail-drag { height: 56px; }
+:root[data-skin="classic"] .rail-me { position: relative; margin-bottom: 16px; border-radius: 12%; }
+:root[data-skin="classic"] .rail-button { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 10px; color: var(--classic-rail-icon); }
+:root[data-skin="classic"] .rail-button svg { width: 24px; height: 24px; }
+:root[data-skin="classic"] .rail-button.active { color: var(--accent-icon); }
+:root[data-skin="classic"] .rail-button.active svg { fill: currentColor; }
+:root[data-skin="classic"] .rail-spacer { flex: 1; }
+:root[data-skin="classic"] .rail-badge { position: absolute; top: 3px; left: 26px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--classic-red); color: #fff; font-size: 11px; line-height: 18px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
+:root[data-skin="classic"] .rail-dot { position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--classic-red); }
+@media (hover: hover) and (pointer: fine) { :root[data-skin="classic"] .rail-button:hover:not(:disabled) { background: var(--classic-hover); color: var(--text-1); } }
+
+/* ── 会话列表：灰底，搜索框白底圆角，选中整行主题色 ── */
+:root[data-skin="classic"] .classic-search { display: flex; align-items: center; gap: 8px; margin: 0 10px 10px 14px; }
+:root[data-skin="classic"] .classic-search .sidebar-search { flex: 1; min-width: 0; margin: 0; height: 32px; padding-left: 10px; border-radius: 8px; background: var(--classic-search); }
+:root[data-skin="classic"] .sidebar-search:focus-within { box-shadow: 0 0 0 1.5px var(--accent-icon); }
+:root[data-skin="classic"] .classic-plus { width: 32px; height: 32px; border-radius: 50%; color: var(--text-1); }
+@media (hover: hover) and (pointer: fine) { :root[data-skin="classic"] .classic-plus:hover { background: var(--classic-hover); } }
+:root[data-skin="classic"] .folder-bar { padding: 0 8px 0 10px; }
+:root[data-skin="classic"] .conversation-scroll { padding: 0 0 8px; }
+:root[data-skin="classic"] .conversation { gap: 12px; min-height: 68px; padding: 10px 14px; border-radius: 0; }
+/* 行间细线从名字处开始，选中行和它上面一行不画 */
+:root[data-skin="classic"] .conversation::after { left: 66px; right: 14px; background: var(--classic-line); }
+:root[data-skin="classic"] .conversation .room-avatar { width: 40px; height: 40px; }
+:root[data-skin="classic"] .conversation.pinned { background: var(--classic-pinned); }
+:root[data-skin="classic"] .conversation.active { background: var(--accent); color: #fff; }
+:root[data-skin="classic"] .conversation.active :is(.conversation-title time, .conversation-preview, .conversation-pin, .typing-text) { color: rgba(255, 255, 255, .78); }
+:root[data-skin="classic"] .conversation.active .room-avatar { background: rgba(255, 255, 255, .22); color: #fff; }
+:root[data-skin="classic"] .conversation-pin[aria-label="已置顶"] { display: none; }
+:root[data-skin="classic"] .conversation-copy { gap: 4px; }
+:root[data-skin="classic"] .conversation-name { font-size: 14.5px; font-weight: 400; }
+:root[data-skin="classic"] .conversation-title time { color: var(--text-3); }
+:root[data-skin="classic"] .conversation-preview { font-size: 12.5px; line-height: 17px; color: var(--text-3); }
+:root[data-skin="classic"] .has-unread .conversation-preview { color: var(--text-3); }
+:root[data-skin="classic"] .conversation-preview .private-preview { -webkit-line-clamp: 1; }
+:root[data-skin="classic"] .mention-flag { color: var(--classic-red); font-weight: 400; }
+:root[data-skin="classic"] .conversation.active .mention-flag { color: #fff; }
+/* 未读数挂在头像右上角；免打扰的只显示红点 */
+:root[data-skin="classic"] .conversation .unread-badge, :root[data-skin="classic"] .conversation.active .unread-badge { position: absolute; top: 5px; left: 45px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--classic-red); color: #fff; box-shadow: none; }
+:root[data-skin="classic"] .conversation.muted:not(.mentioned) .unread-badge { top: 6px; left: 49px; min-width: 0; width: 10px; height: 10px; padding: 0; font-size: 0; background: var(--classic-red); }
+@media (hover: hover) and (pointer: fine) { :root[data-skin="classic"] .conversation:hover:not(.active) { background: var(--classic-hover); } :root[data-skin="classic"] .conversation.pinned:hover:not(.active) { background: var(--classic-active); } }
+
+/* ── 聊天区：标题栏、消息、输入区上下排开，不再浮在内容上 ── */
+:root[data-skin="classic"] .chat-column::before, :root[data-skin="classic"] .chat-column::after { display: none; }
+:root[data-skin="classic"] .chat-toolbar { position: relative; top: 0; left: 0; right: 0; flex: none; height: 56px; padding: 0 12px 0 20px; background: var(--canvas); box-shadow: inset 0 -1px 0 var(--classic-line); pointer-events: auto; }
+:root[data-skin="classic"] .toolbar-title { height: auto; padding: 0; border-radius: 0; background: none; box-shadow: none; }
+:root[data-skin="classic"] .toolbar-icon { display: none; }
+:root[data-skin="classic"] .toolbar-title h2 { font: 500 16px/22px var(--font); }
+:root[data-skin="classic"] .title-count { margin-left: 2px; font-weight: 400; }
+:root[data-skin="classic"] .toolbar-subtitle:not(.typing-text) { display: none; }
+:root[data-skin="classic"] .toolbar-actions { gap: 2px; }
+:root[data-skin="classic"] .toolbar-button { min-width: 34px; height: 34px; padding: 0 8px; border-radius: 6px; background: none; box-shadow: none; color: var(--text-2); }
+:root[data-skin="classic"] .toolbar-button kbd { display: none; }
+:root[data-skin="classic"] .privacy-toggle.enabled, :root[data-skin="classic"] .member-count.selected { background: var(--classic-active); color: var(--text-1); }
+@media (hover: hover) and (pointer: fine) { :root[data-skin="classic"] .toolbar-button:hover { background: var(--classic-hover); color: var(--text-1); } }
+:root[data-skin="classic"] :is(.pinned-bar, .announcement-banner) { left: 16px; right: 16px; max-width: none; border-radius: 6px; }
+:root[data-skin="classic"] .message-scroll { padding: 12px 24px 16px; scroll-padding-bottom: 16px; }
+:root[data-skin="classic"] .chat-column:has(.announcement-banner) .message-scroll, :root[data-skin="classic"] .chat-column:has(.pinned-bar) .message-scroll { padding-top: 60px; }
+:root[data-skin="classic"] .message-list [data-seq] { scroll-margin-top: 60px; }
+:root[data-skin="classic"] .members-panel { margin: 0; border-radius: 0; background: var(--classic-list); box-shadow: inset 1px 0 0 var(--classic-line); }
+/* 宽屏：从标题栏下方一直盖到底部（含输入框），贴右边，不挤压聊天记录 */
+@media (min-width: 761px) { :root[data-skin="classic"] .members-panel { top: 56px; right: 0; bottom: 0; box-shadow: -1px 0 0 var(--classic-line), var(--classic-panel-shadow); } }
+:root[data-skin="classic"] :is(.jump-to-mention, .unread-anchor) { border-radius: 6px; }
+:root[data-skin="classic"] .jump-to-mention { bottom: 162px; }
+:root[data-skin="classic"] .unread-anchor { top: 68px; }
+:root[data-wallpaper][data-skin="classic"] .chat-column { background: var(--wallpaper); }
+
+/* 居中时间 */
+:root[data-skin="classic"] .time-divider { display: flex; justify-content: center; margin: 16px 0 2px; }
+:root[data-skin="classic"] .time-divider span { padding: 1px 6px; border-radius: 4px; font-size: 12px; line-height: 18px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+:root[data-wallpaper][data-skin="classic"] .time-divider span { background: rgba(0, 0, 0, .28); color: #fff; }
+
+/* 消息：每条一个头像，头像与名字顶端对齐，气泡小圆角带尖角 */
+:root[data-skin="classic"] .message-group { gap: 10px; margin-top: 14px; }
+:root[data-skin="classic"] .group-avatar { width: 36px; }
+:root[data-skin="classic"] .message-row { margin-top: 0; }
+:root[data-skin="classic"] .message-column { max-width: min(520px, 72%); }
+:root[data-skin="classic"] .message-bubble { padding: 8px 12px; border-radius: 8px !important; box-shadow: none; }
+:root[data-skin="classic"] .message-bubble.has-media { padding: 4px; }
+:root[data-skin="classic"] .message-bubble.sticker-bubble { padding: 0; background: none; }
+:root[data-skin="classic"] .message-bubble:not(.has-media):not(.sticker-bubble)::before { content: ""; position: absolute; top: 13px; width: 0; height: 0; border: 5px solid transparent; }
+:root[data-skin="classic"] .message-row:not(.mine) .message-bubble:not(.has-media):not(.sticker-bubble)::before { left: -9px; border-right-color: var(--bubble-in); }
+:root[data-skin="classic"] .mine .message-bubble:not(.has-media):not(.sticker-bubble)::before { right: -9px; border-left-color: var(--bubble-out); }
+:root[data-skin="classic"] .mine .message-bubble:not(.sticker-bubble) { background: var(--bubble-out); color: var(--bubble-out-text); }
+/* 群里别人的名字放在气泡上方 */
+:root[data-skin="classic"] .message-bubble:has(> .bubble-name) { margin-top: 18px; }
+:root[data-skin="classic"] .bubble-name { position: absolute; left: 0; bottom: calc(100% + 2px); margin: 0; padding: 0 !important; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 16px; font-weight: 400; color: var(--text-3) !important; }
+:root[data-skin="classic"] .bubble-name .name-button { color: inherit; font: inherit; }
+:root[data-skin="classic"] .mine .bubble-name { left: auto; right: 0; }
+/* 时间改由居中时间行表示，气泡里只留「已编辑」 */
+:root[data-skin="classic"] .bubble-meta > time { display: none; }
+:root[data-skin="classic"] .bubble-meta:not(:has(.edited-mark)), :root[data-skin="classic"] :is(.bubble-meta-row, .bubble-meta-overlay):not(:has(.edited-mark)) { display: none; }
+:root[data-skin="classic"] .read-line { padding-right: 2px; color: var(--text-3); }
+
+/* 自己的气泡是浅色底深色字：把原来按「主题色底白字」写的细节改成深色 */
+:root[data-skin="classic"] .mine :is(.bubble-meta, .attachment-caption, .forward-label, .masked-message, .poll-kind, .poll-footer, .contact-card small, .contact-card-label, .bundle-card span, .bundle-card small, .file-copy small, .file-card > svg, .thread-link time, .link-preview small, .link-preview span, .message-quote) { color: var(--out-text-2); }
+:root[data-skin="classic"] .mine :is(.message-quote, .file-card, .link-preview, .poll-option, .contact-card, .thread-link, .file-open-hint, .file-icon, .message-text code) { background: var(--out-fill); }
+:root[data-skin="classic"] .mine :is(.message-quote b, .poll-footer .text-button, .file-icon, .file-icon small, .thread-link, .file-open-hint) { color: var(--bubble-out-text); }
+:root[data-skin="classic"] .mine .message-quote::before { background: var(--out-line); }
+:root[data-skin="classic"] .mine .link-preview { border-left-color: var(--out-line); }
+:root[data-skin="classic"] .mine .poll-option i { background: var(--out-fill-2); }
+:root[data-skin="classic"] .mine .bundle-card small { border-top-color: var(--out-line); }
+:root[data-skin="classic"] .mine .reaction-chip { --chip-bg: var(--out-fill); color: var(--bubble-out-text); }
+:root[data-skin="classic"] .mine .reaction-chip.reacted { --chip-bg: var(--out-fill-2); color: var(--bubble-out-text); }
+:root[data-skin="classic"] .mine .mention { color: inherit; }
+:root[data-skin="classic"] .mine .mention.self { background: var(--out-fill-2); }
+:root[data-skin="classic"] .mine .markdown :is(th, td) { border-color: var(--out-line); }
+:root[data-skin="classic"] .mine .markdown th { background: var(--out-fill); }
+@media (hover: hover) and (pointer: fine) { :root[data-skin="classic"] .mine :is(.file-card, button.message-quote):hover { background: var(--out-fill-2); } }
+
+/* ── 输入区：贴底的圆角框，文字在上，表情、附件和「发送」在框内底部 ── */
+:root[data-skin="classic"] .composer-area { position: relative; left: auto; right: auto; bottom: auto; flex: none; gap: 6px; padding: 6px 16px 16px; background: var(--canvas); }
+:root[data-skin="classic"] .composer-row { display: grid; grid-template-columns: auto auto 1fr auto; grid-template-areas: "input input input input" "emoji attach . send"; align-items: center; gap: 6px 6px; padding: 10px 10px 10px 12px; border-radius: 12px; background: var(--classic-box); box-shadow: inset 0 0 0 1px var(--classic-box-line); transition: box-shadow 120ms var(--ease-out); }
+:root[data-skin="classic"] .composer-row:focus-within { box-shadow: inset 0 0 0 1px var(--classic-box-focus); }
+:root[data-skin="classic"] .composer { display: contents; }
+:root[data-skin="classic"] .composer textarea { grid-area: input; min-height: 64px; padding: 2px 2px 0; font-size: var(--chat-font, 14px); line-height: 1.5; caret-color: var(--accent-icon); }
+:root[data-skin="classic"] :is(.emoji-button, .attach-button) { width: 32px; height: 32px; margin: 0; border-radius: 6px; background: none; box-shadow: none; color: var(--text-2); }
+:root[data-skin="classic"] .emoji-button { grid-area: emoji; align-self: center; }
+:root[data-skin="classic"] .attach-button { grid-area: attach; }
+:root[data-skin="classic"] :is(.emoji-button, .attach-button) svg { width: 20px; height: 20px; }
+@media (hover: hover) and (pointer: fine) { :root[data-skin="classic"] :is(.emoji-button, .attach-button):hover:not(:disabled) { background: var(--classic-hover); color: var(--text-1); } }
+:root[data-skin="classic"] .send-button { grid-area: send; width: auto; height: 32px; padding: 0 20px; border-radius: 6px; background: var(--accent); color: #fff; box-shadow: none; font-size: 13px; font-weight: 500; }
+:root[data-skin="classic"] .send-button svg { display: none; }
+:root[data-skin="classic"] .send-button::after { content: "发送"; }
+:root[data-skin="classic"] .send-button:disabled { background: var(--classic-field); color: var(--text-3); box-shadow: none; }
+:root[data-skin="classic"] .drop-overlay { border-radius: 6px; }
+:root[data-skin="classic"] .emoji-picker { right: auto; left: 0; border-radius: 8px; }
+:root[data-skin="classic"] :is(.reply-bar, .attachment-queue, .mention-picker) { border-radius: 6px; box-shadow: var(--glass-edge); }
+:root[data-skin="classic"] .selection-bar { border-radius: 6px; }
+:root[data-skin="classic"] .message-row.selecting.selected { background: color-mix(in srgb, var(--accent-icon) 12%, transparent); }
+:root[data-skin="classic"] .muted-notice { margin: 0; border-radius: 0; box-shadow: inset 0 1px 0 var(--classic-line); }
+
+/* ── 手机（窄屏）：白底列表、居中标题，浅灰聊天背景配白色气泡，输入栏一行（开始打字才出现「发送」）── */
+@media (max-width: 760px) {
+  :root[data-skin="classic"][data-theme="light"] { --canvas: #ededed; --classic-list: #ffffff; --bubble-in: #ffffff; --classic-bar: #f7f7f7; --classic-search: #f0f0f0; }
+  :root[data-skin="classic"] { --classic-bar: #1e1e1e; --classic-list: #111111; --canvas: #111111; }
+  :root[data-skin="classic"] .sidebar { background: var(--classic-list); }
+  :root[data-skin="classic"] .space-heading { position: relative; justify-content: center; min-height: 52px; padding: 10px 96px; }
+  :root[data-skin="classic"] .space-copy { text-align: center; }
+  :root[data-skin="classic"] .space-copy h1 { font: 600 17px/24px var(--font); letter-spacing: 0; }
+  :root[data-skin="classic"] .space-copy p { display: none; }
+  :root[data-skin="classic"] .space-actions { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+  :root[data-skin="classic"] .classic-search { margin: 4px 12px 8px 16px; }
+  :root[data-skin="classic"] .classic-search .sidebar-search { min-height: 38px; border-radius: 8px; }
+  :root[data-skin="classic"] .classic-plus { width: 40px; height: 40px; }
+  :root[data-skin="classic"] .conversation-scroll { padding: 0 0 12px; }
+  :root[data-skin="classic"] .conversation { min-height: 72px; padding: 12px 16px; border-radius: 0; }
+  :root[data-skin="classic"] .conversation::after { left: 76px; right: 0; }
+  :root[data-skin="classic"] .conversation .avatar, :root[data-skin="classic"] .conversation .room-avatar { width: 48px; height: 48px; border-radius: 12%; }
+  :root[data-skin="classic"] .conversation .unread-badge, :root[data-skin="classic"] .conversation.active .unread-badge { left: 54px; top: 6px; }
+  :root[data-skin="classic"] .conversation.muted:not(.mentioned) .unread-badge { left: 58px; }
+  :root[data-skin="classic"] .conversation.active { background: var(--classic-active); color: inherit; }
+  :root[data-skin="classic"] .conversation.active :is(.conversation-title time, .conversation-preview, .conversation-pin, .typing-text) { color: var(--text-3); }
+  :root[data-skin="classic"] .mobile-tabs { background: var(--classic-bar); border-top-color: var(--classic-line); }
+  :root[data-skin="classic"] .mobile-tabs > button.active { color: var(--accent-icon); }
+  :root[data-skin="classic"] .mobile-tab-badge { background: var(--classic-red); }
+  :root[data-skin="classic"] .chat-toolbar { height: calc(52px + var(--mobile-safe-top)); padding: var(--mobile-safe-top) 8px 0 4px; background: var(--canvas); border-bottom: 0; box-shadow: inset 0 -1px 0 var(--classic-line); }
+  :root[data-skin="classic"] .toolbar-title { flex: 1; justify-content: center; }
+  :root[data-skin="classic"] .toolbar-title h2 { font-size: 17px; font-weight: 600; }
+  :root[data-skin="classic"] .member-count::before { content: none; }
+  :root[data-skin="classic"] .message-scroll { padding: 12px 12px 12px; scroll-padding-bottom: 12px; }
+  :root[data-skin="classic"] .message-column { max-width: 76%; }
+  :root[data-skin="classic"] .composer-area { padding: 8px 8px calc(8px + var(--mobile-safe-bottom)); background: var(--classic-bar); box-shadow: inset 0 1px 0 var(--classic-line); }
+  :root[data-skin="classic"] .composer-row, :root[data-skin="classic"] .composer-row:focus-within { grid-template-columns: 1fr auto auto auto; grid-template-areas: "input emoji attach send"; align-items: end; gap: 4px; padding: 0; border-radius: 0; background: none; box-shadow: none; }
+  :root[data-skin="classic"] .composer textarea { min-height: 40px; padding: 9px 10px; border-radius: 6px; background: var(--classic-box); font-size: 16px; line-height: 22px; }
+  :root[data-skin="classic"] :is(.emoji-button, .attach-button) { width: 40px; height: 40px; }
+  :root[data-skin="classic"] :is(.emoji-button, .attach-button) svg { width: 24px; height: 24px; }
+  :root[data-skin="classic"] .send-button { height: 40px; padding: 0 14px; }
+  :root[data-skin="classic"] .send-button:disabled { display: none; }
+  :root[data-skin="classic"] .jump-to-mention { bottom: calc(76px + var(--mobile-safe-bottom)); }
+}
+
+/* 转发 */
+/* 多选栏像输入区一样贴在聊天区底部，不再盖住最后几条消息 */
+:root[data-skin="classic"] .selection-bar { position: relative; left: auto; right: auto; bottom: auto; flex: none; max-width: none; margin: 0; padding: 10px 16px; border-radius: 0; background: var(--canvas); box-shadow: inset 0 1px 0 var(--classic-line); }
+@media (max-width: 760px) { :root[data-skin="classic"] .selection-bar { padding: 8px 8px calc(8px + var(--mobile-safe-bottom)); background: var(--classic-bar); } }
+:root[data-skin="classic"] .forward-mode-option { border-radius: 8px; }
+/* 聊天记录：名字和时间用灰色小字，时间靠右，每组之间一条细线（从正文处开始） */
+:root[data-skin="classic"] .bundle-group { padding: 10px 0; }
+:root[data-skin="classic"] .bundle-group + .bundle-group { background: linear-gradient(var(--classic-line), var(--classic-line)) 48px 0 / calc(100% - 48px) 1px no-repeat; }
+:root[data-skin="classic"] .bundle-sender b { color: var(--text-3) !important; font-size: 12px; font-weight: 400; }
+:root[data-skin="classic"] .bundle-sender time { margin-left: auto; color: var(--text-3); }
+:root[data-skin="classic"] .bundle-image { border-radius: 6px; }

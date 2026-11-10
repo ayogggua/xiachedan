@@ -1,43 +1,49 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ArrowUp, LoaderCircle } from 'lucide-react';
-import { api, formatTime, uid } from './api';
-import { Avatar, IconButton, PrivatePreview } from './components';
-import { FormattedText } from './markdown';
-import { isSendKey } from './chatPrefs';
+import { ChevronLeft, LoaderCircle } from 'lucide-react';
+import { api } from './api';
+import { IconButton, Message, OutboxMessage } from './components';
+import Composer from './Composer';
 
-// 话题面板：根消息在上，回复按时间排在下面，底部可以直接在话题里回复。
-export default function ThreadPanel({ rootId, userMap, viewerId, privateMode, threadTick, onBack, notify, sendKey = 'enter' }) {
+// 话题面板：根消息在上，回复按时间排在下面。消息和输入框与主聊天共用组件：右键菜单、资料卡、回应、
+// 「/」格式菜单、快捷键、@ 成员、附件和发件箱都一样。
+export default function ThreadPanel({ rootId, room, viewerId, privateMode, threadTick, onBack, notify, onLoaded, handlers, userOf, reactionOptions, reactingTo, quickReact,
+  composer, blocked, outbox, editing, onCancelEdit, onEdited, onEditLast }) {
   const [thread, setThread] = useState(null);
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
   const list = useRef();
+  const stick = useRef(true);
+  const tick = threadTick.rootId === rootId || threadTick.rootId === '*' ? threadTick.n : 0;
   useEffect(() => {
     let alive = true;
     api(`thread?rootId=${encodeURIComponent(rootId)}`).then(result => { if (alive) setThread(result); }).catch(error => notify(error.message));
     return () => { alive = false; };
-  }, [rootId, threadTick.rootId === rootId ? threadTick.n : 0]);
-  useEffect(() => { list.current?.scrollTo({ top: list.current.scrollHeight }); }, [thread?.replies.length]);
-  async function send() {
-    if (!text.trim() || sending) return;
-    setSending(true);
-    try {
-      const { message } = await api('messages', { roomId: thread.root.roomId, text: text.trim(), clientId: uid(), threadOf: rootId });
-      setThread(previous => ({ ...previous, replies: [...previous.replies.filter(item => item.id !== message.id), message] }));
-      setText('');
-    } catch (error) { notify(error.message); } finally { setSending(false); }
-  }
-  const row = (message, root = false) => {
-    const user = userMap[message.senderId] || (message.bot ? { name: message.bot, avatar: 'bot' } : null);
-    return <article key={message.id} className={`thread-message ${root ? 'root' : ''}`}><Avatar user={user} size={26} />
-      <div><div className="thread-meta"><b>{message.senderId === viewerId ? '我' : user?.name || '成员'}</b><time>{formatTime(message.createdAt)}</time></div>
-        {message.recalledAt ? <p className="thread-recalled">消息已撤回</p> : <PrivatePreview privateMode={privateMode}><FormattedText text={message.text || message.attachments.map(file => `[${file.name}]`).join(' ')} mentions={message.mentions} nameOf={id => userMap[id]?.name} viewerId={viewerId} /></PrivatePreview>}</div>
-    </article>;
+  }, [rootId, tick]);
+  useEffect(() => { if (thread) onLoaded?.([thread.root, ...thread.replies]); }, [thread]);
+  useEffect(() => () => onLoaded?.([]), []);
+  const pending = outbox.items.filter(item => item.payload.threadOf === rootId);
+  // 新回复到达时，原本就在底部才跟着滚到底，正在往上翻时不打扰。
+  useEffect(() => { if (stick.current) list.current?.scrollTo({ top: list.current.scrollHeight }); }, [thread?.replies.length, pending.length]);
+  const replies = thread?.replies || [];
+  const row = (message, index, items) => {
+    const previous = items[index - 1], next = items[index + 1];
+    const continued = Boolean(previous && previous.senderId === message.senderId && !previous.recalledAt);
+    const last = !next || next.senderId !== message.senderId;
+    return <Message {...handlers} key={message.id} message={message} user={userOf(message)} mine={message.senderId === viewerId} continued={continued} last={last}
+      viewerId={viewerId} privateMode={privateMode} direct={room.kind === 'direct'} reactionOptions={reactionOptions} picking={reactingTo === message.id} quickReact={quickReact}
+      onReply={undefined} onOpenThread={undefined} onRead={undefined} readingEnabled={false} />;
   };
-  return <>
-    <div className="members-panel-heading"><IconButton icon={ChevronLeft} label="返回" size={16} onClick={onBack} /><h3 className="history-title">话题{thread ? ` · ${thread.replies.filter(item => !item.recalledAt).length} 条回复` : ''}</h3></div>
-    <div className="thread-list" ref={list}>{!thread ? <p className="history-empty"><LoaderCircle className="spin" size={14} />正在加载…</p> : <>{row(thread.root, true)}{thread.replies.map(message => row(message))}</>}</div>
-    <div className="thread-composer"><textarea aria-label="在话题中回复" placeholder="在话题中回复" rows={2} value={text} maxLength={10000} onChange={event => setText(event.target.value)}
-      onKeyDown={event => { if (isSendKey(event, sendKey)) { event.preventDefault(); send(); } }} />
-      <button type="button" className="send-button round-button" aria-label="发送到话题" disabled={!text.trim() || sending || !thread} onClick={send}>{sending ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={17} strokeWidth={2.2} />}</button></div>
-  </>;
+  const count = replies.filter(item => !item.recalledAt).length;
+  return <div className="thread-panel">
+    <div className="members-panel-heading"><IconButton icon={ChevronLeft} label="返回" size={16} onClick={onBack} /><h3 className="history-title">话题{thread ? ` · ${count} 条回复` : ''}</h3></div>
+    <div className="thread-list" ref={list} onScroll={event => { const node = event.currentTarget; stick.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40; }}>
+      {!thread ? <p className="history-empty"><LoaderCircle className="spin" size={14} />正在加载…</p> : <>
+        <div className="thread-root">{row({ ...thread.root, thread: undefined }, 0, [thread.root])}</div>
+        <div className="date-divider thread-divider"><span>{count ? `${count} 条回复` : '还没有回复'}</span></div>
+        {replies.map((message, index) => row(message, index, replies))}
+        {pending.map(item => <OutboxMessage key={item.clientId} item={item} avatarColumn={false} onRetry={outbox.retry} onDiscard={outbox.discard} />)}
+      </>}
+    </div>
+    <div className="thread-composer-area">{blocked ? <div className="muted-notice" role="status">{blocked}</div>
+      : thread && <Composer {...composer} room={room} placeholder="在话题中回复" onQueue={(payload, preview) => outbox.send({ ...payload, threadOf: rootId }, preview)}
+        editing={editing} onCancelEdit={onCancelEdit} onEdited={onEdited} onEditLast={onEditLast} />}</div>
+  </div>;
 }

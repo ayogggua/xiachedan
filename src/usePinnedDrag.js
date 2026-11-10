@@ -21,13 +21,15 @@ export default function usePinnedDrag(onReorder) {
       current = { id, ids, from, index, dy, step };
       setDrag(current);
     };
-    const end = () => {
+    const end = endEvent => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
       if (!current) return;
       moved.current = true;
       setDrag(null);
+      // 拖到窗口外面松开是「在独立窗口打开」，不改顺序。
+      if (endEvent && (endEvent.clientX < 0 || endEvent.clientY < 0 || endEvent.clientX >= innerWidth || endEvent.clientY >= innerHeight)) return;
       if (current.index !== from) { const next = ids.filter(other => other !== id); next.splice(current.index, 0, id); onReorder(next); }
     };
     window.addEventListener('pointermove', move);
