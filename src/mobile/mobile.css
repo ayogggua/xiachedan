@@ -123,3 +123,7 @@
   .segmented-control button { min-height: 38px; }
   .startup-state { padding: calc(24px + var(--mobile-safe-top)) 24px calc(24px + var(--mobile-safe-bottom)); text-align: center; }
 }
+
+.mobile-contact-department { display: flex; align-items: baseline; gap: 6px; margin: 14px 4px 6px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.mobile-contact-department small { font-weight: 400; }
+@media (max-width: 760px) { .space-actions .contacts-entry { display: none; } }

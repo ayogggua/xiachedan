@@ -65,9 +65,9 @@ export const ADMIN_PHONE = '19977167586';
 export const ADMIN_PASSWORD = 'Admin-pass-2026';
 
 // 账号模式：管理员已改过初始密码并登录；member(name) 注册并审核通过一位新成员。
-export async function startCloud() {
+export async function startCloud(options = {}) {
   process.env.CHAT_ADMIN_INITIAL_PASSWORD = 'Initial-pass-2026';
-  const context = await start({ mode: 'cloud' });
+  const context = await start({ mode: 'cloud', ...options });
   const admin = client(context.base);
   await admin.post('/api/auth/login', { identifier: ADMIN_PHONE, password: 'Initial-pass-2026' });
   const changed = await admin.post('/api/auth/password', { currentPassword: 'Initial-pass-2026', password: ADMIN_PASSWORD });

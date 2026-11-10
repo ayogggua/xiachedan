@@ -69,6 +69,7 @@
     platform: '/*PLATFORM*/',
     material: '/*MATERIAL*/' || null,
     setAppearance: theme => invoke('desktop_appearance', { theme }),
+    setSkin: skin => invoke('desktop_skin', { skin }),
     updates: Object.freeze({ check: () => invoke('desktop_update_check'), install: () => invoke('desktop_update_install') }),
     connect: async (invitation, identity) => {
       const { addresses, inviteCode } = parseInvitation(invitation);
@@ -79,6 +80,7 @@
     home: () => invoke('desktop_home'),
     copy: text => invoke('desktop_copy', { text }),
     openUrl: url => invoke('desktop_open_url', { url }),
+    openRoomWindow: (roomId, title) => invoke('desktop_open_window', { roomId, title }),
     contextMenu,
     ready: privateMode => invoke('desktop_ready', { privateMode: privateMode === true }),
     getState: () => invoke('desktop_state'),

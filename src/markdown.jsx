@@ -95,7 +95,7 @@ function remarkChat({ tokens, tail }) {
 // 代码块：带语言名和复制按钮；高亮库按需加载，没写语言时自动识别。
 let highlighter;
 const loadHighlighter = () => highlighter ||= import('highlight.js/lib/common').then(module => module.default);
-function CodeBlock({ language, text }) {
+export function CodeBlock({ language, text }) {
   const [highlighted, setHighlighted] = React.useState(null);
   const [copied, setCopied] = React.useState(false);
   React.useEffect(() => {
@@ -165,11 +165,5 @@ export function LinkPreview({ url }) {
   </a>;
 }
 
-// 侧栏预览、通知、搜索里只要纯文字：去掉格式符号。
-export const plainText = text => text
-  .replace(/```[^\n]*\n?/g, '').replace(/^#{1,6}[ \t]+/gm, '').replace(/^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*$/gm, '')
-  .replace(/^[ \t]*\|?([ \t]*:?-{3,}:?[ \t]*\|)+[ \t]*:?-*:?[ \t]*$/gm, '').replace(/^[ \t]*\|(.*)\|[ \t]*$/gm, (_, row) => row.split('|').map(cell => cell.trim()).join('  '))
-  .replace(/!\[([^\]\n]*)\]\([^)\s]+\)/g, (_, alt) => alt ? `[图片] ${alt}` : '[图片]')
-  .replace(/`([^`\n]+)`/g, '$1').replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
-  .replace(/\*\*([^*\n]+?)\*\*/g, '$1').replace(/__([^_\n]+?)__/g, '$1').replace(/~~([^~\n]+?)~~/g, '$1').replace(/(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w*])/g, '$1')
-  .replace(/^>[ \t]?/gm, '').replace(/^[ \t]*[-*+•][ \t]+\[[ xX]\][ \t]+/gm, '· ').replace(/^[ \t]*[-*+•][ \t]+/gm, '· ').replace(/\n{3,}/g, '\n\n').trim();
+// 侧栏预览、通知、搜索里只要纯文字：服务端推送也要用，放在 shared/。
+export { plainText } from '../shared/preview.js';

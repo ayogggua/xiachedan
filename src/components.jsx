@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand } from 'lucide-react';
+import { Contact, Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName, seenText } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
@@ -9,7 +9,9 @@ import { disintegrate } from './dust';
 import { readStorage } from './history';
 import appIcon from './assets/brand/app-icon.svg';
 import { PRESETS, HEXTECH_AVATARS, HEXTECH_TIERS, getHextechAvatar } from '../shared/avatars.js';
+import { attachmentLabel } from '../shared/preview.js';
 import { MediaAccessContext } from './mobile/MediaAccessContext';
+import { previewKind } from './FilePreview';
 
 export { PRESETS } from '../shared/avatars.js';
 const avatarIcons = { cat: Cat, bird: Bird, rabbit: Rabbit, fish: Fish, coffee: Coffee, mountain: Mountain, planet: Orbit, sprout: Sprout, bot: Bot };
@@ -91,12 +93,16 @@ export function PrivatePreview({ privateMode, children }) {
 }
 
 // 普通文件：只显示名称和大小，点击下载，不在页面内打开。
-function FileCard({ file }) {
+export function FileCard({ file }) {
   const extension = file.name.includes('.') ? file.name.split('.').pop().slice(0, 4).toUpperCase() : '';
-  return <a className="file-card" href={mediaUrl(file.id, true)} download={file.name} title={`下载 ${file.name}`}>
-    <span className="file-icon"><FileText size={20} strokeWidth={1.6} />{extension && <small>{extension}</small>}</span>
-    <span className="file-copy"><span>{file.name}</span><small>{formatSize(file.size)}</small></span><Download size={15} />
-  </a>;
+  const body = <><span className="file-icon"><FileText size={20} strokeWidth={1.6} />{extension && <small>{extension}</small>}</span>
+    <span className="file-copy"><span>{file.name}</span><small>{formatSize(file.size)}</small></span></>;
+  // 文本、代码和 PDF 可以直接预览；点下载图标照常下载。
+  if (previewKind(file)) return <div className="file-card previewable">
+    <button type="button" className="file-open" title={`预览 ${file.name}`} onClick={() => window.dispatchEvent(new CustomEvent('linliao:open-file', { detail: file }))}>{body}<small className="file-open-hint">预览</small></button>
+    <a href={mediaUrl(file.id, true)} download={file.name} title={`下载 ${file.name}`} aria-label={`下载 ${file.name}`}><Download size={15} /></a>
+  </div>;
+  return <a className="file-card" href={mediaUrl(file.id, true)} download={file.name} title={`下载 ${file.name}`}>{body}<Download size={15} /></a>;
 }
 
 // 合并转发的聊天记录卡片：显示前三条，点开看全部。
@@ -104,12 +110,21 @@ function BundleCard({ message, onOpen }) {
   const { bundle } = message;
   return <button type="button" className="bundle-card" onClick={() => onOpen?.(message)}>
     <b>{bundle.title}</b>
-    {bundle.items.slice(0, 3).map((item, index) => <span key={index}>{item.senderName}：{item.text ? plainText(item.text).replace(/\s+/g, ' ') : item.attachments.map(file => `[${file.name}]`).join(' ')}</span>)}
-    <small>聊天记录 · 共 {bundle.items.length} 条</small>
+    {bundle.items.slice(0, 3).map((item, index) => <span key={index}>{item.senderName}：{item.text ? plainText(item.text).replace(/\s+/g, ' ') : attachmentLabel(item.attachments)}</span>)}
+    <small><MessagesSquare size={12} />聊天记录 · 共 {bundle.items.length} 条</small>
   </button>;
 }
 
 // 投票卡片：选中即投，多选可勾多个；结果对所有人公开，悬停能看到投票人。
+// 名片：头像、名字和部门，点开是这位成员的资料卡。
+function ContactCard({ userId, userOf, onOpen }) {
+  const user = userOf?.(userId);
+  return <button type="button" className="contact-card" disabled={!onOpen || !user} onClick={event => user && onOpen?.(user, event.currentTarget)}>
+    <Avatar user={user} size={40} /><span className="contact-card-copy"><b>{user?.name || '成员'}</b><small>{user?.removed ? '已离开空间' : user?.department || '个人名片'}</small></span>
+    <span className="contact-card-label"><Contact size={12} />名片</span>
+  </button>;
+}
+
 function PollCard({ message, viewerId, nameOf, onVote, onClosePoll }) {
   const { poll } = message;
   const mine = poll.options.map((option, index) => option.voters.includes(viewerId) ? index : -1).filter(index => index >= 0);
@@ -132,7 +147,7 @@ function PollCard({ message, viewerId, nameOf, onVote, onClosePoll }) {
   </div>;
 }
 
-function Attachment({ file, privateMode, onPreview }) {
+export function Attachment({ file, privateMode, onPreview }) {
   const mediaVersion = useContext(MediaAccessContext);
   const [failed, setFailed] = useState(false);
   const [videoSource, setVideoSource] = useState(() => mediaUrl(file.id));
@@ -151,11 +166,11 @@ function Attachment({ file, privateMode, onPreview }) {
     playback.current = null;
   };
   if (!/^(image|video)\//.test(file.mime)) return <FileCard file={file} />;
-  return <div className={`attachment ${file.mime.startsWith('image/') ? 'image-attachment' : 'video-attachment'}`}>
+  return <div className={`attachment ${file.mime.startsWith('image/') ? 'image-attachment' : 'video-attachment'} ${file.sticker ? 'sticker-attachment' : ''}`}>
     {file.mime.startsWith('image/') ? <button className="image-button" type="button" onClick={() => !privateMode && onPreview(file)} aria-label={privateMode ? '图片内容' : '放大查看图片'}><img src={mediaUrl(file.thumbId || file.id)} alt={file.name} loading="lazy" /></button> : <>
       {failed ? <div className="video-fallback"><Film size={26} /><p>这个视频格式暂时无法预览</p><a href={mediaUrl(file.id, true)} download={file.name}>下载后播放<ArrowUpRight size={14} /></a></div> : <video ref={video} src={videoSource} controls preload="metadata" playsInline onLoadedMetadata={restorePlayback} onError={() => setFailed(true)} />}
     </>}
-    <div className="attachment-caption"><span>{file.mime.startsWith('image/') ? <ImageIcon size={13} /> : <Film size={13} />}{file.name}</span><small>{formatSize(file.size)}</small><a href={mediaUrl(file.id, true)} download={file.name} title="下载文件" aria-label="下载文件"><Download size={14} /></a></div>
+    {!file.sticker && <div className="attachment-caption"><span>{file.mime.startsWith('image/') ? <ImageIcon size={13} /> : <Film size={13} />}{file.name}</span><small>{formatSize(file.size)}</small><a href={mediaUrl(file.id, true)} download={file.name} title="下载文件" aria-label="下载文件"><Download size={14} /></a></div>}
   </div>;
 }
 
@@ -258,6 +273,14 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
   const press = useRef({ timer: 0, fired: false });
+  const lastTap = useRef(null);
+  // 有的手机浏览器在两次轻点后还会发出双击事件：短时间内只点一次 👍，避免点上又被取消。
+  const reactedAt = useRef(0);
+  const thumbsUp = () => {
+    if (Date.now() - reactedAt.current < 600) return;
+    reactedAt.current = Date.now();
+    if (!(message.reactions || []).some(item => item.emoji === '👍' && item.users.includes(viewerId))) onReact?.(message, '👍');
+  };
   const mounted = useRef(false);
   // 刚被撤回的那一刻气泡还在页面上，趁换成提示行之前让它粉碎。
   const recalledBefore = useRef(Boolean(message.recalledAt));
@@ -319,13 +342,17 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   // 两个及以上的图片或视频排成相册网格，其他文件照常列在下面。
   const media = message.attachments.filter(file => /^(image|video)\//.test(file.mime));
   const album = media.length > 1;
-  const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''} ${album ? 'has-album' : ''}`;
+  // 话题入口放在气泡里，宽度跟着气泡走。
+  const threadLink = message.thread && onOpenThread && <button type="button" className="thread-link" onClick={() => onOpenThread(message)}><MessagesSquare size={13} />{message.thread.count} 条回复<time>最后 {formatTime(message.thread.lastAt)}</time></button>;
+  // 只有一个表情、没有文字时，不画气泡底色。
+  const stickerOnly = !message.text && message.attachments.length === 1 && Boolean(message.attachments[0].sticker);
+  const bubbleClass = `message-bubble ${stickerOnly ? 'sticker-bubble' : ''} ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''} ${album ? 'has-album' : ''}`;
   const content = hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} />{meta}</div> : <>
     {showName && <div className="bubble-name" style={mine ? undefined : { color: nameColor(message.senderId, user) }}>{user && !message.bot && onOpenProfile && !selecting
       ? <button type="button" className="name-button" onClick={event => onOpenProfile(user, event.currentTarget)}>{user.name}</button> : user?.name || '成员'}{!mine && <StatusEmoji user={user} />}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo, message)} />}
-    {message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
+    {message.card ? <ContactCard userId={message.card.userId} userOf={userOf} onOpen={selecting ? undefined : onOpenProfile} /> : message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
       : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={reactionRow ? null : meta} />}
     {message.text && !message.poll && !message.bundle && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
     {album && <div className={`album album-${media.length}`}>{media.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}</div>}
@@ -336,10 +363,13 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   // 群聊里头像放在一组连续消息的最后一条旁边（自己的在右侧），这一条带「尾巴」圆角；私聊不显示头像。
   const avatar = !grouped && !direct && (last ? <Avatar user={user} size={32} /> : <span className="avatar-spacer" />);
   const rowClass = `message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''} ${last ? 'last' : ''} ${fresh ? 'fresh' : ''}`;
-  // 多选时整行可点：点哪里都只切换选中，不触发菜单。
+  // 多选时整行可点：点哪里都只切换选中，不触发菜单。按住 Shift 点击或触屏长按是连选到这一条；
+  // 安卓长按会先发 contextmenu 再取消触摸，计时器可能等不到，这里一并当作长按。
+  const selectRange = () => onToggleSelect?.(message, true);
   if (selecting) return <article className={`${rowClass} selecting ${selected ? 'selected' : ''}`} data-message-id={message.id} data-seq={message.seq}
-    onClick={() => onToggleSelect?.(message)}>
-    <label className="select-check" onClick={event => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => onToggleSelect?.(message)} aria-label={`选择${user?.name || ''}的消息`} /><span>{selected && <Check size={12} />}</span></label>
+    onClick={event => { if (!consumeLongPress(press)) onToggleSelect?.(message, event.shiftKey); }} {...longPressHandlers(press, selectRange)}
+    onContextMenu={event => { if (press.current.fired) return event.preventDefault(); if (event.nativeEvent.pointerType !== 'touch') return; event.preventDefault(); clearTimeout(press.current.timer); press.current.fired = true; selectRange(); }}>
+    <label className="select-check" onClick={event => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={event => { if (!consumeLongPress(press)) onToggleSelect?.(message, event.nativeEvent.shiftKey); }} aria-label={`选择${user?.name || ''}的消息`} /><span>{selected && <Check size={12} />}</span></label>
     {!mine && avatar}
     <div className="message-column"><div className={bubbleClass}>{content}</div></div>
     {mine && avatar}
@@ -355,18 +385,24 @@ export const Message = React.memo(function Message({ message, user, mine, contin
           // 双击气泡点 👍；双击链接、按钮、图片和附件时照常。
           if (event.target.closest('a, button, input, img, video, .attachment, .code-block')) return;
           window.getSelection()?.removeAllRanges();
-          if (!(message.reactions || []).some(item => item.emoji === '👍' && item.users.includes(viewerId))) onReact?.(message, '👍');
+          thumbsUp();
+        } : undefined}
+        onPointerUp={quickReact && reactionOptions.length > 0 ? event => {
+          // 触屏上手机浏览器不一定发出双击事件：自己判断两次轻点（300 毫秒内、位置相近）。
+          if (event.pointerType !== 'touch' || event.target.closest('a, button, input, img, video, .attachment, .code-block')) return;
+          const last = lastTap.current, now = { time: event.timeStamp, x: event.clientX, y: event.clientY };
+          lastTap.current = now;
+          if (last && now.time - last.time < 300 && Math.hypot(now.x - last.x, now.y - last.y) < 24) { lastTap.current = null; thumbsUp(); }
         } : undefined}
         onPointerEnter={reveal} onPointerMove={reveal} onPointerLeave={() => setRevealed(false)} onBlur={() => setRevealed(false)}
         onKeyDown={event => { if (event.code === 'Space' && privateMode) { event.preventDefault(); setRevealed(true); } }} onKeyUp={event => { if (event.code === 'Space') setRevealed(false); }}
-        aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>{content}</div>
-      {onReply && <div className={`message-actions ${picking ? 'open' : ''}`} onMouseDown={event => { if (event.target.closest('.icon-button')) event.preventDefault(); }}>
+        aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>{content}{threadLink}</div>
+      {(onReply || onPick) && <div className={`message-actions ${picking ? 'open' : ''}`} onMouseDown={event => { if (event.target.closest('.icon-button')) event.preventDefault(); }}>
         {reactionOptions.length > 0 && <IconButton icon={SmilePlus} label="回应" size={14} aria-expanded={picking} onClick={() => onPick?.(picking ? null : message.id)} />}
-        <IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} />
+        {onReply && <IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} />}
         {picking && <ReactionPalette options={reactionOptions} chosen={(message.reactions || []).filter(item => item.users.includes(viewerId)).map(item => item.emoji)} onPick={emoji => onReact?.(message, emoji)} onClose={() => onPick?.(null)} />}
       </div>}</div>
       {readNode && <div className="read-line">{readNode}</div>}
-      {message.thread && !selecting && <button type="button" className="thread-link" onClick={() => onOpenThread?.(message)}><MessagesSquare size={13} />{message.thread.count} 条回复<time>最后 {formatTime(message.thread.lastAt)}</time></button>}
     </div>
     {mine && avatar}
   </article>;
@@ -432,7 +468,7 @@ function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu
   return <article className="recalled-message nudge-message" data-message-id={message.id} data-seq={message.seq} onContextMenu={event => onContextMenu?.(event, message)}>{actor} 拍了拍 {targetName}</article>;
 }
 
-export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus, onSetDepartment, groupActions = [], groupNickname }) {
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onShare, onSetStatus, onSetDepartment, groupActions = [], groupNickname }) {
   const [department, setDepartment] = useState(null);
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
@@ -485,6 +521,7 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     {self ? <button type="button" className="secondary-button" onClick={onEdit}>编辑资料</button>
       : !user.removed && <button type="button" className="primary-button" onClick={onMessage}><MessageCircle size={15} />发送消息</button>}
     {onNudge && <button type="button" className="secondary-button" onClick={onNudge}><Hand size={15} />{self ? '拍拍自己' : '拍一拍'}</button>}
+    {onShare && !user.removed && <button type="button" className="secondary-button" onClick={onShare}><Contact size={15} />推荐给别人</button>}
     {groupActions.length > 0 && <div className="profile-group-actions">{groupActions.map(item => <button type="button" key={item.label} className={`text-button ${item.danger ? 'danger-text' : ''}`} onClick={item.action}>{item.label}</button>)}</div>}
   </div>;
 }

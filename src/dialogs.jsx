@@ -1,10 +1,11 @@
 import { copyText } from './mobile/runtime';
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Check, Search, Users, Hash, ArrowRight, Copy, Bot } from 'lucide-react';
-import { api, upload, formatSize, absoluteUrl, mediaUrl, formatTime } from './api';
+import { Camera, Check, Search, Users, Hash, ArrowRight, Copy, Bot, Rows3, MessagesSquare } from 'lucide-react';
+import { api, upload, absoluteUrl, mediaUrl, formatTime } from './api';
 import { FormattedText } from './markdown';
-import { Modal, Avatar, AvatarPicker, IdentityFields } from './components';
+import { Modal, Avatar, AvatarPicker, IdentityFields, FileCard, Attachment, nameColor } from './components';
 import { InvitationShare } from './Invitation';
+import AvatarCropper from './AvatarCropper';
 import { modKey } from './chatPrefs';
 
 export function ProfileDialog({ me, onClose, onUpdate, notify }) {
@@ -21,14 +22,20 @@ export function ProfileDialog({ me, onClose, onUpdate, notify }) {
     try { const { me: updated } = await api('profile', { name, avatar, department, bio, nameColor: color }); onUpdate(updated); onClose(); notify('个人资料已更新'); }
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  async function avatarUpload(file) {
+  // 选好图片先裁剪，再上传。
+  const [cropping, setCropping] = useState(null);
+  function chooseAvatar(file) {
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) return setError('头像不能超过 5 MB');
+    setError(''); setCropping(file);
+  }
+  async function avatarUpload(file) {
     setBusy(true); setError('');
     try { const result = await upload(file, { purpose: 'avatar' }); setAvatar(result.me.avatar); onUpdate(result.me); notify('头像已更新'); }
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  return <Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { avatarUpload(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} /><span className="field-label">名字颜色</span><div className="accent-row name-colors" role="radiogroup" aria-label="名字颜色"><button type="button" role="radio" aria-checked={color === null} className={`name-color-auto ${color === null ? 'active' : ''}`} onClick={() => setColor(null)}>自动</button>{[0, 1, 2, 3, 4, 5, 6].map(index => <button type="button" key={index} role="radio" aria-checked={color === index} aria-label={`名字颜色 ${index + 1}`} className={`accent-swatch ${color === index ? 'active' : ''}`} style={{ background: `var(--name-${index})` }} onClick={() => setColor(index)} />)}<b className="name-color-preview" style={{ color: color === null ? 'var(--text-1)' : `var(--name-${color})` }}>{name || '名字'}</b></div><label className="field-label" htmlFor="profile-department">部门（可选）</label><input id="profile-department" value={department} maxLength={40} placeholder="例如：设计部" onChange={event => setDepartment(event.target.value)} /><label className="field-label" htmlFor="profile-bio">签名（可选）</label><input id="profile-bio" value={bio} maxLength={120} placeholder="一句话介绍自己" onChange={event => setBio(event.target.value)} />{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>;
+  return <><Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { chooseAvatar(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} /><span className="field-label">名字颜色</span><div className="accent-row name-colors" role="radiogroup" aria-label="名字颜色"><button type="button" role="radio" aria-checked={color === null} className={`name-color-auto ${color === null ? 'active' : ''}`} onClick={() => setColor(null)}>自动</button>{[0, 1, 2, 3, 4, 5, 6].map(index => <button type="button" key={index} role="radio" aria-checked={color === index} aria-label={`名字颜色 ${index + 1}`} className={`accent-swatch ${color === index ? 'active' : ''}`} style={{ background: `var(--name-${index})` }} onClick={() => setColor(index)} />)}<b className="name-color-preview" style={{ color: color === null ? 'var(--text-1)' : `var(--name-${color})` }}>{name || '名字'}</b></div><label className="field-label" htmlFor="profile-department">部门（可选）</label><input id="profile-department" value={department} maxLength={40} placeholder="例如：设计部" onChange={event => setDepartment(event.target.value)} /><label className="field-label" htmlFor="profile-bio">签名（可选）</label><input id="profile-bio" value={bio} maxLength={120} placeholder="一句话介绍自己" onChange={event => setBio(event.target.value)} />{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>
+    {cropping && <AvatarCropper file={cropping} onCancel={() => setCropping(null)} onDone={cropped => { setCropping(null); avatarUpload(cropped); }} />}</>;
 }
 
 export function InviteDialog({ cloud, onClose, notify }) {
@@ -59,8 +66,9 @@ export function RoomAvatarDialog({ room, onClose, onSaved, notify }) {
     if (!selected) return;
     if (selected.size > 5 * 1024 * 1024) return setError('群头像不能超过 5 MB');
     if (selected.type && !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(selected.type)) return setError('群头像请使用 JPG、PNG、GIF 或 WebP 图片');
-    setError(''); setFile(selected);
+    setError(''); setCropping(selected);
   };
+  const [cropping, setCropping] = useState(null);
   async function save(event) {
     event.preventDefault();
     if (busy || (!file && avatar === (room.avatar || null))) return;
@@ -72,13 +80,14 @@ export function RoomAvatarDialog({ room, onClose, onSaved, notify }) {
       await onSaved(); onClose(); notify('群头像已更新');
     } catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  return <Modal title="设置群头像" subtitle={room.name} onClose={() => { if (!busy) onClose(); }}><form className="room-avatar-form" onSubmit={save}>
+  return <><Modal title="设置群头像" subtitle={room.name} onClose={() => { if (!busy) onClose(); }}><form className="room-avatar-form" onSubmit={save}>
     <fieldset disabled={busy}><div className="profile-avatar">
       {file && preview ? <span className="avatar avatar-photo" style={{ width: 88, height: 88 }}><img src={preview} alt="待保存的群头像" /></span> : avatar ? <Avatar user={{ avatar }} size={88} /> : <span className="room-avatar room-avatar-preview">{room.kind === 'public' ? <Hash size={36} /> : <Users size={36} />}</span>}
       <div className="room-avatar-actions"><button type="button" className="secondary-button" onClick={() => fileInput.current.click()}><Camera size={16} />上传图片</button>{(file || avatar) && <button type="button" className="text-button" onClick={() => choose(null)}>恢复默认</button>}</div><small>JPG、PNG、GIF、WebP · 最大 5 MB</small>
     </div><input ref={fileInput} type="file" aria-label="上传群头像" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { chooseFile(event.target.files[0]); event.target.value = ''; }} /><AvatarPicker avatar={file ? null : avatar} setAvatar={choose} /></fieldset>
     {error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || (!file && avatar === (room.avatar || null))}>{busy ? '正在保存…' : '保存头像'}</button></div>
-  </form></Modal>;
+  </form></Modal>
+    {cropping && <AvatarCropper title="裁剪群头像" file={cropping} onCancel={() => setCropping(null)} onDone={cropped => { setCropping(null); setFile(cropped); }} />}</>;
 }
 
 export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
@@ -105,28 +114,56 @@ export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
 }
 
 // 转发：选一个目标会话，逐条发送。
-export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
+// 系统分享菜单发来的内容：选一个会话，内容放进那里的输入框，确认后再发送。
+export function ShareTargetDialog({ share, rooms, icon, onClose, onPick }) {
   const [search, setSearch] = useState('');
-  const [target, setTarget] = useState(null);
-  const [merge, setMerge] = useState(false);
+  const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()));
+  const summary = [share.files.length ? `${share.files.length} 个文件` : '', share.text ? `「${share.text.replace(/\s+/g, ' ').slice(0, 30)}${share.text.length > 30 ? '…' : ''}」` : ''].filter(Boolean).join('和');
+  return <Modal title="发送到…" subtitle={`选择一个会话，${summary}会放进输入框，确认后再发送。`} onClose={onClose}>
+    <div className="search-input"><Search size={16} /><input autoFocus placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
+    <div className="member-picker" role="list" aria-label="发送到">{filtered.map(room => <button type="button" className="member-option" key={room.id} onClick={() => onPick(room)}>{icon(room)}<span>{room.name}</span><ArrowRight size={15} /></button>)}
+      {!filtered.length && <div className="compact-empty"><Search size={25} /><p>没有找到这个会话</p></div>}</div>
+  </Modal>;
+}
+
+// 两种转发方式，多选栏的按钮和转发弹窗里的选项共用。
+const FORWARD_MODES = [[false, Rows3, '逐条转发', '按原顺序逐条发出'], [true, MessagesSquare, '合并转发', '合成一条聊天记录']];
+// 多选栏：选了两条及以上时，两种转发方式各一个按钮。
+export function ForwardButtons({ count, disabled, onForward }) {
+  if (count < 2) return <button className="primary-button" disabled={disabled} onClick={() => onForward(false)}>转发</button>;
+  return FORWARD_MODES.map(([merge, Icon, label]) => <button key={label} className={`${merge ? 'primary-button' : 'secondary-button'} forward-button`} disabled={disabled} onClick={() => onForward(merge)}><Icon size={15} />{label}</button>);
+}
+
+// 转发：一次最多选 9 个会话；附言跟在每个会话的转发内容之后。
+const FORWARD_LIMIT = 9;
+export function ForwardDialog({ count, initialMerge = false, rooms, icon, onClose, onForward, title, subtitle }) {
+  const [search, setSearch] = useState('');
+  const [targets, setTargets] = useState([]);
+  const [merge, setMerge] = useState(count > 1 && initialMerge);
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()));
+  const chosen = id => targets.some(room => room.id === id);
+  const toggle = room => setTargets(previous => chosen(room.id) ? previous.filter(item => item.id !== room.id) : previous.length < FORWARD_LIMIT ? [...previous, room] : previous);
   async function submit(event) {
     event.preventDefault(); setBusy(true); setError('');
-    try { await onForward(target, merge, comment.trim()); onClose(); } catch (failure) { setError(failure.message); } finally { setBusy(false); }
+    try { await onForward(targets, merge, comment.trim()); onClose(); } catch (failure) { setError(failure.message); } finally { setBusy(false); }
   }
-  return <Modal title={`转发 ${count} 条消息`} subtitle={merge ? '合成一条「聊天记录」发过去，点开可以看到每条消息。' : '选择一个会话，消息会逐条发送过去。'} onClose={onClose}><form onSubmit={submit}>
-    {count > 1 && <div className="segmented-control forward-mode" role="radiogroup" aria-label="转发方式">{[[false, '逐条转发'], [true, '合并转发']].map(([value, label]) => <button type="button" key={label} role="radio" aria-checked={merge === value} className={merge === value ? 'active' : ''} onClick={() => setMerge(value)}>{label}</button>)}</div>}
+  const full = targets.length >= FORWARD_LIMIT;
+  const verb = title ? '发送' : count > 1 ? merge ? '合并转发' : '逐条转发' : '转发';
+  return <Modal title={title || `${verb} ${count} 条消息`} subtitle={`${subtitle || (count > 1 ? '选好转发方式和要发到的会话，' : '')}最多选 ${FORWARD_LIMIT} 个会话。`} onClose={onClose}><form onSubmit={submit}>
+    {count > 1 && <div className="forward-modes" role="radiogroup" aria-label="转发方式">{FORWARD_MODES.map(([value, Icon, label, hint]) => <label key={label} className={`forward-mode-option ${merge === value ? 'active' : ''}`}>
+      <input type="radio" name="forward-mode" checked={merge === value} onChange={() => setMerge(value)} /><span className="forward-mode-icon"><Icon size={18} /></span>
+      <span className="forward-mode-copy"><b>{label}</b><small>{hint}</small></span><span className={`selection-check ${merge === value ? 'checked' : ''}`} aria-hidden="true">{merge === value && <Check size={13} />}</span></label>)}</div>}
     <div className="search-input"><Search size={16} /><input autoFocus placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
-    <div className="member-picker" role="radiogroup" aria-label="转发到">{filtered.map(room => <label className="member-option" key={room.id}>
-      <input type="radio" name="forward-target" checked={target?.id === room.id} onChange={() => setTarget(room)} />{icon(room)}<span>{room.name}</span>
-      <span className={`selection-check ${target?.id === room.id ? 'checked' : ''}`}>{target?.id === room.id && <Check size={13} />}</span></label>)}
+    <div className="member-picker" role="group" aria-label="转发到">{filtered.map(room => <label className={`member-option ${full && !chosen(room.id) ? 'disabled' : ''}`} key={room.id}>
+      <input type="checkbox" checked={chosen(room.id)} disabled={full && !chosen(room.id)} onChange={() => toggle(room)} />{icon(room)}<span>{room.name}</span>
+      <span className={`selection-check ${chosen(room.id) ? 'checked' : ''}`}>{chosen(room.id) && <Check size={13} />}</span></label>)}
       {!filtered.length && <div className="compact-empty"><Search size={25} /><p>没有找到这个会话</p></div>}</div>
-    {target && <input className="forward-comment" aria-label="附言" placeholder="附言（可选），会在转发的消息之后发出" maxLength={2000} value={comment} onChange={event => setComment(event.target.value)} />}
+    {targets.length > 0 && <input className="forward-comment" aria-label="附言" placeholder={title ? '附言（可选），会在名片之后发出' : '附言（可选），会在转发的消息之后发出'} maxLength={2000} value={comment} onChange={event => setComment(event.target.value)} />}
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !target}>{busy ? '正在转发…' : target ? `转发到「${target.name}」` : '转发'}<ArrowRight size={16} /></button></div>
+    <div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !targets.length}>{busy ? `正在${verb}…` : targets.length === 1 ? `${verb}到「${targets[0].name}」` : targets.length ? `${verb}到 ${targets.length} 个会话` : verb}<ArrowRight size={16} /></button></div>
   </form></Modal>;
 }
 
@@ -316,7 +353,7 @@ export function WebhooksDialog({ room, onClose, notify }) {
   </Modal>;
 }
 
-const AUDIT_ACTIONS = { approve: '通过了注册', reject: '拒绝了注册', suspend: '停用了账号', role: '调整了角色', password: '修改了密码', 'reset-password': '重置了密码', 'delete-message': '删除了消息', mute: '禁言了', unmute: '解除了禁言', retention: '把消息保留期限改为' };
+const AUDIT_ACTIONS = { approve: '通过了注册', reject: '拒绝了注册', suspend: '停用了账号', role: '调整了角色', password: '修改了密码', 'reset-password': '重置了密码', 'delete-message': '删除了消息', mute: '禁言了', unmute: '解除了禁言', retention: '把消息保留期限改为', 'recall-window': '把撤回时限改为' };
 // 操作日志：谁在什么时候对谁做了哪项管理操作；被删消息只记会话，不保留内容。
 export function AuditDialog({ onClose }) {
   const [page, setPage] = useState(1);
@@ -328,7 +365,7 @@ export function AuditDialog({ onClose }) {
     {error && <p className="form-error" role="alert">{error}</p>}
     {!result ? <p className="inline-note">正在加载…</p> : !result.entries.length ? <p className="inline-note">还没有管理操作。</p> : <ul className="audit-list">{result.entries.map(entry => <li key={entry.id}>
       <time>{new Date(entry.createdAt).toLocaleString('zh-CN', { hour12: false })}</time>
-      <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{entry.action === 'retention' ? ` ${entry.detail}` : entry.action === 'password' ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
+      <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{['retention', 'recall-window'].includes(entry.action) ? ` ${entry.detail}` : entry.action === 'password' ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
     </li>)}</ul>}
     {result?.total > 50 && <div className="account-pagination"><button className="secondary-button" disabled={page === 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>第 {page} 页 · 共 {result.total} 条</span><button className="secondary-button" disabled={page * 50 >= result.total} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
   </Modal>;
@@ -431,17 +468,53 @@ export function MuteDialog({ user, onClose, onDone }) {
   </Modal>;
 }
 
-// 合并转发的聊天记录：按原来的顺序列出每条消息，图片可以点开，文件可以下载。
-export function BundleDialog({ message, privateMode, onPreview, onClose }) {
-  const stamp = time => `${new Date(time).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} ${formatTime(time)}`;
-  return <Modal title={message.bundle.title} subtitle={`共 ${message.bundle.items.length} 条消息`} onClose={onClose} wide>
-    <div className="bundle-list">{message.bundle.items.map((item, index) => <article key={index} className="bundle-item">
-      <div className="thread-meta"><b>{item.senderName}</b><time>{stamp(item.createdAt)}</time></div>
-      {item.text && (privateMode ? <p className="masked-preview">****</p> : <FormattedText text={item.text} />)}
-      {item.attachments.length > 0 && !privateMode && <div className="bundle-files">{item.attachments.map(file => file.mime.startsWith('image/')
-        ? <button type="button" key={file.id} className="bundle-image" onClick={() => onPreview(file)}><img src={mediaUrl(file.id)} alt={file.name} loading="lazy" /></button>
-        : <a key={file.id} className="bundle-file" href={mediaUrl(file.id, true)} download={file.name}>{file.name}<small>{formatSize(file.size)}</small></a>)}</div>}
-    </article>)}</div>
+// 合并转发的聊天记录：像聊天一样，同一个人连着说的几条只显示一次头像和名字；跨天加日期，
+// 隔了 5 分钟以上才标时间。图片排成缩略图、点开看大图，文件和聊天里一样可以预览或下载。
+const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
+function dayLabel(time) {
+  const date = new Date(time), yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (sameDay(time, Date.now())) return '今天';
+  if (sameDay(time, yesterday)) return '昨天';
+  return date.toLocaleDateString('zh-CN', { year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
+}
+function BundleEntry({ item, privateMode, onPreview }) {
+  if (privateMode) return <p className="bundle-text masked-preview">****</p>;
+  const images = item.attachments.filter(file => file.mime.startsWith('image/'));
+  return <div className="bundle-entry">
+    {item.text && <div className="bundle-text"><FormattedText text={item.text} /></div>}
+    {images.length > 0 && <div className={`bundle-images ${images.length === 1 ? 'single' : ''}`}>{images.map(file => <button type="button" key={file.id} className="bundle-image" aria-label={`查看图片 ${file.name}`} onClick={() => onPreview(file)}><img src={mediaUrl(file.id)} alt={file.name} loading="lazy" /></button>)}</div>}
+    {item.attachments.filter(file => !images.includes(file)).map(file => file.mime.startsWith('video/') ? <Attachment key={file.id} file={file} /> : <FileCard key={file.id} file={file} />)}
+  </div>;
+}
+export function BundleDialog({ message, privateMode, userOf, onPreview, onClose }) {
+  const { items } = message.bundle;
+  const groups = [];
+  items.forEach((item, index) => {
+    const previous = items[index - 1];
+    const newDay = !previous || !sameDay(previous.createdAt, item.createdAt);
+    const paused = !previous || item.createdAt - previous.createdAt >= 5 * 60000;
+    if (newDay || paused || (previous.senderId || previous.senderName) !== (item.senderId || item.senderName)) groups.push({ key: index, first: item, newDay, timed: newDay || paused, items: [] });
+    groups.at(-1).items.push(item);
+  });
+  // 看大图时可以在这份聊天记录的所有图片之间左右切换；看完回到聊天记录。
+  const images = items.flatMap(item => item.attachments.filter(file => file.mime.startsWith('image/')));
+  const preview = file => onPreview(file, images);
+  const first = items[0]?.createdAt, last = items.at(-1)?.createdAt;
+  const span = !first ? '' : sameDay(first, last) ? ` · ${dayLabel(first)}` : ` · ${dayLabel(first)} 至 ${dayLabel(last)}`;
+  return <Modal title={message.bundle.title} subtitle={`共 ${items.length} 条消息${span}`} onClose={onClose} className="bundle-dialog">
+    <div className="bundle-list">{groups.map(({ key, first: head, newDay, timed, items: entries }) => {
+      const user = head.senderId?.startsWith('webhook:') ? { avatar: 'bot' } : userOf?.(head.senderId);
+      return <React.Fragment key={key}>
+        {newDay && <div className="bundle-day"><span>{dayLabel(head.createdAt)}</span></div>}
+        <section className="bundle-group"><Avatar user={user} size={36} />
+          <div className="bundle-group-body">
+            <div className="bundle-sender"><b style={{ color: nameColor(head.senderId || head.senderName, user) }}>{head.senderName}</b>{timed && <time dateTime={new Date(head.createdAt).toISOString()}>{formatTime(head.createdAt)}</time>}</div>
+            {entries.map((item, index) => <BundleEntry key={index} item={item} privateMode={privateMode} onPreview={preview} />)}
+          </div>
+        </section>
+      </React.Fragment>;
+    })}</div>
   </Modal>;
 }
 

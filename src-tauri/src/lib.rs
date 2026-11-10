@@ -1,4 +1,6 @@
 #[cfg(target_os = "macos")]
+mod macos_lights;
+#[cfg(target_os = "macos")]
 mod macos_notification;
 mod probe;
 mod server;
@@ -21,6 +23,8 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 const MAIN: &str = "main";
+// 会话独立窗口的标签前缀，后面接会话标识。
+const ROOM_WINDOW: &str = "room-";
 const SEEN_LIMIT: usize = 2000;
 // 更新签名公钥与发布仓库在构建时注入（见 .github/workflows/build.yml）；未注入公钥的构建不启用自动更新。
 const UPDATER_PUBKEY: Option<&str> = option_env!("LINLIAO_UPDATER_PUBKEY");
@@ -67,6 +71,8 @@ struct Session {
   pending_room: Option<String>,
   current_room: Option<String>,
   unread: HashSet<String>,
+  // 新版页面报告未读消息总数；旧版页面不报告，此时按未读会话数显示。
+  unread_messages: Option<usize>,
   seen: VecDeque<String>,
   notification_rooms: HashMap<i32, String>,
   notification_error: String,
@@ -156,10 +162,13 @@ fn open_address(app: &AppHandle, desktop: &Desktop, origin: &str, fragment: Opti
     session.pending_room = None;
     session.current_room = None;
     session.unread.clear();
+    session.unread_messages = None;
     session.seen.clear();
     session.config.server = Some(origin.to_string());
     desktop.save(&session);
   }
+  // 换了空间，原来空间的会话独立窗口一起关掉。
+  for (label, window) in app.webview_windows() { if label.starts_with(ROOM_WINDOW) { let _ = window.close(); } }
   render(app, desktop);
   let url = Url::parse(&target).map_err(|error| error.to_string())?;
   main_window(app).ok_or("窗口不可用")?.navigate(url).map_err(|error| error.to_string())
@@ -191,29 +200,30 @@ fn show(app: &AppHandle, desktop: &Desktop, room: Option<String>) {
 }
 
 fn render(app: &AppHandle, desktop: &Desktop) {
-  let (count, private_mode, notifications) = {
+  let (count, unit, private_mode, notifications) = {
     let session = desktop.session.lock().unwrap();
-    (session.unread.len(), session.config.private_mode != Some(false), session.config.notifications_enabled != Some(false))
+    let (count, unit) = match session.unread_messages { Some(count) => (count, "条未读消息"), None => (session.unread.len(), "个未读会话") };
+    (count, unit, session.config.private_mode != Some(false), session.config.notifications_enabled != Some(false))
   };
   let Some(tray) = desktop.tray.lock().unwrap().clone() else { return };
   let badge = match count { 0 => None, 1..=99 => Some(count.to_string()), _ => Some("99+".into()) };
   #[cfg(target_os = "macos")]
   {
     let _ = tray.set_title(badge.as_deref());
-    // Dock 图标角标与菜单栏一致：有未读的会话数（免打扰的不算）。
+    // Dock 图标角标与菜单栏一致：未读消息数（免打扰的会话只在被 @ 时算 1 条）。
     if let Some(window) = main_window(app) { let _ = window.set_badge_label(badge.clone()); }
   }
   let _ = tray.set_tooltip(Some(match &badge {
-    Some(badge) => format!("虾扯蛋 · {badge} 个未读会话"),
+    Some(badge) => format!("虾扯蛋 · {badge} {unit}"),
     None => "虾扯蛋 · 点击打开聊天，右键查看设置".into(),
   }));
-  if let Ok(menu) = tray_menu(app, count, private_mode, notifications) {
+  if let Ok(menu) = tray_menu(app, count, unit, private_mode, notifications) {
     let _ = tray.set_menu(Some(menu));
   }
 }
 
-fn tray_menu(app: &AppHandle, unread: usize, private_mode: bool, notifications: bool) -> tauri::Result<Menu<tauri::Wry>> {
-  let open = if unread > 0 { format!("打开虾扯蛋（{unread} 个未读会话）") } else { "打开虾扯蛋".into() };
+fn tray_menu(app: &AppHandle, unread: usize, unit: &str, private_mode: bool, notifications: bool) -> tauri::Result<Menu<tauri::Wry>> {
+  let open = if unread > 0 { format!("打开虾扯蛋（{unread} {unit}）") } else { "打开虾扯蛋".into() };
   let settings_label = if cfg!(target_os = "macos") { "macOS 通知设置…" } else { "系统通知设置…" };
   Menu::with_items(app, &[
     &MenuItem::with_id(app, "tray-open", open, true, None::<&str>)?,
@@ -382,6 +392,8 @@ struct Activity {
   current_room_id: Option<String>,
   #[serde(rename = "unreadRooms")]
   unread_rooms: Vec<String>,
+  #[serde(rename = "unreadCount", default)]
+  unread_count: Option<usize>,
 }
 
 #[tauri::command]
@@ -395,6 +407,7 @@ fn desktop_activity(app: AppHandle, webview: Webview, desktop: Shared<'_>, value
     let mut session = desktop.session.lock().unwrap();
     session.current_room = value.current_room_id;
     session.unread = value.unread_rooms.into_iter().collect();
+    session.unread_messages = value.unread_count;
   }
   render(&app, &desktop);
   Ok(true)
@@ -447,7 +460,11 @@ fn desktop_recalled(webview: Webview, desktop: Shared<'_>, value: Recalled) -> R
 #[tauri::command]
 fn desktop_history_cleared(app: AppHandle, webview: Webview, desktop: Shared<'_>) -> Result<bool, String> {
   require_trusted(&webview, &desktop)?;
-  desktop.session.lock().unwrap().unread.clear();
+  {
+    let mut session = desktop.session.lock().unwrap();
+    session.unread.clear();
+    session.unread_messages = None;
+  }
   render(&app, &desktop);
   Ok(true)
 }
@@ -475,6 +492,49 @@ fn desktop_open_url(app: AppHandle, webview: Webview, desktop: Shared<'_>, url: 
   let target = Url::parse(&url).map_err(|_| "链接无效".to_string())?;
   if !matches!(target.scheme(), "http" | "https") { return Err("只能打开网页链接".into()) }
   app.opener().open_url(target.as_str(), None::<&str>).map_err(|error| error.to_string())?;
+  Ok(true)
+}
+
+// 会话独立窗口：只显示一个会话的聊天，不注入桌面桥——通知、角标和原生菜单仍由主窗口负责，
+// 独立窗口里的页面按普通网页处理（登录状态与主窗口共用）。
+// 必须是异步命令：Windows 上在同步命令里创建窗口会死锁（见 WebviewWindowBuilder::build 的说明）。
+#[tauri::command]
+async fn desktop_open_window(app: AppHandle, webview: Webview, desktop: Shared<'_>, room_id: String, title: String) -> Result<bool, String> {
+  require_trusted(&webview, &desktop)?;
+  if !valid_id(&room_id) || !room_id.chars().all(|char| char.is_ascii_alphanumeric() || char == '-') { return Err("会话无效".into()); }
+  let label = format!("{ROOM_WINDOW}{room_id}");
+  if let Some(window) = app.get_webview_window(&label) {
+    let _ = window.unminimize();
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    return Ok(true);
+  }
+  let origin = desktop.session.lock().unwrap().active_origin.clone();
+  let start = Url::parse(&format!("{origin}/?popout={room_id}")).map_err(|_| "地址无效".to_string())?;
+  let navigation = desktop.inner().clone();
+  let title: String = title.chars().take(60).collect();
+  let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(start))
+    .title(if title.trim().is_empty() { "虾扯蛋".to_string() } else { title })
+    .inner_size(480.0, 720.0)
+    .min_inner_size(360.0, 480.0)
+    .background_color(tauri::window::Color(28, 28, 30, 255))
+    .on_navigation(move |url| {
+      let origin = navigation.session.lock().unwrap().active_origin.clone();
+      probe::same_origin(url.as_str(), &origin)
+    });
+  // 和主窗口一样：WKWebView 需要下载处理，文件存到「下载」文件夹。
+  #[cfg(target_os = "macos")]
+  let builder = {
+    let (handle, downloads) = (app.clone(), desktop.inner().clone());
+    builder.on_download(move |_webview, event| {
+      if let tauri::webview::DownloadEvent::Finished { path, success, .. } = event {
+        let name = path.as_ref().and_then(|path| path.file_name()).map(|name| name.to_string_lossy().into_owned());
+        emit(&handle, &downloads, "download", json!({ "name": name, "success": success }));
+      }
+      true
+    })
+  };
+  builder.build().map_err(|error| error.to_string())?;
   Ok(true)
 }
 
@@ -518,6 +578,24 @@ fn material() -> (&'static str, Option<tauri::utils::config::WindowEffectsConfig
     Some((10, build)) if cfg!(windows) && build >= 17763 => ("acrylic", effects(vec![Effect::Acrylic])),
     _ => ("", None),
   }
+}
+
+// 界面风格只影响 macOS 红绿灯的位置：经典风格挪进左侧导航栏。
+#[tauri::command]
+fn desktop_skin(app: AppHandle, webview: Webview, desktop: Shared<'_>, skin: String) -> Result<bool, String> {
+  require_trusted(&webview, &desktop)?;
+  let classic = match skin.as_str() { "classic" => true, "xiachedan" => false, _ => return Err("界面风格无效".into()) };
+  #[cfg(target_os = "macos")]
+  {
+    let window = main_window(&app).ok_or("窗口不可用")?;
+    let target = window.clone();
+    window.run_on_main_thread(move || {
+      if let Ok(ns_window) = target.ns_window() { unsafe { macos_lights::apply(ns_window, classic) } }
+    }).map_err(|error| error.to_string())?;
+  }
+  #[cfg(not(target_os = "macos"))]
+  let _ = (app, classic);
+  Ok(true)
 }
 
 // 系统 WebView 不支持 -webkit-app-region，拖动与双击标题区由注入脚本转到这里。
@@ -607,7 +685,7 @@ fn create_window(app: &AppHandle, desktop: Arc<Desktop>, start: Url) -> tauri::R
   let builder = builder
     .title_bar_style(tauri::TitleBarStyle::Overlay)
     .hidden_title(true)
-    .traffic_light_position(tauri::LogicalPosition::new(21.0, 30.0));
+    .traffic_light_position(tauri::LogicalPosition::new(macos_lights::DEFAULT_X, 30.0));
   // WKWebView 没有下载处理时会直接取消下载：存到「下载」文件夹（重名自动编号），完成后告诉页面。
   #[cfg(target_os = "macos")]
   let builder = {
@@ -649,7 +727,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       desktop_connect, desktop_home, desktop_copy, desktop_context_menu, desktop_ready, desktop_state, desktop_settings, desktop_activity,
-      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install, desktop_identity, desktop_open_url
+      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_skin, desktop_drag, desktop_zoom, desktop_open_window, desktop_update_check, desktop_update_install, desktop_identity, desktop_open_url
     ])
     .setup(|app| {
       let handle = app.handle().clone();

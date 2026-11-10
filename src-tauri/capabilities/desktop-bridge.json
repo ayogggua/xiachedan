@@ -25,11 +25,13 @@
     "allow-desktop-test-notification",
     "allow-desktop-notification-settings",
     "allow-desktop-appearance",
+    "allow-desktop-skin",
     "allow-desktop-drag",
     "allow-desktop-zoom",
     "allow-desktop-update-check",
     "allow-desktop-update-install",
     "allow-desktop-identity",
-    "allow-desktop-open-url"
+    "allow-desktop-open-url",
+    "allow-desktop-open-window"
   ]
 }

@@ -11,7 +11,10 @@ import { openStore, serializeMessage as baseMessage } from './store.js';
 import { lanAddresses } from './network.js';
 import { createAuth } from './auth.js';
 import { fetchPreview } from './linkPreview.js';
+import { createVapidKeys, sendPush, validEndpoint, validKeys, vapidPublicKey } from './webpush.js';
+import { plainText, previewText } from '../shared/preview.js';
 import { isPresetAvatar } from '../shared/avatars.js';
+import { SELECT_LIMIT } from '../shared/limits.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_FILE = 100 * 1024 * 1024;
@@ -46,6 +49,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   previewFetcher = fetchPreview,
   scheduleInterval = 15000,
   scheduleMinLead = 30000,
+  pushSender = sendPush,
 } = {}) {
   if (!['cloud', 'local'].includes(mode)) throw new Error('CHAT_MODE 必须是 cloud 或 local');
   const cloud = mode === 'cloud';
@@ -119,7 +123,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     return { count: row.count, lastAt: row.lastAt, participants };
   };
   const bundleOf = id => { const row = stmt('SELECT title, items FROM message_bundles WHERE message_id=?').get(id); return row ? { title: row.title, items: JSON.parse(row.items) } : null; };
-  const serializeMessage = row => row ? { ...baseMessage(row), bundle: bundleOf(row.id), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id), nudge: nudgeOf(row.id) } : null;
+  const serializeMessage = row => row ? { ...baseMessage(row), bundle: bundleOf(row.id), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id), nudge: nudgeOf(row.id), card: cardOf(row.id) } : null;
+  // 名片：推荐的是哪位成员。
+  const cardOf = id => { const row = stmt('SELECT user_id FROM message_cards WHERE message_id=?').get(id); return row ? { userId: row.user_id } : null; };
   const nudgeOf = id => { const row = stmt('SELECT target_id FROM message_nudges WHERE message_id=?').get(id); return row ? { targetId: row.target_id } : null; };
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
@@ -214,7 +220,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
-      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 1`).get(room.id)),
+      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq DESC LIMIT 1`).get(room.id, userId, userId)),
       avatar: roomAvatar(room.id), ...managerView(room, userId), autoDelete: stmt('SELECT seconds FROM room_auto_delete WHERE room_id=?').get(room.id)?.seconds || 0, ...(room.kind === 'group' ? groupSettings(room) : {}) }));
   // 禁言状态：返回截止时间，一直禁言为 Infinity，没有禁言为 null；过期的记录顺手清掉。
   const muteOf = id => {
@@ -243,9 +249,59 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT OR REPLACE INTO room_group_policy (room_id,all_muted,join_approval,invite_token,invite_at) VALUES (?,?,?,?,?)').run(roomId, next.all_muted, next.join_approval, next.invite_token, next.invite_at);
   };
   const retentionDays = () => Number(stmt("SELECT value FROM space_settings WHERE key='retention_days'").get()?.value || 0);
+  // 撤回时限（秒）：0 表示不限；由管理者设置，对所有人生效。
+  const RECALL_WINDOWS = [0, 120, 86400];
+  const recallWindow = () => Number(stmt("SELECT value FROM space_settings WHERE key='recall_window'").get()?.value || 0);
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
   const foldersFor = id => stmt('SELECT id, name, room_ids FROM user_folders WHERE user_id=? ORDER BY created_at').all(id).map(row => ({ id: row.id, name: row.name, roomIds: JSON.parse(row.room_ids) }));
   const keywordsFor = id => JSON.parse(stmt('SELECT keywords FROM user_keywords WHERE user_id=?').get(id)?.keywords || '[]');
+  const phrasesFor = id => JSON.parse(stmt('SELECT phrases FROM user_phrases WHERE user_id=?').get(id)?.phrases || '[]');
+  // 「只对自己删除」：删掉的消息和清空过的会话，在这位成员的列表、未读、搜索、文件、导出里都不再出现。
+  // 用法：在 WHERE 里拼上 visibleTo('m')，参数里补两个 userId。
+  const visibleTo = (table = 'messages') => `${table}.id NOT IN (SELECT message_id FROM message_hidden WHERE user_id=?) AND ${table}.seq > COALESCE((SELECT through_seq FROM room_cleared c WHERE c.user_id=? AND c.room_id=${table}.room_id), 0)`;
+  const hiddenFor = (userId, row) => Boolean(stmt('SELECT 1 FROM message_hidden WHERE user_id=? AND message_id=?').get(userId, row.id)
+    || (stmt('SELECT through_seq FROM room_cleared WHERE user_id=? AND room_id=?').get(userId, row.room_id ?? row.roomId)?.through_seq || 0) >= row.seq);
+  const clearedFor = userId => Object.fromEntries(stmt('SELECT room_id, through_seq FROM room_cleared WHERE user_id=?').all(userId).map(row => [row.room_id, row.through_seq]));
+  // 手机推送（PWA）：订阅属于某台设备的某次登录，退出或被下线后不再推送；免打扰和隐私模式按这台设备的设置。
+  const pushSessionOf = req => cloud ? auth.tokenHash(req) : hash(tokenFrom(req));
+  const pushSessionAlive = row => cloud
+    ? Boolean(stmt('SELECT 1 FROM sessions WHERE token_hash=? AND user_id=? AND expires_at>?').get(row.session_hash, row.user_id, Date.now())) && auth.activeId(row.user_id)
+    : Boolean(stmt('SELECT 1 FROM users WHERE id=? AND token_hash=?').get(row.user_id, row.session_hash));
+  let vapidCache = null;
+  const vapidKey = () => {
+    if (vapidCache) return vapidCache;
+    if (!stmt("SELECT 1 FROM space_settings WHERE key='vapid_jwk'").get()) stmt("INSERT OR IGNORE INTO space_settings VALUES ('vapid_jwk', ?)").run(JSON.stringify(createVapidKeys()));
+    return (vapidCache = JSON.parse(stmt("SELECT value FROM space_settings WHERE key='vapid_jwk'").get().value));
+  };
+  const pushContact = row => process.env.CHAT_PUSH_CONTACT || (row.origin.startsWith('https://') ? row.origin : 'https://github.com/ayogggua/xiachedan');
+  // 这台设备正开着页面并且在前台时，由页面自己处理，不再推送。
+  const pushWatching = row => [...sockets].some(socket => socket.pushId === row.id && socket.visible && socket.readyState === WebSocket.OPEN);
+  const pushTo = (row, payload, urgency) => {
+    if (!pushSessionAlive(row)) { stmt('DELETE FROM push_subscriptions WHERE endpoint=?').run(row.endpoint); return; }
+    const notice = row.private ? { ...payload, title: '虾扯蛋', body: '你有一条新消息' } : payload;
+    pushSender({ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } }, notice, { jwk: vapidKey(), subject: pushContact(row), urgency })
+      .then(status => { if (status === 404 || status === 410) stmt('DELETE FROM push_subscriptions WHERE endpoint=?').run(row.endpoint); })
+      .catch(() => {});
+  };
+  const pushedReminders = new Set();
+  const pushMessage = (message, room) => {
+    if (message.recalledAt) return;
+    const rows = stmt('SELECT * FROM push_subscriptions WHERE user_id<>?').all(message.senderId || '');
+    if (!rows.length) return;
+    const sender = message.bot || (message.senderId && stmt('SELECT name FROM users WHERE id=?').get(message.senderId)?.name) || '新消息';
+    const nickname = message.senderId && room.kind === 'group' && stmt('SELECT nickname FROM room_nicknames WHERE room_id=? AND user_id=?').get(room.id, message.senderId)?.nickname;
+    const text = plainText(message.text || '').toLowerCase();
+    for (const row of rows) {
+      if (!canAccess(room, row.user_id) || (message.nudge && message.nudge.targetId !== row.user_id) || pushWatching(row)) continue;
+      const mentioned = message.mentions?.some(id => id === row.user_id || id === '*');
+      const keyword = Boolean(text) && keywordsFor(row.user_id).some(word => text.includes(word.toLowerCase()));
+      if (JSON.parse(row.muted).includes(room.id) && !mentioned && !keyword) continue;
+      const title = `${mentioned ? '[有人@你] ' : keyword ? '[关键词] ' : ''}${nickname || sender}${room.kind === 'direct' ? '' : ` · ${room.name}`}`;
+      const body = message.nudge ? '拍了拍你' : previewText(message);
+      pushTo(row, { title: title.slice(0, 120), body: body.slice(0, 200), roomId: room.id, messageId: message.id, threadOf: message.threadOf || null },
+        mentioned || keyword || room.kind === 'direct' ? 'high' : 'normal');
+    }
+  };
   const statusOf = id => {
     const row = stmt('SELECT emoji, text, until FROM user_status WHERE user_id=?').get(id);
     return row && (!row.until || row.until > Date.now()) ? { emoji: row.emoji, text: row.text, until: row.until } : null;
@@ -270,7 +326,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
+    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays(), recallWindow: recallWindow() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), phrases: phrasesFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -280,7 +336,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const broadcast = (event, roomId) => {
     const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
-    deliver(event, socket => !roomId || canAccess(room, socket.userId));
+    // 编辑、撤回、回应等更新不发给已经「只对自己删除」了这条消息的人，免得它在页面上重新冒出来。
+    const targetId = event.type !== 'message' && (event.message?.id || event.messageId);
+    const target = targetId ? stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(targetId) : null;
+    deliver(event, socket => (!roomId || canAccess(room, socket.userId)) && !(target && hiddenFor(socket.userId, target)));
+    // 推送放到下一轮事件循环，不拖慢消息接口的响应。
+    if (event.type === 'message' && room) setImmediate(() => { try { pushMessage(event.message, room); } catch (error) { console.error({ message: 'push failed', error: error.message }); } });
   };
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
   const userCreated = (req, res, name, avatar) => {
@@ -481,6 +542,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!row) throw fail('消息不存在或已被清空', 404);
     requireRoom(row.room_id, req.user.id);
     if (row.sender_id !== req.user.id) throw fail('只能撤回自己发送的消息', 403);
+    const window = recallWindow();
+    if (window && Date.now() - row.created_at > window * 1000) throw fail(`超过 ${window >= 3600 ? `${window / 3600} 小时` : `${window / 60} 分钟`}的消息不能撤回`);
     recallMessage(row);
     res.json({ message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } });
   });
@@ -511,6 +574,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('DELETE FROM message_edits WHERE message_id=?').run(id);
         stmt('DELETE FROM message_versions WHERE message_id=?').run(id);
         stmt('DELETE FROM message_nudges WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_cards WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
@@ -577,6 +641,15 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     broadcast({ type: 'rooms' });
     res.json({ retentionDays: days });
   });
+  app.post('/api/admin/recall-window', (req, res) => {
+    requireManager(req);
+    const seconds = Number(req.body?.seconds);
+    if (!RECALL_WINDOWS.includes(seconds)) throw fail('撤回时限只能是 2 分钟、24 小时或不限');
+    stmt("INSERT OR REPLACE INTO space_settings VALUES ('recall_window', ?)").run(String(seconds));
+    stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(req.user.id, req.user.id, 'recall-window', seconds === 120 ? '2 分钟' : seconds ? '24 小时' : '不限', Date.now());
+    broadcast({ type: 'rooms' });
+    res.json({ recallWindow: seconds });
+  });
   // 操作日志：账号审核、角色、密码与删除消息等管理操作，最新的在前，每页 50 条。
   app.get('/api/admin/audit', (req, res) => {
     requireManager(req);
@@ -599,6 +672,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (row.sender_id !== req.user.id) throw fail('只能编辑自己发送的消息', 403);
     if (pollOf(id)) throw fail('投票不能编辑');
     if (nudgeOf(id)) throw fail('拍一拍不能编辑');
+    if (cardOf(id)) throw fail('名片不能编辑');
     if (recalledAt(id)) throw fail('消息已撤回');
     const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
     if (text.length > 10000) throw fail('每条消息最多 10000 个字符');
@@ -640,7 +714,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_nudges; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_nudges; DELETE FROM message_cards; DELETE FROM message_hidden; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -661,11 +735,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) THEN 1 ELSE 0 END), 0) AS unreadCount,
       COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls)
         AND EXISTS (SELECT 1 FROM message_mentions WHERE message_id=messages.id AND user_id IN (?, '*')) THEN 1 ELSE 0 END), 0) AS mentionCount
-      FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD}`);
+      FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD} AND ${visibleTo()}`);
     const rooms = stmt('SELECT id, kind, members FROM rooms').all().filter(room => canAccess(room, req.user.id));
     res.json({ rooms: rooms.map(room => {
       const afterSeq = Object.hasOwn(cursors, room.id) ? cursors[room.id] : 0;
-      return { id: room.id, afterSeq, ...count.get(afterSeq, req.user.id, req.user.id, req.user.id, room.id, afterSeq) };
+      return { id: room.id, afterSeq, ...count.get(afterSeq, req.user.id, req.user.id, req.user.id, room.id, afterSeq, req.user.id, req.user.id) };
     }) });
   });
   app.get('/api/invite', (_req, res) => {
@@ -701,12 +775,19 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const target = requireRoom(req.body?.roomId, req.user.id);
     requireRoomVoice(target, req.user);
     const ids = req.body?.messageIds;
-    if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string' || !id || id.length > 100)) throw fail('请选择要转发的消息');
+    if (!Array.isArray(ids) || !ids.length || ids.some(id => typeof id !== 'string' || !id || id.length > 100)) throw fail('请选择要转发的消息');
+    if (ids.length > SELECT_LIMIT) throw fail(`一次最多转发 ${SELECT_LIMIT} 条消息`);
     const unique = [...new Set(ids)];
-    const rows = stmt(`SELECT * FROM messages WHERE id IN (${unique.map(() => '?').join(',')}) ORDER BY seq`).all(...unique);
-    if (rows.length !== unique.length || rows.some(row => row.seq <= clearedThroughSeq() || recalledAt(row.id))) throw fail('有消息已撤回或已被清空', 404);
-    if (rows.some(row => nudgeOf(row.id))) throw fail('拍一拍不能转发');
-    for (const row of rows) requireRoom(row.room_id, req.user.id);
+    const found = stmt(`SELECT * FROM messages WHERE id IN (${unique.map(() => '?').join(',')}) ORDER BY seq`).all(...unique);
+    for (const row of found) requireRoom(row.room_id, req.user.id);
+    // 已撤回、已清空、拍一拍和名片不能转发：跳过它们，其余照常发出，并告诉前端跳过了几条。
+    const rows = found.filter(row => row.seq > clearedThroughSeq() && !recalledAt(row.id) && !nudgeOf(row.id) && !cardOf(row.id));
+    if (!rows.length) {
+      if (found.length !== unique.length || found.some(row => row.seq <= clearedThroughSeq() || recalledAt(row.id))) throw fail('有消息已撤回或已被清空', 404);
+      if (found.some(row => nudgeOf(row.id))) throw fail('拍一拍不能转发');
+      throw fail('名片不能转发，可以在资料卡里重新推荐');
+    }
+    const skipped = unique.length - rows.length;
     const bundleFiles = row => JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(row.id)?.items || '[]').flatMap(item => item.attachments);
     const files = rows.flatMap(row => [...JSON.parse(row.attachments), ...(req.body.merge === true ? [] : bundleFiles(row))]);
     if (cloud && files.length) {
@@ -759,7 +840,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     }
     const messages = created.map(id => ({ ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] }));
     for (const message of messages) broadcast({ type: 'message', message }, target.id);
-    res.status(201).json({ messages });
+    res.status(201).json({ messages, skipped });
   });
   // 再点一次同一个表情即取消。
   app.post('/api/reactions', (req, res) => {
@@ -789,6 +870,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     return { name, roomIds: [...new Set(req.body.roomIds)].filter(id => typeof id === 'string' && allowed.has(id)) };
   };
   const pushFolders = userId => deliver({ type: 'folders', folders: foldersFor(userId) }, socket => socket.userId === userId);
+  // 常用语：最多 30 条，每条 1–500 字，去重、保留顺序；推给自己的其他设备。
+  app.post('/api/phrases', (req, res) => {
+    rateLimit(req, 'phrases', 60);
+    if (!Array.isArray(req.body?.phrases) || req.body.phrases.some(item => typeof item !== 'string')) throw fail('常用语格式无效');
+    const phrases = [...new Set(req.body.phrases.map(item => item.trim()).filter(Boolean))];
+    if (phrases.length > 30) throw fail('最多保存 30 条常用语');
+    if (phrases.some(item => item.length > 500)) throw fail('每条常用语最多 500 个字');
+    stmt('INSERT INTO user_phrases VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET phrases=excluded.phrases').run(req.user.id, JSON.stringify(phrases));
+    deliver({ type: 'phrases', phrases }, socket => socket.userId === req.user.id);
+    res.json({ phrases });
+  });
   // 关键词提醒：最多 20 个，每个 1–20 个字，去重；推给自己的其他设备。
   app.post('/api/keywords', (req, res) => {
     rateLimit(req, 'keywords', 30);
@@ -799,6 +891,110 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT INTO user_keywords VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET keywords=excluded.keywords').run(req.user.id, JSON.stringify(keywords));
     deliver({ type: 'keywords', keywords }, socket => socket.userId === req.user.id);
     res.json({ keywords });
+  });
+  // 自定义表情：把聊天里的图片收藏成自己的表情（另存一份，原消息删掉也不影响），换设备也在。
+  const STICKER_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  const stickersFor = userId => stmt('SELECT u.id, u.name, u.mime FROM user_stickers s JOIN uploads u ON u.id=s.id WHERE s.user_id=? ORDER BY s.created_at DESC').all(userId);
+  const linkUpload = (source, fields) => {
+    const id = randomUUID();
+    try { linkSync(path.join(uploadDir, source.id), path.join(uploadDir, id)); } catch { copyFileSync(path.join(uploadDir, source.id), path.join(uploadDir, id)); }
+    stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(id, fields.owner, fields.room ?? null, source.name, source.mime, source.size, fields.purpose, fields.claimed, Date.now());
+    return id;
+  };
+  const checkBudget = (userId, size) => {
+    const quota = Number(process.env.CHAT_MAX_USER_BYTES || 0);
+    if (quota > 0 && stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads WHERE owner_id=?').get(userId).n + size > quota) throw fail('你的存储空间已用完，请联系管理员', 507);
+    if (cloud && stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads').get().n + size > storageBudget) throw fail('空间存储不足，请联系管理员清理附件', 507);
+  };
+  app.get('/api/stickers', (req, res) => res.json({ stickers: stickersFor(req.user.id) }));
+  app.post('/api/stickers', (req, res) => {
+    rateLimit(req, 'stickers', 30);
+    const file = typeof req.body?.fileId === 'string' && stmt('SELECT * FROM uploads WHERE id=?').get(req.body.fileId);
+    if (!file || file.purpose !== 'message' || !file.claimed) throw fail('图片不存在', 404);
+    requireRoom(file.room_id, req.user.id);
+    if (!STICKER_MIMES.includes(file.mime)) throw fail('只能把图片添加为表情');
+    if (file.size > 5 * 1024 * 1024) throw fail('表情图片不能超过 5 MB');
+    if (stmt('SELECT COUNT(*) AS n FROM user_stickers WHERE user_id=?').get(req.user.id).n >= 120) throw fail('最多收藏 120 个表情，先删掉一些');
+    checkBudget(req.user.id, file.size);
+    const id = linkUpload(file, { owner: req.user.id, purpose: 'sticker', claimed: 1 });
+    stmt('INSERT INTO user_stickers VALUES (?,?,?)').run(id, req.user.id, Date.now());
+    deliver({ type: 'stickers' }, socket => socket.userId === req.user.id);
+    res.status(201).json({ stickers: stickersFor(req.user.id) });
+  });
+  app.post('/api/stickers/delete', (req, res) => {
+    const row = typeof req.body?.id === 'string' && stmt('SELECT * FROM user_stickers WHERE id=? AND user_id=?').get(req.body.id, req.user.id);
+    if (!row) throw fail('表情不存在', 404);
+    stmt('DELETE FROM user_stickers WHERE id=?').run(row.id);
+    stmt('DELETE FROM uploads WHERE id=?').run(row.id);
+    stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(row.id);
+    deliver({ type: 'stickers' }, socket => socket.userId === req.user.id);
+    res.json({ stickers: stickersFor(req.user.id) });
+  });
+  // 发表情：先为目标会话另存一份附件，再像普通图片一样发送（可以排队、可以在话题里发）。
+  app.post('/api/stickers/use', (req, res) => {
+    rateLimit(req, 'sticker-use', 60);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const sticker = typeof req.body?.id === 'string' && stmt('SELECT u.* FROM user_stickers s JOIN uploads u ON u.id=s.id WHERE s.id=? AND s.user_id=?').get(req.body.id, req.user.id);
+    if (!sticker) throw fail('表情不存在', 404);
+    // 另存的附件发出去之前都算存储：同一时间最多 10 份没发出的，避免反复调用把空间占满。
+    const pending = stmt("SELECT COUNT(*) AS n FROM uploads u JOIN upload_stickers s ON s.upload_id=u.id WHERE u.owner_id=? AND u.claimed=0").get(req.user.id).n;
+    if (pending >= 10) throw fail('表情发得太快了，稍后再试', 429);
+    checkBudget(req.user.id, sticker.size);
+    const id = linkUpload(sticker, { owner: req.user.id, room: room.id, purpose: 'message', claimed: 0 });
+    stmt('INSERT INTO upload_stickers VALUES (?)').run(id);
+    res.status(201).json({ attachment: { id, name: sticker.name, mime: sticker.mime, size: sticker.size } });
+  });
+  // 只对自己删除消息：别人照常能看到；顺带去掉自己的收藏和提醒。
+  app.post('/api/messages/hide', (req, res) => {
+    rateLimit(req, 'hide', 60);
+    const ids = req.body?.messageIds;
+    if (!Array.isArray(ids) || !ids.length || ids.some(id => typeof id !== 'string' || id.length > 100)) throw fail('消息无效');
+    if (ids.length > SELECT_LIMIT) throw fail(`一次最多删除 ${SELECT_LIMIT} 条消息`);
+    const rows = [...new Set(ids)].map(id => stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(id));
+    if (rows.some(row => !row || !canAccess(stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id), req.user.id))) throw fail('消息不存在或你无权查看', 404);
+    const now = Date.now();
+    for (const row of rows) {
+      stmt('INSERT OR IGNORE INTO message_hidden VALUES (?,?,?)').run(req.user.id, row.id, now);
+      stmt('DELETE FROM saved_messages WHERE user_id=? AND message_id=?').run(req.user.id, row.id);
+      stmt('DELETE FROM reminders WHERE user_id=? AND message_id=?').run(req.user.id, row.id);
+    }
+    deliver({ type: 'messages-hidden', messageIds: rows.map(row => row.id) }, socket => socket.userId === req.user.id);
+    res.json({ messageIds: rows.map(row => row.id) });
+  });
+  // 只对自己清空会话：记下当前最后一条的位置，之前的消息对自己不再显示，以后的新消息照常。
+  app.post('/api/room-clear', (req, res) => {
+    rateLimit(req, 'room-clear', 30);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const throughSeq = stmt('SELECT COALESCE(MAX(seq), 0) AS n FROM messages WHERE room_id=?').get(room.id).n;
+    stmt('INSERT INTO room_cleared VALUES (?,?,?,?) ON CONFLICT(user_id, room_id) DO UPDATE SET through_seq=excluded.through_seq, cleared_at=excluded.cleared_at').run(req.user.id, room.id, throughSeq, Date.now());
+    stmt(`DELETE FROM saved_messages WHERE user_id=? AND message_id IN (SELECT id FROM messages WHERE room_id=? AND seq<=?)`).run(req.user.id, room.id, throughSeq);
+    stmt(`DELETE FROM reminders WHERE user_id=? AND message_id IN (SELECT id FROM messages WHERE room_id=? AND seq<=?)`).run(req.user.id, room.id, throughSeq);
+    deliver({ type: 'room-cleared', roomId: room.id, throughSeq }, socket => socket.userId === req.user.id);
+    res.json({ roomId: room.id, throughSeq });
+  });
+  app.get('/api/push', (_req, res) => res.json({ publicKey: vapidPublicKey(vapidKey()) }));
+  // 订阅和更新这台设备的推送设置共用一个接口：muted 是这台设备上设了免打扰的会话，private 是隐私模式。
+  app.post('/api/push/subscribe', (req, res) => {
+    rateLimit(req, 'push', 30);
+    const { endpoint, keys } = req.body?.subscription || {};
+    if (!validEndpoint(endpoint) || !validKeys(keys)) throw fail('推送订阅无效');
+    const muted = req.body.muted ?? [];
+    if (!Array.isArray(muted) || muted.length > 1000 || muted.some(id => typeof id !== 'string' || id.length > 100)) throw fail('免打扰列表无效');
+    const origin = /^https:\/\/[^/]+$/.test(req.get('origin') || '') ? req.get('origin') : '';
+    const id = stmt('SELECT id FROM push_subscriptions WHERE endpoint=?').get(endpoint)?.id || randomUUID(), now = Date.now();
+    stmt(`INSERT INTO push_subscriptions (endpoint,id,user_id,session_hash,p256dh,auth,muted,private,origin,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id, session_hash=excluded.session_hash, p256dh=excluded.p256dh, auth=excluded.auth,
+      muted=excluded.muted, private=excluded.private, origin=excluded.origin, updated_at=excluded.updated_at`)
+      .run(endpoint, id, req.user.id, pushSessionOf(req), keys.p256dh, keys.auth, JSON.stringify([...new Set(muted)]), req.body.private ? 1 : 0, origin, now, now);
+    // 每人最多保留 10 台设备的订阅。
+    stmt('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint NOT IN (SELECT endpoint FROM push_subscriptions WHERE user_id=? ORDER BY updated_at DESC LIMIT 10)').run(req.user.id, req.user.id);
+    res.json({ id });
+  });
+  app.post('/api/push/unsubscribe', (req, res) => {
+    if (typeof req.body?.endpoint !== 'string') throw fail('推送订阅无效');
+    stmt('DELETE FROM push_subscriptions WHERE endpoint=? AND user_id=?').run(req.body.endpoint, req.user.id);
+    res.json({ ok: true });
   });
   app.post('/api/folders', (req, res) => {
     rateLimit(req, 'folders', 30);
@@ -1089,27 +1285,64 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     // 断线重连后从本地最后一条往后补齐，每页最多 200 条。
     if (req.query.after !== undefined) {
       const after = Math.max(0, Number(req.query.after) || 0);
-      const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD} ORDER BY seq LIMIT 201`).all(room.id, after);
+      const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq LIMIT 201`).all(room.id, after, req.user.id, req.user.id);
       return res.json({ messages: withReads(rows.slice(0, 200).map(serializeMessage)), hasNewer: rows.length > 200 });
     }
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
-    const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq<? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 51`).all(room.id, before);
+    const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq<? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq DESC LIMIT 51`).all(room.id, before, req.user.id, req.user.id);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
   });
   // 消息链接：按消息标识找到所在会话和位置，供客户端跳转。没有权限与不存在一律返回 404，不泄露消息是否存在。
   app.get('/api/message-location', (req, res) => {
     const row = typeof req.query.id === 'string' && req.query.id.length <= 100 && stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(req.query.id);
     const room = row && row.seq > clearedThroughSeq() && stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
-    if (!room || !canAccess(room, req.user.id)) throw fail('消息不存在或你无权查看', 404);
+    if (!room || !canAccess(room, req.user.id) || hiddenFor(req.user.id, row)) throw fail('消息不存在或你无权查看', 404);
     const threadOf = stmt('SELECT root_id FROM message_threads WHERE message_id=?').get(row.id)?.root_id || null;
     res.json({ id: row.id, roomId: row.room_id, seq: row.seq, threadOf });
+  });
+  // 「提到我的」：别人 @我（含 @所有人）、回复我、在话题里回复我、回应我的消息，按时间倒序，每页 50 条。
+  app.get('/api/activity', (req, res) => {
+    const me = req.user.id;
+    const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
+    const roomIds = stmt('SELECT * FROM rooms').all().filter(room => canAccess(room, me)).map(room => room.id);
+    if (!roomIds.length) return res.json({ items: [], hasMore: false });
+    const inRooms = `m.room_id IN (${roomIds.map(() => '?').join(',')})`;
+    const alive = `m.seq>? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo('m')}`;
+    const base = [clearedThroughSeq(), me, me, ...roomIds];
+    const mentions = stmt(`SELECT DISTINCT m.*, m.created_at AS at, m.sender_id AS actor FROM message_mentions x JOIN messages m ON m.id=x.message_id
+      WHERE x.user_id IN (?, '*') AND m.sender_id<>? AND ${alive} AND ${inRooms} AND m.created_at<? ORDER BY m.created_at DESC LIMIT 51`).all(me, me, ...base, before);
+    const replies = stmt(`SELECT m.*, m.created_at AS at, m.sender_id AS actor FROM message_replies r JOIN messages m ON m.id=r.message_id JOIN messages mine ON mine.id=r.reply_to
+      WHERE mine.sender_id=? AND m.sender_id<>? AND ${alive} AND ${inRooms} AND m.created_at<? ORDER BY m.created_at DESC LIMIT 51`).all(me, me, ...base, before);
+    const threads = stmt(`SELECT m.*, m.created_at AS at, m.sender_id AS actor FROM message_threads t JOIN messages m ON m.id=t.message_id JOIN messages root ON root.id=t.root_id
+      WHERE root.sender_id=? AND m.sender_id<>? AND ${alive} AND ${inRooms} AND m.created_at<? ORDER BY m.created_at DESC LIMIT 51`).all(me, me, ...base, before);
+    const reactions = stmt(`SELECT m.*, x.created_at AS at, x.user_id AS actor, x.emoji FROM message_reactions x JOIN messages m ON m.id=x.message_id
+      WHERE m.sender_id=? AND x.user_id<>? AND ${alive} AND ${inRooms} AND x.created_at<? ORDER BY x.created_at DESC LIMIT 51`).all(me, me, ...base, before);
+    const tagged = [...mentions.map(row => ['mention', row]), ...replies.map(row => ['reply', row]), ...threads.map(row => ['thread', row]), ...reactions.map(row => ['reaction', row])];
+    // 同一条消息既 @ 了我又回复我时只留一条（回复优先）。
+    const seen = new Set();
+    const items = tagged.sort((a, b) => b[1].at - a[1].at || (a[0] === 'mention') - (b[0] === 'mention')).filter(([kind, row]) => {
+      const key = kind === 'reaction' ? `${row.id}:${row.actor}:${row.emoji}` : row.id;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+    res.json({ items: items.slice(0, 50).map(([kind, row]) => ({ kind, at: row.at, actorId: row.actor, ...(row.emoji ? { emoji: row.emoji } : {}), message: serializeMessage(row) })), hasMore: items.length > 50 });
+  });
+  // 按日期跳转：这个会话里某个时间之后的第一条消息（不含话题回复、已清空和自己删掉的）。
+  app.get('/api/message-at', (req, res) => {
+    const room = requireRoom(req.query.roomId, req.user.id);
+    const time = Number(req.query.time);
+    if (!Number.isSafeInteger(time) || time < 0) throw fail('日期无效');
+    const row = stmt(`SELECT id, room_id, seq, created_at FROM messages WHERE room_id=? AND created_at>=? AND seq>? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq LIMIT 1`)
+      .get(room.id, time, clearedThroughSeq(), req.user.id, req.user.id);
+    if (!row) throw fail('这一天以后没有消息', 404);
+    res.json({ id: row.id, roomId: row.room_id, seq: row.seq, createdAt: row.created_at });
   });
   // 话题：根消息和它的全部回复（最多 500 条，按时间先后）。
   app.get('/api/thread', (req, res) => {
     const root = typeof req.query.rootId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.query.rootId);
     if (!root || root.seq <= clearedThroughSeq()) throw fail('话题不存在', 404);
     requireRoom(root.room_id, req.user.id);
-    const replies = stmt('SELECT m.* FROM message_threads t JOIN messages m ON m.id=t.message_id WHERE t.root_id=? ORDER BY m.seq LIMIT 500').all(root.id);
+    const replies = stmt(`SELECT m.* FROM message_threads t JOIN messages m ON m.id=t.message_id WHERE t.root_id=? AND ${visibleTo('m')} ORDER BY m.seq LIMIT 500`).all(root.id, req.user.id, req.user.id);
     res.json({ root: withReads([serializeMessage(root)])[0], replies: withReads(replies.map(serializeMessage)) });
   });
   // 定时消息：最早 1 分钟后、最晚 30 天内；每人最多 50 条待发送。
@@ -1151,7 +1384,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
   // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
   let retentionCheckedAt = 0;
-  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_nudges', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
+  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_nudges', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders', 'message_cards', 'message_hidden'];
   // 删除一批消息：附件、所有关联数据一起清掉，再通知各会话的成员。
   const deleteMessages = rows => {
     if (!rows.length) return 0;
@@ -1210,8 +1443,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const row of stmt('SELECT * FROM reminders WHERE remind_at<=?').all(now)) {
       const message = stmt('SELECT * FROM messages WHERE id=?').get(row.message_id);
       const room = message && stmt('SELECT * FROM rooms WHERE id=?').get(message.room_id);
-      if (!message || recalledAt(message.id) || message.seq <= clearedThroughSeq() || !canAccess(room, row.user_id)) { stmt('DELETE FROM reminders WHERE id=?').run(row.id); continue; }
-      if (!online.has(row.user_id)) continue;
+      if (!message || recalledAt(message.id) || message.seq <= clearedThroughSeq() || !canAccess(room, row.user_id)) { stmt('DELETE FROM reminders WHERE id=?').run(row.id); pushedReminders.delete(row.id); continue; }
+      // 不在线时先推送到手机（每条提醒只推一次），等上线后再在页面里提醒。
+      if (!online.has(row.user_id)) {
+        if (!pushedReminders.has(row.id)) {
+          pushedReminders.add(row.id);
+          const body = previewText(serializeMessage(message)).slice(0, 200);
+          for (const sub of stmt('SELECT * FROM push_subscriptions WHERE user_id=?').all(row.user_id)) pushTo(sub, { title: '提醒', body, roomId: room.id, messageId: message.id }, 'high');
+        }
+        continue;
+      }
+      pushedReminders.delete(row.id);
       deliver({ type: 'reminder', message: serializeMessage(message) }, socket => socket.userId === row.user_id);
       stmt('DELETE FROM reminders WHERE id=?').run(row.id);
     }
@@ -1285,6 +1527,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const message = typeof req.body?.messageId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.body.messageId);
     if (!message || message.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
     requireRoom(message.room_id, req.user.id);
+    if (req.body.saved !== false && hiddenFor(req.user.id, message)) throw fail('消息不存在或已被清空', 404);
     if (req.body.saved === false) stmt('DELETE FROM saved_messages WHERE user_id=? AND message_id=?').run(req.user.id, message.id);
     else {
       if (recalledAt(message.id)) throw fail('消息已撤回');
@@ -1349,7 +1592,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const members = JSON.parse(room.members);
     const title = room.kind === 'direct' ? nameOf(members.find(id => id !== req.user.id) || req.user.id) : room.name;
     const blocks = [];
-    for (const row of stmt('SELECT * FROM messages WHERE room_id=? AND seq>? ORDER BY seq').iterate(room.id, clearedThroughSeq())) {
+    for (const row of stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND ${visibleTo()} ORDER BY seq`).iterate(room.id, clearedThroughSeq(), req.user.id, req.user.id)) {
       const message = serializeMessage(row);
       const lines = [`${time(message.createdAt)}  ${senderOf(message)}${message.forwardedFrom ? `（转发自 ${nameOf(message.forwardedFrom.senderId)}）` : ''}${message.editedAt ? '（已编辑）' : ''}`];
       if (message.recalledAt) lines.push(message.removedBy ? '（消息已被管理员删除）' : '（消息已撤回）');
@@ -1358,6 +1601,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         if (quote) lines.push(`↪ 回复 ${quote.senderId ? nameOf(quote.senderId) : ''}：${quote.missing ? '原消息已不存在' : quote.recalled ? '原消息已撤回' : quote.text.replace(/\s+/g, ' ').slice(0, 40) || '[附件]'}`);
         if (message.nudge) lines.push(`[拍一拍] 拍了拍 ${message.nudge.targetId === message.senderId ? '自己' : nameOf(message.nudge.targetId)}`);
         else if (message.bundle) lines.push(`[聊天记录] ${message.bundle.title}`, ...message.bundle.items.map(item => `  ${item.senderName}：${item.text || item.attachments.map(file => `[${file.name}]`).join(' ')}`));
+        else if (message.card) lines.push(`[名片] ${nameOf(message.card.userId)}`);
         else if (message.poll) lines.push(`[投票${message.poll.multiple ? '，多选' : ''}${message.poll.closedAt ? '，已结束' : ''}] ${message.text}`, ...message.poll.options.map(option => `  · ${option.text}：${option.voters.length} 票`));
         else if (message.text) lines.push(message.text);
         for (const file of message.attachments) lines.push(`[附件] ${file.name}（${sizeText(file.size)}）`);
@@ -1376,8 +1620,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const media = "json_extract(f.value, '$.mime') LIKE 'image/%' OR json_extract(f.value, '$.mime') LIKE 'video/%'";
     const rows = stmt(`SELECT m.id AS messageId, m.seq, m.sender_id AS senderId, m.created_at AS createdAt, f.value AS file FROM messages m, json_each(m.attachments) f
-      WHERE m.room_id=? AND m.seq>? AND m.seq<? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND ${kind === 'media' ? `(${media})` : `NOT (${media})`}
-      ORDER BY m.seq DESC, f.key LIMIT 61`).all(room.id, clearedThroughSeq(), before);
+      WHERE m.room_id=? AND m.seq>? AND m.seq<? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo('m')} AND ${kind === 'media' ? `(${media})` : `NOT (${media})`}
+      ORDER BY m.seq DESC, f.key LIMIT 61`).all(room.id, clearedThroughSeq(), before, req.user.id, req.user.id);
     res.json({ items: rows.slice(0, 60).map(row => ({ ...row, file: JSON.parse(row.file) })), hasMore: rows.length > 60 });
   });
   // 只读检索文字与附件文件名：带 roomId 时只查该会话，否则查自己能访问的全部会话；撤回与已清空的消息不会命中。
@@ -1405,9 +1649,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     rateLimit(req, 'search', 120);
     const pattern = `%${query.replace(/[\\%_]/g, char => `\\${char}`)}%`;
     const keyword = query ? "AND (text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(messages.attachments) WHERE json_extract(value, '$.name') LIKE ? ESCAPE '\\'))" : '';
-    const rows = stmt(`SELECT * FROM messages WHERE room_id IN (${roomIds.map(() => '?').join(',')}) AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls)
+    const rows = stmt(`SELECT * FROM messages WHERE room_id IN (${roomIds.map(() => '?').join(',')}) AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo()}
       ${keyword} ${filters.map(filter => `AND ${filter}`).join(' ')}
-      ORDER BY seq DESC LIMIT 50`).all(...roomIds, clearedThroughSeq(), ...(query ? [pattern, pattern] : []), ...args);
+      ORDER BY seq DESC LIMIT 50`).all(...roomIds, clearedThroughSeq(), req.user.id, req.user.id, ...(query ? [pattern, pattern] : []), ...args);
     res.json({ messages: rows.map(serializeMessage) });
   });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
@@ -1533,7 +1777,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       const file = stmt('SELECT * FROM uploads WHERE id=?').get(id);
       if (!file || file.owner_id !== req.user.id || file.room_id !== room.id || file.purpose !== 'message' || file.claimed) throw fail('附件不可用，请重新选择');
       const thumb = stmt('SELECT thumb_id FROM upload_thumbnails WHERE upload_id=?').get(file.id)?.thumb_id;
-      return { id: file.id, name: file.name, mime: file.mime, size: file.size, ...(thumb ? { thumbId: thumb } : {}) };
+      const sticker = Boolean(stmt('SELECT 1 FROM upload_stickers WHERE upload_id=?').get(file.id));
+      return { id: file.id, name: file.name, mime: file.mime, size: file.size, ...(thumb ? { thumbId: thumb } : {}), ...(sticker ? { sticker: true } : {}) };
     });
     if (!messageText && !attachments.length) throw fail('消息不能为空');
     // 只能引用同一会话里仍然可见的消息，避免借引用读取其他会话的内容。
@@ -1583,6 +1828,25 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.status(201).json({ message });
   });
   // 拍一拍：会话里出现「A 拍了拍 B」；只能拍会话里的成员（也可以拍自己），每人每分钟最多 10 次。
+  // 推荐名片：在会话里发一张某位成员的名片，点开就是他的资料卡。
+  app.post('/api/contact-card', (req, res) => {
+    rateLimit(req, 'contact-card', 30);
+    requireVoice(req.user);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    requireRoomVoice(room, req.user);
+    const target = typeof req.body.userId === 'string' && userById(req.body.userId);
+    if (!target) throw fail('这位成员不存在', 404);
+    const id = randomUUID();
+    db.exec('BEGIN');
+    try {
+      stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, '', '[]', `card:${randomUUID()}`, Date.now());
+      stmt('INSERT INTO message_cards VALUES (?,?)').run(id, target.id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
+    broadcast({ type: 'message', message }, room.id);
+    res.status(201).json({ message });
+  });
   app.post('/api/nudge', (req, res) => {
     rateLimit(req, 'nudge', 10);
     const room = requireRoom(req.body?.roomId, req.user.id);
@@ -1603,6 +1867,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.get('/api/media', (req, res) => {
     const file = typeof req.query.id === 'string' && stmt('SELECT * FROM uploads WHERE id=?').get(req.query.id);
     if (!file) throw fail('文件不存在', 404);
+    if (file.purpose === 'sticker' && file.owner_id !== req.user.id) throw fail('文件不存在', 404);
     if (file.purpose === 'message' || file.purpose === 'thumbnail' || file.purpose === 'room-avatar') {
       requireRoom(file.room_id, req.user.id);
       if (!file.claimed && file.owner_id !== req.user.id) throw fail('文件尚未发送', 403);
@@ -1644,6 +1909,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       ws.on('message', data => {
         let event;
         try { event = JSON.parse(data); } catch { return; }
+        // 页面告诉服务端：这个连接对应哪台设备的推送订阅、页面是否在前台。
+        if (event?.type === 'presence') {
+          ws.pushId = typeof event.pushId === 'string' && stmt('SELECT 1 FROM push_subscriptions WHERE id=? AND user_id=?').get(event.pushId, ws.userId) ? event.pushId : '';
+          ws.visible = event.visible === true;
+          return;
+        }
         if (event?.type !== 'typing' || typeof event.roomId !== 'string' || event.roomId.length > 100) return;
         if (Date.now() - (ws.typedAt || 0) < 2000) return;
         const room = stmt('SELECT * FROM rooms WHERE id=?').get(event.roomId);
@@ -1675,6 +1946,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const [key, value] of failures) if (value.until < Date.now()) failures.delete(key);
     const old = stmt('SELECT id FROM uploads WHERE claimed=0 AND created_at<?').all(Date.now() - 86400000);
     for (const file of old) { try { unlinkSync(path.join(uploadDir, file.id)); } catch {} stmt('DELETE FROM uploads WHERE id=?').run(file.id); stmt('DELETE FROM upload_thumbnails WHERE upload_id=? OR thumb_id=?').run(file.id, file.id); }
+    stmt('DELETE FROM upload_stickers WHERE upload_id NOT IN (SELECT id FROM uploads)').run();
   }, 30000);
   heartbeat.unref();
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); }); }

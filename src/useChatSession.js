@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, socketUrl } from './api';
 import { socketProtocols } from './mobile/session';
+import { disablePush, pushId } from './push';
+import { popoutRoom } from './popout';
 import { chatPref } from './chatPrefs';
 import { playMessageSound } from './sound';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
@@ -24,7 +26,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   const [pinsVersion, setPinsVersion] = useState(0);
   const [savedVersion, setSavedVersion] = useState(0);
   const [threadTick, setThreadTick] = useState({ rootId: null, n: 0 });
-  const historyRef = useRef({ throughSeq: 0, recalls: new Map() });
+  const historyRef = useRef({ throughSeq: 0, recalls: new Map(), hidden: new Set(), cleared: {} });
   const reconnect = useRef();
   const activeRoom = useRef(selected);
   const stateRef = useRef(state);
@@ -51,8 +53,21 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     setHistoryVersion(value => value + 1);
     if (cleared) window.desktop?.historyCleared?.().catch(() => {});
   }, []);
+  // 只对自己删除消息、清空会话：并进本地历史，列表、侧栏和打开着的话题立即更新。
+  const hideLocally = useCallback(({ messageIds = [], cleared = {} }) => {
+    const history = historyRef.current;
+    let changed = false;
+    for (const id of messageIds) if (!history.hidden.has(id)) { history.hidden.add(id); changed = true; }
+    for (const [roomId, seq] of Object.entries(cleared)) if ((history.cleared[roomId] || 0) < seq) { history.cleared[roomId] = seq; changed = true; }
+    if (!changed) return;
+    setMessages(previous => Object.fromEntries(Object.entries(previous).map(([id, items]) => [id, merge(items, [], history)])));
+    setState(previous => previous ? sanitizeState(previous, history) : previous);
+    setHistoryVersion(value => value + 1);
+    setThreadTick(tick => ({ rootId: '*', n: tick.n + 1 }));
+  }, []);
+  const adoptCleared = next => { Object.assign(historyRef.current.cleared, next.cleared || {}); };
   const refresh = useCallback(async () => {
-    try { const next = await api('state'); if (!logoutPending.current) { syncHistory(next.recalls, next.clearedThroughSeq); setState(sanitizeState(next, historyRef.current)); } return next; }
+    try { const next = await api('state'); if (!logoutPending.current) { syncHistory(next.recalls, next.clearedThroughSeq); adoptCleared(next); setState(sanitizeState(next, historyRef.current)); } return next; }
     catch (error) { if (error.status === 401 && !logoutPending.current) location.reload(); throw error; }
   }, [syncHistory]);
   const applyReceipt = useCallback(receipt => {
@@ -81,14 +96,20 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       .map(([roomId, users]) => [roomId, Object.fromEntries(Object.entries(users).filter(([, until]) => until > Date.now()))]))), 1000);
     return () => clearInterval(timer);
   }, [typing]);
+  // 回应、投票、编辑和撤回也可能发生在话题里：通知打开着的话题面板重新读取（rootId 为 * 表示任意话题）。
+  const touchThread = () => setThreadTick(tick => ({ rootId: '*', n: tick.n + 1 }));
   const applyReactions = useCallback(({ roomId, messageId, reactions }) => {
     setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, reactions } : message) } : previous);
+    touchThread();
   }, []);
   const applyPoll = useCallback(({ roomId, messageId, poll }) => {
     setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, poll } : message) } : previous);
+    touchThread();
   }, []);
   // 编辑后的消息只替换正文等字段，不当作新消息提醒；侧栏预览也跟着更新。
   const applyEdit = useCallback(message => {
+    // 话题里的回复不在主时间线上：只让话题面板刷新，不并进主聊天。
+    if (message.threadOf) { touchThread(); return; }
     setMessages(previous => previous[message.roomId] ? { ...previous, [message.roomId]: merge(previous[message.roomId], [message], historyRef.current) } : previous);
     setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.lastMessage?.id === message.id ? { ...room, lastMessage: { ...room.lastMessage, ...message } } : room) } : previous);
   }, []);
@@ -110,7 +131,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     const joinError = sessionStorage.getItem('linliao.joinError');
     if (joinError) { sessionStorage.removeItem('linliao.joinError'); notify(joinError); }
     setBootstrap(result);
-    if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); setState(sanitizeState(result, historyRef.current)); }
+    if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); adoptCleared(result); setState(sanitizeState(result, historyRef.current)); }
     else { setState(null); setMessages({}); setHasMore({}); setConnected(false); }
   }, [syncHistory, notify]);
   useEffect(() => { start(); }, [start]);
@@ -119,6 +140,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     logoutPending.current = true;
     setLoggingOut(true);
     try {
+      // 先取消这台设备的手机推送，退出后不再收到这个账号的通知。
+      await disablePush().catch(() => {});
       await api(bootstrap?.mode === 'cloud' ? 'auth/logout' : 'logout', {});
     } catch (error) {
       logoutPending.current = false;
@@ -157,6 +180,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     if (message.nudge && message.nudge.targetId !== current.me.id) return;
     // 提示音：正在看这个会话时不响；Windows 的系统通知自带声音，弹出时不重复响。
     const watching = activeRoom.current === message.roomId && document.hasFocus() && !document.hidden;
+    // 独立窗口不响也不弹通知，交给主窗口。
+    if (popoutRoom) return;
     const ring = () => { if (!watching && chatPref('sound')) playMessageSound(); };
     if (!window.desktop?.message) { ring(); return; }
     const sender = current.users.find(user => user.id === message.senderId);
@@ -167,6 +192,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     }).then(shown => { if (!(shown && window.desktop.platform === 'windows')) ring(); }).catch(error => notify(error.message));
   }, [notify, syncHistory, privacyRef]);
   const applyKeywords = useCallback(keywords => setState(previous => previous ? { ...previous, keywords } : previous), []);
+  const applyPhrases = useCallback(phrases => setState(previous => previous ? { ...previous, phrases } : previous), []);
   // 会话文件夹（跨设备同步）。
   const applyFolders = useCallback(folders => setState(previous => previous ? { ...previous, folders } : previous), []);
   // 自己写的成员备注（只有自己看得到）：空字符串表示删除。
@@ -208,13 +234,15 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       clearTimeout(reconnect.current);
       const currentSocket = new WebSocket(socketUrl(), socketProtocols());
       socket = socketRef.current = currentSocket;
-      socket.onopen = () => { if (cancelled || logoutPending.current || socket !== currentSocket) return currentSocket.close(); setConnected(true); delay = 700; synchronize(); };
+      socket.onopen = () => { if (cancelled || logoutPending.current || socket !== currentSocket) return currentSocket.close(); setConnected(true); delay = 700; presence(); synchronize(); };
       socket.onmessage = event => {
         if (cancelled || logoutPending.current || socket !== currentSocket) return;
         let data; try { data = JSON.parse(event.data); } catch { return; }
         if (data.type === 'message') { receive(data.message); stopTyping(data.message.roomId, data.message.senderId); }
         if (data.type === 'typing') setTyping(previous => ({ ...previous, [data.roomId]: { ...previous[data.roomId], [data.userId]: Date.now() + 5000 } }));
         if (data.type === 'message-recalled') { syncHistory([data.message]); applyEdit(data.message); }
+        if (data.type === 'messages-hidden') hideLocally({ messageIds: data.messageIds });
+        if (data.type === 'room-cleared') hideLocally({ cleared: { [data.roomId]: data.throughSeq } });
         if (data.type === 'history-cleared') { syncHistory([], data.throughSeq); refresh().catch(error => notify(error.message)); }
         if (data.type === 'message-reads') applyReceipt(data);
         if (data.type === 'message-reactions') applyReactions(data);
@@ -232,6 +260,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'user-note') applyNote(data);
         if (data.type === 'folders') applyFolders(data.folders);
         if (data.type === 'keywords') applyKeywords(data.keywords);
+        if (data.type === 'phrases') applyPhrases(data.phrases);
         if (data.type === 'message-poll') applyPoll(data);
         if (data.type === 'message-thread') {
           setMessages(previous => previous[data.roomId] ? { ...previous, [data.roomId]: previous[data.roomId].map(message => message.id === data.rootId ? { ...message, thread: data.thread } : message) } : previous);
@@ -248,7 +277,13 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       socket.onerror = () => currentSocket.close();
     }
     connect();
+    // 告诉服务端这台设备的页面是否在前台：在前台时不发手机推送。
+    const presence = (visible = document.visibilityState === 'visible') => { if (pushId() && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'presence', pushId: pushId(), visible })); };
+    // 离开页面（包括被浏览器放进往返缓存冻结）时先说一声不在前台，免得服务端以为还在看而不推送。
+    const leave = () => presence(false);
+    window.addEventListener('pagehide', leave);
     const resume = () => {
+      presence();
       if (document.visibilityState === 'hidden' || cancelled || logoutPending.current) return;
       if (socket?.readyState === WebSocket.OPEN) synchronize();
       else if (socket?.readyState !== WebSocket.CONNECTING) { clearTimeout(reconnect.current); connect(); }
@@ -256,8 +291,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     window.addEventListener('online', resume);
     window.addEventListener('linliao:resume', resume);
     document.addEventListener('visibilitychange', resume);
-    return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); window.removeEventListener('online', resume); window.removeEventListener('linliao:resume', resume); document.removeEventListener('visibilitychange', resume); };
-  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, applyFolders, applyKeywords, syncHistory, stopTyping]);
+    return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); window.removeEventListener('online', resume); window.removeEventListener('linliao:resume', resume); window.removeEventListener('pagehide', leave); document.removeEventListener('visibilitychange', resume); };
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
@@ -298,5 +333,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally };
 }

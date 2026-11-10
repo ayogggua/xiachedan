@@ -7,9 +7,12 @@ import { Avatar, Modal, activeStatus } from './components';
 import { JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
 import { ACCENTS, FONT_SIZES, WALLPAPERS, wallpaperCss, readWallpaperImage, saveWallpaperImage } from './appearance';
+import { SKINS } from './skin';
 import { readQuiet, saveQuiet, isQuiet } from './quiet';
 import { modKey } from './chatPrefs';
 import { playMessageSound } from './sound';
+import { disablePush, enablePush, needsHomeScreen, pushState, pushSupported } from './push';
+import { appLockSupported, LOCK_TIMEOUTS } from './AppLock';
 
 // 设置：左侧分类，右侧内容；窄屏时先选分类再进入内容页。
 const SECTIONS = [
@@ -24,7 +27,25 @@ function SettingRow({ title, description, children }) {
   return <div className="setting-row"><span><b>{title}</b>{description && <small>{description}</small>}</span>{children}</div>;
 }
 
-export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
+// 手机推送：只在能用的环境里显示；iPhone 上提示先添加到主屏幕。
+function PushSettings({ settings, notify }) {
+  const [enabled, setEnabled] = useState(() => pushSupported() && Boolean(pushState()) && Notification.permission === 'granted');
+  const [busy, setBusy] = useState(false);
+  if (needsHomeScreen()) return <SettingRow title="手机推送" description="在 Safari 里点「分享 → 添加到主屏幕」，从主屏幕打开虾扯蛋后就能开启。" />;
+  if (!pushSupported()) return null;
+  const change = async value => {
+    setBusy(true);
+    try {
+      if (value) { await enablePush(settings); notify('已开启手机推送'); } else { await disablePush(); notify('已关闭手机推送'); }
+      setEnabled(value);
+      window.dispatchEvent(new Event('linliao:resume'));
+    } catch (error) { notify(error.message); } finally { setBusy(false); }
+  };
+  return <SettingRow title="手机推送" description={Notification.permission === 'denied' ? '通知权限被拒绝，请在系统设置里允许虾扯蛋发送通知。' : '虾扯蛋在后台或没有打开时，也会收到新消息通知。免打扰的会话只在被 @ 时推送。'}>
+    <Switch label="手机推送" checked={enabled} disabled={busy} onChange={change} /></SettingRow>;
+}
+
+export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, skin, onSkin, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -40,6 +61,8 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
       </div>
     </>,
     appearance: <>
+      {onSkin && <><h4>界面风格</h4><div className="segmented-control" role="radiogroup" aria-label="界面风格">{SKINS.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={skin === key} className={skin === key ? 'active' : ''} onClick={() => onSkin(key)}>{label}</button>)}</div>
+        <p className="inline-note">「经典」是熟悉的三栏聊天布局。主题色和聊天背景每种风格各记一份，深浅色和字号两边共用。</p></>}
       <h4>外观模式</h4><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div>
       {appearance && <><h4>聊天背景</h4><WallpaperPicker appearance={appearance} onAppearance={onAppearance} theme={theme} notify={notify} /><h4>主题色</h4><div className="accent-row" role="radiogroup" aria-label="主题色">{ACCENTS.map(([label, value]) => <button type="button" key={label} role="radio" aria-checked={appearance.accent === value} aria-label={`${label}色`} title={`${label}色`}
           className={`accent-swatch ${appearance.accent === value ? 'active' : ''}`} style={{ background: value || '#d9653f' }} onClick={() => onAppearance({ ...appearance, accent: value })} />)}
@@ -48,12 +71,14 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
     </>,
     chat: chatPrefs && <>
       <h4>头像</h4>
+      {skin === 'classic' ? <p className="inline-note">经典风格下每条消息都显示双方的头像，名字只在群聊里显示别人的。</p> : <>
       <div className="segmented-control" role="radiogroup" aria-label="头像位置">{[['sticky', '跟随滚动'], ['top', '固定在第一条旁边']].map(([value, label]) =>
         <button type="button" key={value} role="radio" aria-checked={chatPrefs.avatarMode === value} className={chatPrefs.avatarMode === value ? 'active' : ''} onClick={() => onChatPrefs({ avatarMode: value })}>{label}</button>)}</div>
       <p className="inline-note">{chatPrefs.avatarMode === 'top' ? '头像对齐一组连续消息的第一条，不随滚动移动。' : '一组连续消息很长时，头像贴着可视区底部跟随滚动（Telegram 式）。'}</p>
       <SettingRow title="群聊中显示自己的头像"><Switch label="群聊中显示自己的头像" checked={chatPrefs.showSelfInGroups} onChange={value => onChatPrefs({ showSelfInGroups: value })} /></SettingRow>
       <SettingRow title="群聊中显示自己的名字"><Switch label="群聊中显示自己的名字" checked={chatPrefs.showSelfNameInGroups} onChange={value => onChatPrefs({ showSelfNameInGroups: value })} /></SettingRow>
       <SettingRow title="私聊中显示双方的头像和名字"><Switch label="私聊中显示双方的头像和名字" checked={chatPrefs.showBothInDirect} onChange={value => onChatPrefs({ showBothInDirect: value })} /></SettingRow>
+      </>}
       <SettingRow title="双击消息点 👍" description="关闭后，双击消息里的文字可以选中词语。"><Switch label="双击消息点赞" checked={chatPrefs.quickReact} onChange={value => onChatPrefs({ quickReact: value })} /></SettingRow>
       {/* 触屏设备上回车总是换行，用发送按钮发送，不需要这一项。 */}
       {!matchMedia('(pointer: coarse)').matches && <>
@@ -62,9 +87,11 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
         <button type="button" key={value} role="radio" aria-checked={chatPrefs.sendKey === value} className={chatPrefs.sendKey === value ? 'active' : ''} onClick={() => onChatPrefs({ sendKey: value })}>{label}</button>)}</div>
       <p className="inline-note">{chatPrefs.sendKey === 'enter' ? 'Shift + Enter 换行；在 ``` 代码块里回车也是换行。' : `Enter 换行，${modKey} + Enter 发送，适合经常写长消息。`}</p>
       </>}
+      {onPhrases && <PhraseSettings phrases={phrases} onChange={onPhrases} notify={notify} />}
     </>,
     notifications: <>
       {window.desktop?.getState && <DesktopSettings notify={notify} />}
+      {pushSettings && <PushSettings settings={pushSettings} notify={notify} />}
       {chatPrefs && <SettingRow title="新消息提示音" description="正在看的会话、免打扰会话和勿扰时段内不响。">
         <button type="button" className="text-button" onClick={() => playMessageSound({ force: true })}>试听</button>
         <Switch label="新消息提示音" checked={chatPrefs.sound} onChange={value => onChatPrefs({ sound: value })} /></SettingRow>}
@@ -73,6 +100,7 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
     </>,
     privacy: <>
       <SettingRow title="隐私模式" description="隐藏聊天内容，鼠标停留在消息上才显示并计为已读；也可以按 ⌘⇧P 切换。"><Switch label="隐私模式" checked={privateMode} onChange={onPrivateMode} /></SettingRow>
+      {appLock && <AppLockSettings appLock={appLock} notify={notify} onClose={onClose} />}
       {cloud && <DeviceSettings notify={notify} />}
     </>,
     space: <>
@@ -80,7 +108,8 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
       {!cloud && <p className="inline-note">所有聊天都通过局域网连接，消息和附件保存在创建空间的电脑上。局域网传输使用 HTTP，请在可信网络内使用。</p>}
       {onAudit && <section><h4>管理</h4><button type="button" className="secondary-button" onClick={onAudit}>查看操作日志</button>
       <label className="toggle-row retention-row">消息保留期限<select aria-label="消息保留期限" value={workspace.retentionDays || 0} onChange={async event => { try { await api('admin/retention', { days: Number(event.target.value) }); await onChanged?.(); notify('保留期限已更新'); } catch (error) { notify(error.message); } }}>{[[0, '永久保留'], [30, '30 天'], [90, '90 天'], [180, '180 天'], [365, '1 年']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      {workspace.retentionDays > 0 && <p className="inline-note">超过 {workspace.retentionDays} 天的消息和附件会被自动删除，无法恢复。</p>}</section>}
+      {workspace.retentionDays > 0 && <p className="inline-note">超过 {workspace.retentionDays} 天的消息和附件会被自动删除，无法恢复。</p>}
+      <label className="toggle-row retention-row">消息撤回时限<select aria-label="消息撤回时限" value={workspace.recallWindow || 0} onChange={async event => { try { await api('admin/recall-window', { seconds: Number(event.target.value) }); await onChanged?.(); notify('撤回时限已更新'); } catch (error) { notify(error.message); } }}>{[[0, '不限'], [120, '2 分钟'], [86400, '24 小时']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></section>}
       {workspace.ownerId === me.id && <StorageSettings cloud={cloud} onCleared={onCleared} notify={notify} />}
       {window.desktop && !cloud && <><h4>加入另一个空间</h4><JoinSpaceForm identity={me} />
         <button type="button" className="text-button back-link" onClick={() => window.desktop.home().catch(error => notify(error.message))}>返回本机空间</button></>}
@@ -88,7 +117,7 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
     about: <>
       {window.desktop?.updates ? <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />
         : <p className="inline-note">网页版随空间服务器一起更新，刷新页面即可使用最新版本。</p>}
-      {onShortcuts && <SettingRow title="键盘快捷键" description={`随时按 ${modKey} / 查看。`}><button type="button" className="secondary-button" onClick={onShortcuts}>查看</button></SettingRow>}
+      {onShortcuts && !matchMedia('(pointer: coarse)').matches && <SettingRow title="键盘快捷键" description={`随时按 ${modKey} / 查看。`}><button type="button" className="secondary-button" onClick={onShortcuts}>查看</button></SettingRow>}
     </>,
   };
   const current = SECTIONS.find(([id]) => id === tab) || SECTIONS[0];
@@ -198,6 +227,60 @@ function WallpaperPicker({ appearance, onAppearance, theme, notify }) {
 }
 
 // 关键词提醒：消息里出现这些词时像被 @ 一样提醒（免打扰的会话也会提醒），在所有设备上生效。
+// 应用锁：设置本机密码和闲置多久后锁定；关闭时要先输入密码。
+function AppLockSettings({ appLock, notify, onClose }) {
+  const [form, setForm] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!appLockSupported()) return <SettingRow title="应用锁" description="需要在桌面端或 HTTPS 网页里使用，局域网的 http 地址上不可用。" />;
+  async function submit(event) {
+    event.preventDefault(); setError('');
+    if (form.mode === 'enable') {
+      if (form.password.length < 4) return setError('密码至少 4 位');
+      if (form.password !== form.confirm) return setError('两次输入的密码不一样');
+      setBusy(true); await appLock.enable(form.password, form.minutes); setBusy(false);
+      notify('已开启应用锁'); setForm(null);
+    } else {
+      setBusy(true); const ok = await appLock.verify(form.password); setBusy(false);
+      if (!ok) return setError('密码不对');
+      appLock.disable(); notify('已关闭应用锁'); setForm(null);
+    }
+  }
+  return <section className="app-lock-settings">
+    <SettingRow title="应用锁" description={appLock.enabled ? `闲置或切到后台超过 ${LOCK_TIMEOUTS.find(([value]) => value === appLock.minutes)?.[1] || `${appLock.minutes} 分钟`} 后锁定，打开时也要先解锁。` : '离开一会儿，别人也看不到聊天。密码只存在这台设备上，不加密本机数据。'}>
+      <Switch label="应用锁" checked={appLock.enabled} onChange={value => { setError(''); setForm(value ? { mode: 'enable', password: '', confirm: '', minutes: 5 } : { mode: 'disable', password: '' }); }} /></SettingRow>
+    {appLock.enabled && !form && <div className="app-lock-row">
+      <label className="toggle-row">自动锁定<select aria-label="自动锁定" value={appLock.minutes} onChange={event => appLock.setMinutes(Number(event.target.value))}>{LOCK_TIMEOUTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <button type="button" className="secondary-button" onClick={() => { onClose(); appLock.lock(); }}>立即锁定</button></div>}
+    {form && <form className="app-lock-form" onSubmit={submit}>
+      <input type="password" aria-label={form.mode === 'enable' ? '设置密码' : '当前密码'} placeholder={form.mode === 'enable' ? '设置密码（至少 4 位）' : '输入当前密码以关闭'} autoComplete={form.mode === 'enable' ? 'new-password' : 'current-password'} autoFocus value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} />
+      {form.mode === 'enable' && <input type="password" aria-label="再输一次" placeholder="再输一次" autoComplete="new-password" value={form.confirm} onChange={event => setForm({ ...form, confirm: event.target.value })} />}
+      {form.mode === 'enable' && <label className="toggle-row">自动锁定<select aria-label="自动锁定时间" value={form.minutes} onChange={event => setForm({ ...form, minutes: Number(event.target.value) })}>{LOCK_TIMEOUTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="account-actions"><button type="button" className="secondary-button" onClick={() => setForm(null)}>取消</button><button className="primary-button" disabled={busy || !form.password}>{form.mode === 'enable' ? '开启' : '关闭应用锁'}</button></div>
+    </form>}
+  </section>;
+}
+
+// 常用语：在输入框的附件菜单或「/」菜单里一键插入；存在服务端，换设备也在。
+function PhraseSettings({ phrases, onChange, notify }) {
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function save(next) {
+    setBusy(true);
+    try { await onChange(next); setInput(''); } catch (error) { notify(error.message); } finally { setBusy(false); }
+  }
+  const add = () => { const text = input.trim(); if (text && !phrases.includes(text)) save([...phrases, text]); else setInput(''); };
+  return <section className="phrase-settings"><h4>常用语</h4>
+    <p className="inline-note">在输入框点附件按钮选「常用语」，或输入「/」加关键字，就能插入。</p>
+    {phrases.length > 0 && <ul className="phrase-list">{phrases.map(text => <li key={text}><span>{text}</span>
+      <button type="button" className="icon-button" aria-label={`删除常用语 ${text.slice(0, 20)}`} disabled={busy} onClick={() => save(phrases.filter(item => item !== text))}><X size={13} /></button></li>)}</ul>}
+    {phrases.length < 30 && <div className="phrase-add"><textarea aria-label="添加常用语" placeholder="比如：收到，马上处理" rows={2} maxLength={500} value={input} disabled={busy}
+      onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); add(); } }} />
+      <button type="button" className="secondary-button" disabled={busy || !input.trim()} onClick={add}>添加</button></div>}
+  </section>;
+}
+
 function KeywordSettings({ keywords, onChange, notify }) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);

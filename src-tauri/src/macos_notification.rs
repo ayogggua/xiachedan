@@ -51,13 +51,14 @@ define_class!(
 );
 
 /// 在启动阶段（主线程）调用：设置代理、登记点击回调并申请通知权限（已授权的不会再询问）。
+/// 一并申请角标权限：没有它，系统会忽略 Dock 图标上的未读数。
 pub fn install(clicked: impl Fn(Option<i32>) + Send + Sync + 'static) {
   static DELEGATE: OnceLock<Retained<Delegate>> = OnceLock::new();
   let _ = CLICKED.set(Box::new(clicked));
   let center = UNUserNotificationCenter::currentNotificationCenter();
   let delegate = DELEGATE.get_or_init(|| unsafe { objc2::msg_send![super(Delegate::alloc().set_ivars(())), init] });
   center.setDelegate(Some(ProtocolObject::from_ref(&**delegate)));
-  center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert, &RcBlock::new(|_: Bool, _: *mut NSError| {}));
+  center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert | UNAuthorizationOptions::Badge, &RcBlock::new(|_: Bool, _: *mut NSError| {}));
 }
 
 /// 每次启动使用独立前缀，避免编号重置后覆盖上次运行留下的系统通知。
