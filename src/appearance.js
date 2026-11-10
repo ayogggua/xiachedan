@@ -48,6 +48,7 @@ function readable(rgb, background, toward) {
 
 // 经典风格默认用绿色；选「橙」时存的是 null，按橙色推算。
 export const CLASSIC_ACCENT = '#22a35a';
+export const QQ_ACCENT = '#0099ff';
 const DEFAULT_ACCENT = '#d9653f';
 const INK = [17, 17, 17];
 
@@ -55,9 +56,13 @@ export function applyAppearance({ accent, fontSize, wallpaper }) {
   const root = document.documentElement.style;
   const valid = Boolean(accent) && /^#[0-9a-f]{6}$/i.test(accent);
   // 经典风格自己的气泡：浅色模式用主题色的浅色调，深色模式用主题色本身，都配深色文字并保证对比度不低于 4.5。
+  // QQ 风格的发送气泡固定配白字，因此两种外观都使用与白色对比度达标的主题色。
   const lightTheme = document.documentElement.dataset.theme === 'light';
   const outBase = toRgb(valid ? accent : DEFAULT_ACCENT);
-  root.setProperty('--bubble-out', toHex(readable(lightTheme ? mix(outBase, [255, 255, 255], .5) : outBase, INK, [255, 255, 255])));
+  const qq = document.documentElement.dataset.style === 'qq';
+  root.setProperty('--bubble-out', toHex(qq
+    ? readable(outBase, [255, 255, 255], [0, 0, 0])
+    : readable(lightTheme ? mix(outBase, [255, 255, 255], .5) : outBase, INK, [255, 255, 255])));
   root.setProperty('--chat-font', `${fontSize}px`);
   const background = wallpaperCss(wallpaper, document.documentElement.dataset.theme === 'light', wallpaper === 'custom' ? readWallpaperImage() : null);
   if (background) { root.setProperty('--wallpaper', background); document.documentElement.dataset.wallpaper = wallpaper; }
@@ -74,18 +79,20 @@ export function applyAppearance({ accent, fontSize, wallpaper }) {
 }
 
 const validWallpaper = value => value === 'custom' || WALLPAPERS.some(([key]) => key === value) ? value : 'none';
-// 主题色和聊天背景每种界面风格各记一份（经典的存在 classic 里），消息字号共用。
+// 主题色和聊天背景每种界面风格各记一份，消息字号共用。
 export function readAppearance() {
   const saved = readStorage('linliao.appearance', {});
   const classic = saved.classic && typeof saved.classic === 'object' ? saved.classic : {};
+  const qq = saved.qq && typeof saved.qq === 'object' ? saved.qq : {};
   return { accent: typeof saved.accent === 'string' ? saved.accent : null, fontSize: FONT_SIZES.some(([, size]) => size === saved.fontSize) ? saved.fontSize : 14,
     wallpaper: validWallpaper(saved.wallpaper),
-    classic: { accent: 'accent' in classic ? typeof classic.accent === 'string' ? classic.accent : null : CLASSIC_ACCENT, wallpaper: validWallpaper(classic.wallpaper) } };
+    classic: { accent: 'accent' in classic ? typeof classic.accent === 'string' ? classic.accent : null : CLASSIC_ACCENT, wallpaper: validWallpaper(classic.wallpaper) },
+    qq: { accent: typeof qq.accent === 'string' ? qq.accent : QQ_ACCENT, wallpaper: validWallpaper(qq.wallpaper) } };
 }
 
 export default function useAppearance(skin) {
   const [stored, setStored] = useState(readAppearance);
-  const current = skin === 'classic' ? stored.classic : stored;
+  const current = skin === 'classic' ? stored.classic : skin === 'qq' ? stored.qq : stored;
   const { accent, wallpaper } = current, { fontSize } = stored;
   useEffect(() => { localStorage.setItem('linliao.appearance', JSON.stringify(stored)); }, [stored]);
   useEffect(() => {
@@ -96,8 +103,10 @@ export default function useAppearance(skin) {
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     return () => observer.disconnect();
   }, [accent, fontSize, wallpaper]);
-  const setAppearance = next => setStored(previous => skin === 'classic'
-    ? { ...previous, fontSize: next.fontSize, classic: { accent: next.accent, wallpaper: next.wallpaper } }
-    : { ...previous, accent: next.accent, fontSize: next.fontSize, wallpaper: next.wallpaper });
+  const setAppearance = next => setStored(previous => {
+    if (skin === 'classic') return { ...previous, fontSize: next.fontSize, classic: { accent: next.accent, wallpaper: next.wallpaper } };
+    if (skin === 'qq') return { ...previous, fontSize: next.fontSize, qq: { accent: next.accent, wallpaper: next.wallpaper } };
+    return { ...previous, accent: next.accent, fontSize: next.fontSize, wallpaper: next.wallpaper };
+  });
   return [{ accent, fontSize, wallpaper }, setAppearance];
 }

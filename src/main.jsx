@@ -5,6 +5,7 @@ import MobileRoot from './mobile/MobileRoot';
 import './styles.css';
 import './mobile/mobile.css';
 import './skins/classic.css';
+import './skins/qq.css';
 import { applyTheme, storedTheme } from './useTheme';
 import { applySkin, storedSkin } from './skin';
 import { registerPwa } from './pwa/register';

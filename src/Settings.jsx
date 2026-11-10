@@ -61,8 +61,8 @@ export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, them
       </div>
     </>,
     appearance: <>
-      {onSkin && <><h4>界面风格</h4><div className="segmented-control" role="radiogroup" aria-label="界面风格">{SKINS.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={skin === key} className={skin === key ? 'active' : ''} onClick={() => onSkin(key)}>{label}</button>)}</div>
-        <p className="inline-note">「经典」是熟悉的三栏聊天布局。主题色和聊天背景每种风格各记一份，深浅色和字号两边共用。</p></>}
+      {onSkin && <><h4>界面风格</h4><div className="segmented-control three" role="radiogroup" aria-label="界面风格">{SKINS.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={skin === key} className={skin === key ? 'active' : ''} onClick={() => onSkin(key)}>{label}</button>)}</div>
+        <p className="inline-note">「经典」是熟悉的微信式三栏布局，「QQ」采用蓝色选中态和蓝色消息气泡。主题色和聊天背景每种风格各记一份，深浅色和字号共用。</p></>}
       <h4>外观模式</h4><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div>
       {appearance && <><h4>聊天背景</h4><WallpaperPicker appearance={appearance} onAppearance={onAppearance} theme={theme} notify={notify} /><h4>主题色</h4><div className="accent-row" role="radiogroup" aria-label="主题色">{ACCENTS.map(([label, value]) => <button type="button" key={label} role="radio" aria-checked={appearance.accent === value} aria-label={`${label}色`} title={`${label}色`}
           className={`accent-swatch ${appearance.accent === value ? 'active' : ''}`} style={{ background: value || '#d9653f' }} onClick={() => onAppearance({ ...appearance, accent: value })} />)}
@@ -71,7 +71,7 @@ export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, them
     </>,
     chat: chatPrefs && <>
       <h4>头像</h4>
-      {skin === 'classic' ? <p className="inline-note">经典风格下每条消息都显示双方的头像，名字只在群聊里显示别人的。</p> : <>
+      {skin !== 'xiachedan' ? <p className="inline-note">经典和 QQ 风格下每条消息都显示双方的头像，名字只在群聊里显示别人的。</p> : <>
       <div className="segmented-control" role="radiogroup" aria-label="头像位置">{[['sticky', '跟随滚动'], ['top', '固定在第一条旁边']].map(([value, label]) =>
         <button type="button" key={value} role="radio" aria-checked={chatPrefs.avatarMode === value} className={chatPrefs.avatarMode === value ? 'active' : ''} onClick={() => onChatPrefs({ avatarMode: value })}>{label}</button>)}</div>
       <p className="inline-note">{chatPrefs.avatarMode === 'top' ? '头像对齐一组连续消息的第一条，不随滚动移动。' : '一组连续消息很长时，头像贴着可视区底部跟随滚动（Telegram 式）。'}</p>

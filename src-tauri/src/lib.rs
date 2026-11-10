@@ -580,21 +580,21 @@ fn material() -> (&'static str, Option<tauri::utils::config::WindowEffectsConfig
   }
 }
 
-// 界面风格只影响 macOS 红绿灯的位置：经典风格挪进左侧导航栏。
+// 界面风格只影响 macOS 红绿灯的位置：经典和 QQ 三栏风格挪进左侧导航栏。
 #[tauri::command]
 fn desktop_skin(app: AppHandle, webview: Webview, desktop: Shared<'_>, skin: String) -> Result<bool, String> {
   require_trusted(&webview, &desktop)?;
-  let classic = match skin.as_str() { "classic" => true, "xiachedan" => false, _ => return Err("界面风格无效".into()) };
+  let three_pane = match skin.as_str() { "classic" | "qq" => true, "xiachedan" => false, _ => return Err("界面风格无效".into()) };
   #[cfg(target_os = "macos")]
   {
     let window = main_window(&app).ok_or("窗口不可用")?;
     let target = window.clone();
     window.run_on_main_thread(move || {
-      if let Ok(ns_window) = target.ns_window() { unsafe { macos_lights::apply(ns_window, classic) } }
+      if let Ok(ns_window) = target.ns_window() { unsafe { macos_lights::apply(ns_window, three_pane) } }
     }).map_err(|error| error.to_string())?;
   }
   #[cfg(not(target_os = "macos"))]
-  let _ = (app, classic);
+  let _ = (app, three_pane);
   Ok(true)
 }
 
