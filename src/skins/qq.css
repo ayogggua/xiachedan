@@ -3,41 +3,42 @@
    深蓝导航、圆形头像、蓝色选中态与右侧蓝色气泡是这套皮肤的核心辨识点。 */
 
 :root[data-skin="classic"][data-style="qq"] {
-  --canvas: #0d1727;
-  --classic-window: #081321;
-  --classic-list: #111d30;
-  --classic-field: #1a2a40;
-  --classic-search: #17263b;
-  --classic-box: #142238;
-  --classic-box-line: rgba(145, 190, 245, .14);
-  --classic-box-focus: rgba(67, 184, 255, .52);
-  --classic-line: rgba(145, 190, 245, .1);
-  --classic-hover: rgba(76, 156, 238, .1);
-  --classic-active: rgba(45, 144, 255, .18);
-  --classic-pinned: rgba(89, 164, 255, .055);
-  --classic-rail-icon: rgba(218, 235, 255, .62);
+  --canvas: #2b2c30;
+  --classic-window: #1f2024;
+  --classic-list: #25262b;
+  --classic-field: #34363b;
+  --classic-search: #1d1e22;
+  --classic-box: #202126;
+  --classic-box-line: rgba(255, 255, 255, .09);
+  --classic-box-focus: rgba(24, 144, 255, .65);
+  --classic-line: rgba(255, 255, 255, .065);
+  --classic-hover: rgba(255, 255, 255, .055);
+  --classic-active: rgba(255, 255, 255, .09);
+  --classic-pinned: rgba(255, 255, 255, .035);
+  --classic-rail-icon: rgba(255, 255, 255, .62);
   --classic-red: #ff5d64;
   --classic-panel-shadow: -16px 0 36px rgba(0, 0, 0, .38);
-  --qq-shell: #081321;
-  --qq-rail: #081426;
-  --qq-rail-strong: #102745;
-  --qq-selected: #153455;
-  --qq-selected-hover: #173a60;
-  --qq-selected-text: #f5fbff;
-  --qq-selected-muted: rgba(220, 234, 250, .66);
-  --qq-selected-avatar: rgba(72, 178, 242, .2);
+  --qq-shell: #1f2024;
+  --qq-rail: #1b1c20;
+  --qq-rail-strong: #202126;
+  --qq-selected: #30333a;
+  --qq-selected-hover: #35383f;
+  --qq-selected-text: rgba(255, 255, 255, .92);
+  --qq-selected-muted: rgba(255, 255, 255, .52);
+  --qq-selected-avatar: rgba(255, 255, 255, .09);
   --qq-selected-avatar-text: #fff;
-  --qq-sky: #75d5ff;
+  --qq-sky: #fff;
   --qq-blue: #0099ff;
-  --qq-border: rgba(134, 184, 240, .14);
-  --glass: #132137;
-  --glass-solid: #16263d;
-  --glass-edge: inset 0 0 0 1px rgba(145, 190, 245, .12);
-  --placeholder: #22344b;
-  --text-1: rgba(245, 250, 255, .92);
-  --text-2: rgba(220, 234, 250, .64);
-  --text-3: rgba(197, 217, 240, .45);
-  --bubble-in: #1a2a3f;
+  --qq-border: rgba(255, 255, 255, .065);
+  --qq-chat-glow: transparent;
+  --glass: #25262b;
+  --glass-solid: #2a2b30;
+  --glass-edge: inset 0 0 0 1px rgba(255, 255, 255, .07);
+  --placeholder: #28292e;
+  --text-1: rgba(255, 255, 255, .9);
+  --text-2: rgba(255, 255, 255, .6);
+  --text-3: rgba(255, 255, 255, .4);
+  --bubble-in: #323338;
   --bubble-shadow: 0 1px 2px rgba(0, 0, 0, .18);
   --bubble-out: var(--accent);
   --bubble-out-text: #fff;
@@ -45,7 +46,7 @@
   --out-fill: rgba(255, 255, 255, .14);
   --out-fill-2: rgba(255, 255, 255, .24);
   --out-line: rgba(255, 255, 255, .3);
-  --ring: #111d30;
+  --ring: #25262b;
   --online: #52d77a;
   --danger: #df4b57;
   --danger-text: #ff7882;
@@ -73,6 +74,7 @@
   --qq-selected-muted: #5f7894;
   --qq-selected-avatar: #ffffff;
   --qq-selected-avatar-text: #159bce;
+  --qq-chat-glow: color-mix(in srgb, var(--qq-blue) 10%, transparent);
   --glass: #f9fcff;
   --glass-solid: #ffffff;
   --glass-edge: inset 0 0 0 1px rgba(76, 117, 162, .12);
@@ -140,8 +142,8 @@
 
 :root[data-skin="classic"][data-style="qq"] .rail-button.active {
   color: var(--qq-sky);
-  background: rgba(42, 160, 235, .18);
-  box-shadow: inset 0 0 0 1px rgba(116, 211, 255, .08);
+  background: rgba(255, 255, 255, .09);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .045);
 }
 
 :root[data-skin="classic"][data-style="qq"] .rail-button.active svg {
@@ -249,6 +251,10 @@
   box-shadow: inset 3px 0 0 var(--qq-blue);
 }
 
+:root[data-skin="classic"][data-style="qq"][data-theme="dark"] .conversation.active {
+  box-shadow: inset 2px 0 0 rgba(255, 255, 255, .18);
+}
+
 :root[data-skin="classic"][data-style="qq"] .conversation.active :is(.conversation-title time, .conversation-preview, .conversation-pin, .typing-text) {
   color: var(--qq-selected-muted);
 }
@@ -326,7 +332,7 @@
 :root[data-skin="classic"][data-style="qq"] .message-scroll {
   background:
     linear-gradient(color-mix(in srgb, var(--canvas) 94%, transparent), color-mix(in srgb, var(--canvas) 94%, transparent)),
-    radial-gradient(circle at 86% 12%, color-mix(in srgb, var(--qq-blue) 10%, transparent), transparent 32%);
+    radial-gradient(circle at 86% 12%, var(--qq-chat-glow), transparent 32%);
   background-size: auto, auto;
   background-attachment: local, local;
 }
@@ -335,8 +341,10 @@
   background: transparent;
 }
 
-:root[data-skin="classic"][data-style="qq"] .group-avatar :is(.avatar, .avatar > img, .avatar-button) {
-  border-radius: 50%;
+/* 头像在所有弹窗和列表里统一为圆形，包括资料卡、成员、收藏和头像选择器。 */
+:root[data-skin="classic"][data-style="qq"] :is(.avatar, .avatar > img, .room-avatar, .avatar-button, .room-avatar-preview),
+:root[data-skin="classic"][data-style="qq"] .avatar-hextech > img {
+  border-radius: 50% !important;
 }
 
 :root[data-skin="classic"][data-style="qq"] .time-divider span {
@@ -346,23 +354,12 @@
 }
 
 :root[data-skin="classic"][data-style="qq"] .message-bubble {
-  border-radius: 11px !important;
+  border-radius: 14px !important;
   box-shadow: var(--bubble-shadow);
 }
 
 :root[data-skin="classic"][data-style="qq"] .message-bubble:not(.has-media):not(.sticker-bubble)::before {
-  top: 12px;
-  border-width: 5px;
-}
-
-:root[data-skin="classic"][data-style="qq"] .message-row:not(.mine) .message-bubble:not(.has-media):not(.sticker-bubble)::before {
-  left: -9px;
-  border-right-color: var(--bubble-in);
-}
-
-:root[data-skin="classic"][data-style="qq"] .mine .message-bubble:not(.has-media):not(.sticker-bubble)::before {
-  right: -9px;
-  border-left-color: var(--bubble-out);
+  display: none;
 }
 
 :root[data-skin="classic"][data-style="qq"] .mine .message-bubble:not(.sticker-bubble) {
