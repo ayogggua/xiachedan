@@ -57,9 +57,9 @@
   .mobile-list-label { margin: 22px 0 8px; color: var(--text-3); font-size: 12px; }
   .mobile-contact { display: flex; align-items: center; width: 100%; gap: 12px; min-height: 76px; text-align: left; }
   .mobile-contact > span:not(.avatar) { flex: 1; min-width: 0; }
-  .mobile-contact b, .mobile-contact small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-contact b, .mobile-contact > span > small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-contact b { font-size: 16px; line-height: 24px; font-weight: 550; }
-  .mobile-contact small { margin-top: 2px; font-size: 12px; color: var(--text-3); }
+  .mobile-contact > span > small { margin-top: 2px; font-size: 12px; color: var(--text-3); }
   .mobile-profile { display: flex; align-items: center; gap: 16px; min-height: 96px; text-align: left; }
   .mobile-profile > span:not(.avatar) { flex: 1; min-width: 0; }
   .mobile-profile b { display: block; font-size: 23px; line-height: 30px; overflow-wrap: anywhere; }
@@ -84,14 +84,13 @@
   .member-count .avatar-stack { display: none; }
   .member-count::before { content: '成员'; font-size: 12px; }
   .member-count > span:last-child { display: none; }
-  .message-scroll { padding-top: calc(82px + var(--mobile-safe-top)); padding-bottom: calc(110px + var(--mobile-safe-bottom)); scroll-padding-bottom: 110px; overscroll-behavior-y: contain; }
+  .message-scroll { padding-top: calc(82px + var(--mobile-safe-top)); padding-bottom: calc(var(--composer-overlap, calc(56px + var(--mobile-safe-bottom))) + 54px); scroll-padding-bottom: calc(var(--composer-overlap, 56px) + 54px); overscroll-behavior-y: contain; }
   .message-column { max-width: 86%; }
   .message-bubble { padding: 9px 12px; line-height: 1.5; }
   .composer-area { left: 10px; right: 10px; bottom: calc(8px + var(--mobile-safe-bottom)); }
   .composer textarea { font-size: 16px; line-height: 22px; max-height: min(140px, 30vh); }
   .composer .emoji-button { width: 34px; height: 36px; }
   .round-button { width: 44px; height: 44px; }
-  .jump-to-latest { bottom: calc(82px + var(--mobile-safe-bottom)); }
   .unread-anchor { top: calc(76px + var(--mobile-safe-top)); }
   .announcement-banner, .pinned-message-bar { top: calc(72px + var(--mobile-safe-top)); left: 12px; right: 12px; }
   .members-panel { z-index: 8; inset: calc(8px + var(--mobile-safe-top)) 8px calc(8px + var(--mobile-safe-bottom)); background: var(--canvas); padding: 18px; }

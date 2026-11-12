@@ -40,11 +40,12 @@ const luminance = rgb => rgb.map(value => value / 255).map(value => value <= 0.0
   .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
 const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
 const mix = (rgb, target, amount) => rgb.map((value, index) => value + (target[index] - value) * amount);
-// 朝黑或白一点点调，直到与背景的对比度达到 4.5。
-function readable(rgb, background, toward) {
-  for (let amount = 0; amount <= 1; amount += 0.02) { const next = mix(rgb, toward, amount); if (contrast(next, background) >= 4.5) return next; }
+// 朝黑或白一点点调，直到与背景的对比度达到 4.5（系统要求提高对比度时达到 7）。
+function readable(rgb, background, toward, target = 4.5) {
+  for (let amount = 0; amount <= 1; amount += 0.02) { const next = mix(rgb, toward, amount); if (contrast(next, background) >= target) return next; }
   return toward;
 }
+const moreContrast = window.matchMedia('(prefers-contrast: more)');
 
 // 经典风格默认用绿色；选「橙」时存的是 null，按橙色推算。
 export const CLASSIC_ACCENT = '#22a35a';
@@ -54,10 +55,11 @@ const INK = [17, 17, 17];
 export function applyAppearance({ accent, fontSize, wallpaper }) {
   const root = document.documentElement.style;
   const valid = Boolean(accent) && /^#[0-9a-f]{6}$/i.test(accent);
+  const goal = moreContrast.matches ? 7 : 4.5;
   // 经典风格自己的气泡：浅色模式用主题色的浅色调，深色模式用主题色本身，都配深色文字并保证对比度不低于 4.5。
   const lightTheme = document.documentElement.dataset.theme === 'light';
   const outBase = toRgb(valid ? accent : DEFAULT_ACCENT);
-  root.setProperty('--bubble-out', toHex(readable(lightTheme ? mix(outBase, [255, 255, 255], .5) : outBase, INK, [255, 255, 255])));
+  root.setProperty('--bubble-out', toHex(readable(lightTheme ? mix(outBase, [255, 255, 255], .5) : outBase, INK, [255, 255, 255], goal)));
   root.setProperty('--chat-font', `${fontSize}px`);
   const background = wallpaperCss(wallpaper, document.documentElement.dataset.theme === 'light', wallpaper === 'custom' ? readWallpaperImage() : null);
   if (background) { root.setProperty('--wallpaper', background); document.documentElement.dataset.wallpaper = wallpaper; }
@@ -66,8 +68,8 @@ export function applyAppearance({ accent, fontSize, wallpaper }) {
   if (!valid) return;
   const light = document.documentElement.dataset.theme === 'light';
   const base = toRgb(accent), white = [255, 255, 255], black = [0, 0, 0];
-  const text = readable(base, light ? toRgb('#f7f6f4') : toRgb('#1c1c1e'), light ? black : white);
-  root.setProperty('--accent', toHex(readable(base, white, black)));
+  const text = readable(base, light ? toRgb('#f7f6f4') : toRgb('#1c1c1e'), light ? black : white, goal);
+  root.setProperty('--accent', toHex(readable(base, white, black, goal)));
   root.setProperty('--accent-icon', accent);
   root.setProperty('--accent-bright', toHex(text));
   root.setProperty('--mention', toHex(text));
@@ -91,10 +93,12 @@ export default function useAppearance(skin) {
   useEffect(() => {
     const appearance = { accent, fontSize, wallpaper };
     applyAppearance(appearance);
-    // 深浅主题切换时重新推算文字色。
-    const observer = new MutationObserver(() => applyAppearance(appearance));
+    // 深浅主题切换、系统对比度设置变化时重新推算文字色。
+    const reapply = () => applyAppearance(appearance);
+    const observer = new MutationObserver(reapply);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => observer.disconnect();
+    moreContrast.addEventListener('change', reapply);
+    return () => { observer.disconnect(); moreContrast.removeEventListener('change', reapply); };
   }, [accent, fontSize, wallpaper]);
   const setAppearance = next => setStored(previous => skin === 'classic'
     ? { ...previous, fontSize: next.fontSize, classic: { accent: next.accent, wallpaper: next.wallpaper } }

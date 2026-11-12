@@ -17,5 +17,13 @@ export const merge = (a, b, history) => {
   }
   return [...messages.values()].map(message => sanitizeMessage(message, history)).filter(Boolean).sort((a, b) => a.seq - b.seq);
 };
+// 阅后即焚的销毁时刻换算成本机时间：服务器给出 expiresAt 和它自己的 now，差值加到收到时的本机时间上，不依赖两边时钟一致。
+// 同一份 burn 只换算一次（合并消息时 burn 对象原样保留），倒计时不会因为重新渲染而漂移。
+const deadlines = new WeakMap();
+export const burnDeadline = burn => {
+  if (!burn?.expiresAt) return null;
+  if (!deadlines.has(burn)) deadlines.set(burn, Date.now() + burn.expiresAt - (burn.now ?? burn.expiresAt));
+  return deadlines.get(burn);
+};
 export const readStorage = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
 export { previewText } from '../shared/preview.js';

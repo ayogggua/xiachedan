@@ -155,7 +155,6 @@
 /* 宽屏：从标题栏下方一直盖到底部（含输入框），贴右边，不挤压聊天记录 */
 @media (min-width: 761px) { :root[data-skin="classic"] .members-panel { top: 56px; right: 0; bottom: 0; box-shadow: -1px 0 0 var(--classic-line), var(--classic-panel-shadow); } }
 :root[data-skin="classic"] :is(.jump-to-mention, .unread-anchor) { border-radius: 6px; }
-:root[data-skin="classic"] .jump-to-mention { bottom: 162px; }
 :root[data-skin="classic"] .unread-anchor { top: 68px; }
 :root[data-wallpaper][data-skin="classic"] .chat-column { background: var(--wallpaper); }
 
@@ -185,6 +184,10 @@
 :root[data-skin="classic"] .bubble-meta > time { display: none; }
 :root[data-skin="classic"] .bubble-meta:not(:has(.edited-mark)), :root[data-skin="classic"] :is(.bubble-meta-row, .bubble-meta-overlay):not(:has(.edited-mark)) { display: none; }
 :root[data-skin="classic"] .read-line { padding-right: 2px; color: var(--text-3); }
+/* 消息加载占位：和经典的消息一样，每条都带方形头像、顶端对齐，气泡小圆角 */
+:root[data-skin="classic"] .skeleton-message .skeleton-row { align-items: flex-start; margin-top: 14px; gap: 10px; }
+:root[data-skin="classic"] .skeleton-message .skeleton-avatar { display: block; width: 36px; height: 36px; border-radius: 12%; }
+:root[data-skin="classic"] .skeleton-bubble { border-radius: 8px; }
 
 /* 自己的气泡是浅色底深色字：把原来按「主题色底白字」写的细节改成深色 */
 :root[data-skin="classic"] .mine :is(.bubble-meta, .attachment-caption, .forward-label, .masked-message, .poll-kind, .poll-footer, .contact-card small, .contact-card-label, .bundle-card span, .bundle-card small, .file-copy small, .file-card > svg, .thread-link time, .link-preview small, .link-preview span, .message-quote) { color: var(--out-text-2); }
@@ -193,6 +196,15 @@
 :root[data-skin="classic"] .mine .message-quote::before { background: var(--out-line); }
 :root[data-skin="classic"] .mine .link-preview { border-left-color: var(--out-line); }
 :root[data-skin="classic"] .mine .poll-option i { background: var(--out-fill-2); }
+:root[data-skin="classic"] .mine :is(.chain-example, .chain-empty, .chain-number, .chain-footer) { color: var(--out-text-2); }
+:root[data-skin="classic"] .mine .chain-entries { background: var(--out-fill); }
+:root[data-skin="classic"] .mine :is(.chain-footer .text-button, .chain-more) { color: var(--bubble-out-text); }
+:root[data-skin="classic"] .mine .chain-join { background: var(--out-fill); color: var(--bubble-out-text); box-shadow: inset 0 0 0 1px var(--out-line); }
+/* 深色下浅绿气泡上 --out-text-2 只有 3.6:1，这行 11px 的小字用正文颜色 */
+:root[data-skin="classic"] .mine :is(.burn-head, .burn-head > svg, .burn-timer) { color: var(--bubble-out-text); }
+:root[data-skin="classic"] .mine .burn-ring circle { stroke: var(--out-fill-2); }
+:root[data-skin="classic"] .mine .burn-ring .burn-ring-left { stroke: var(--bubble-out-text); }
+:root[data-skin="classic"] .burn-choices button { border-radius: 6px; }
 :root[data-skin="classic"] .mine .bundle-card small { border-top-color: var(--out-line); }
 :root[data-skin="classic"] .mine .reaction-chip { --chip-bg: var(--out-fill); color: var(--bubble-out-text); }
 :root[data-skin="classic"] .mine .reaction-chip.reacted { --chip-bg: var(--out-fill-2); color: var(--bubble-out-text); }
@@ -261,7 +273,6 @@
   :root[data-skin="classic"] :is(.emoji-button, .attach-button) svg { width: 24px; height: 24px; }
   :root[data-skin="classic"] .send-button { height: 40px; padding: 0 14px; }
   :root[data-skin="classic"] .send-button:disabled { display: none; }
-  :root[data-skin="classic"] .jump-to-mention { bottom: calc(76px + var(--mobile-safe-bottom)); }
 }
 
 /* 转发 */
@@ -275,3 +286,34 @@
 :root[data-skin="classic"] .bundle-sender b { color: var(--text-3) !important; font-size: 12px; font-weight: 400; }
 :root[data-skin="classic"] .bundle-sender time { margin-left: auto; color: var(--text-3); }
 :root[data-skin="classic"] .bundle-image { border-radius: 6px; }
+/* 浅色下别人的气泡是浅灰底，遮罩再深一点；自己的气泡是浅色底深色字，剧透遮罩改成深色 */
+:root[data-skin="classic"][data-theme="light"] { --spoiler-cover: #858079; }
+:root[data-skin="classic"] .mine .spoiler:not(.revealed) { background: rgba(0, 0, 0, .6); }
+:root[data-skin="classic"] .mine .spoiler.revealed { background: rgba(0, 0, 0, .08); }
+
+/* 机器人「接收全部消息」的提示：底色跟经典的主题色走，不用默认风格的暖橙。 */
+:root[data-skin="classic"] :is(.bot-listening-note, .bot-status.listening, .member-row > small.bot-listening-text) { background: color-mix(in srgb, var(--accent-icon) 10%, transparent); }
+
+/* 系统要求提高对比度：经典风格本来就是实色，这里只加深文字、线条和边框（通用的文字令牌见 styles.css 末尾） */
+@media (prefers-contrast: more) {
+  :root[data-skin="classic"] {
+    --glass-edge: inset 0 0 0 1px #8e8e93; --classic-box-line: #8e8e93; --classic-line: rgba(255, 255, 255, .3);
+    --classic-rail-icon: #d8d8dc; --classic-red: #ff7b73; --out-text-2: rgba(0, 0, 0, .78); --out-line: rgba(0, 0, 0, .5);
+  }
+  :root[data-skin="classic"][data-theme="light"] { --glass-edge: inset 0 0 0 1px #737373; --classic-box-line: #737373; --classic-line: rgba(0, 0, 0, .3); --classic-rail-icon: #3a3a3a; --classic-red: #b8221a; }
+  /* 深色下红色还要当深底上的文字用（[有人@我]），所以调亮，角标里的数字改成黑色 */
+  :root[data-skin="classic"]:not([data-theme="light"]) :is(.rail-badge, .conversation .unread-badge, .mobile-tab-badge) { color: #000; }
+  :root[data-skin="classic"] .classic-search .sidebar-search { box-shadow: inset 0 0 0 1px var(--classic-box-line); }
+  :root[data-skin="classic"] .sidebar-search:focus-within { box-shadow: 0 0 0 3px var(--accent-bright); }
+  :root[data-skin="classic"] .composer-row:focus-within { box-shadow: inset 0 0 0 2px var(--accent-bright); }
+  :root[data-skin="classic"] .mobile-tabs > button.active { color: var(--accent-bright); }
+  :root[data-wallpaper][data-skin="classic"] .time-divider span { background: var(--glass-solid); color: var(--text-1); }
+  :root[data-skin="classic"][data-theme="light"] { --spoiler-cover: #737373; }
+  :root[data-skin="classic"] .mine .spoiler:not(.revealed) { background: rgba(0, 0, 0, .6); }
+  :root[data-skin="classic"] .mine :is(.chain-entries, .chain-join) { box-shadow: inset 0 0 0 1px var(--out-line); }
+  :root[data-skin="classic"] .mine :is(.burn-head, .burn-head > svg) { color: var(--out-text-2); }
+  @media (min-width: 761px) {
+    :root[data-skin="classic"] .rail-button.active { color: var(--accent-bright); }
+    :root[data-skin="classic"] .conversation.active :is(.conversation-title time, .conversation-preview, .conversation-pin, .typing-text) { color: #fff; }
+  }
+}

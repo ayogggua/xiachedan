@@ -88,21 +88,22 @@ export default function ImageViewer({ images, index, onIndex, onClose, notify })
     catch { notify('无法复制这张图片，可以下载后使用'); }
   }
   if (!file) return null;
-  return <dialog ref={dialog} className="image-viewer" aria-label={`查看图片：${file.name}`} onKeyDown={onKeyDown} onCancel={event => { event.preventDefault(); onClose(); }}>
+  return <dialog ref={dialog} className="image-viewer" aria-label={`查看图片：${file.burnId ? '阅后即焚图片' : file.name}`} onKeyDown={onKeyDown} onCancel={event => { event.preventDefault(); onClose(); }}>
     <header className="viewer-bar">
-      <span className="viewer-title"><span className="viewer-name">{file.name}</span>{images.length > 1 && <small>{index + 1} / {images.length}</small>}</span>
+      <span className="viewer-title"><span className="viewer-name">{file.burnId ? '阅后即焚图片' : file.name}</span>{images.length > 1 && <small>{index + 1} / {images.length}</small>}</span>
       <IconButton icon={ZoomOut} label="缩小（-）" onClick={() => zoomAt(0.8)} disabled={view.scale <= 1} />
       <button type="button" className="viewer-scale" onClick={() => setView({ scale: 1, x: 0, y: 0 })} title="适应窗口（0）">{Math.round(view.scale * 100)}%</button>
       <IconButton icon={ZoomIn} label="放大（+）" onClick={() => zoomAt(1.25)} disabled={view.scale >= MAX_SCALE} />
-      <IconButton icon={nativeMobile ? Share2 : Copy} label={nativeMobile ? '分享图片' : '复制图片'} onClick={copy} />
-      <a className="icon-button" href={mediaUrl(file.id, true)} download={file.name} title="下载图片" aria-label="下载图片"><Download size={17} strokeWidth={1.7} /></a>
+      {/* 阅后即焚的图片不提供复制、分享和下载 */}
+      {!file.burnId && <IconButton icon={nativeMobile ? Share2 : Copy} label={nativeMobile ? '分享图片' : '复制图片'} onClick={copy} />}
+      {!file.burnId && <a className="icon-button" href={mediaUrl(file.id, true)} download={file.name} title="下载图片" aria-label="下载图片"><Download size={17} strokeWidth={1.7} /></a>}
       <IconButton icon={X} label="关闭（Esc）" onClick={onClose} />
     </header>
     <div ref={stage} className={`viewer-stage ${view.scale > 1 ? 'zoomed' : ''}`}
       onWheel={event => { const [px, py] = relative(event); zoomAt(event.deltaY < 0 ? 1.15 : 1 / 1.15, px, py); }}
       onDoubleClick={event => { const [px, py] = relative(event); view.scale > 1 ? setView({ scale: 1, x: 0, y: 0 }) : zoomAt(2.5, px, py); }}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-      <img src={mediaUrl(file.id)} alt={file.name} draggable={false} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }} />
+      <img src={mediaUrl(file.id)} alt={file.burnId ? '' : file.name} draggable={false} onContextMenu={file.burnId ? event => event.preventDefault() : undefined} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }} />
     </div>
     {images.length > 1 && <>
       <IconButton icon={ChevronLeft} label="上一张（←）" className="viewer-nav previous" onClick={() => go(-1)} />

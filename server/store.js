@@ -8,6 +8,8 @@ export function openStore(directory) {
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA busy_timeout = 5000;
+    -- 删除和覆盖的内容用 0 抹掉（撤回、阅后即焚销毁后，库文件里不留原文）。
+    PRAGMA secure_delete = ON;
     CREATE TABLE IF NOT EXISTS workspace (id INTEGER PRIMARY KEY, name TEXT NOT NULL, invite_code TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, avatar TEXT NOT NULL,
@@ -119,6 +121,16 @@ export function openStore(directory) {
     -- 投票：投票本身是一条消息（正文是问题），选项与投票人另存；投票公开，大家能看到谁投了什么。
     CREATE TABLE IF NOT EXISTS polls (message_id TEXT PRIMARY KEY, options TEXT NOT NULL, multiple INTEGER NOT NULL DEFAULT 0, closed_at INTEGER);
     CREATE TABLE IF NOT EXISTS poll_votes (message_id TEXT NOT NULL, user_id TEXT NOT NULL, option_index INTEGER NOT NULL, voted_at INTEGER NOT NULL, PRIMARY KEY (message_id, user_id, option_index));
+    -- 接龙：接龙本身是一条消息（正文是标题），说明、示例格式和每人的一行另存；每人最多一行，序号按加入先后（自增 id）排。
+    CREATE TABLE IF NOT EXISTS chains (message_id TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', example TEXT NOT NULL DEFAULT '', closed_at INTEGER, closed_by TEXT);
+    -- 阅后即焚（只在私聊）：seconds 是对方点开后保留的秒数；opened_at 是接收人点开的时间（服务器时钟），destroyed_at 是销毁时间。
+    -- 销毁后正文和附件清空、文件删除，消息只剩一行「已销毁」。burn_files 记下这类消息的附件和缩略图，供下载时核对能不能看。
+    CREATE TABLE IF NOT EXISTS message_burns (message_id TEXT PRIMARY KEY, seconds INTEGER NOT NULL, opened_at INTEGER, destroyed_at INTEGER);
+    CREATE TABLE IF NOT EXISTS burn_files (upload_id TEXT PRIMARY KEY, message_id TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS burn_files_message ON burn_files(message_id);
+    -- 每次接口访问都要找到点的阅后即焚消息：只索引正在倒计时的那些。
+    CREATE INDEX IF NOT EXISTS message_burns_counting ON message_burns(opened_at) WHERE destroyed_at IS NULL AND opened_at IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS chain_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT NOT NULL, user_id TEXT NOT NULL, text TEXT NOT NULL, joined_at INTEGER NOT NULL, edited_at INTEGER, UNIQUE (message_id, user_id));
     -- 收藏：每人自己的收藏夹，只记消息标识；消息撤回或自己失去访问权后不再列出。
     CREATE TABLE IF NOT EXISTS saved_messages (user_id TEXT NOT NULL, message_id TEXT NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY (user_id, message_id));
     -- 会话内置顶的消息：群主、空间管理者或私聊双方可以置顶，每个会话最多 20 条。
@@ -139,6 +151,19 @@ export function openStore(directory) {
     -- 群机器人：外部系统凭地址里的令牌向一个会话发消息；只保存令牌摘要。机器人发的消息另记名字，删掉机器人后仍能显示。
     CREATE TABLE IF NOT EXISTS webhooks (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS message_bots (message_id TEXT PRIMARY KEY, name TEXT NOT NULL);
+    -- 机器人账号：名字、头像、简介和成员一样存在 users / user_profiles（id 相同），这里是机器人自己的设置。
+    -- token_hash 是调用发消息接口的令牌摘要；secret 是给推送事件签名的密钥（服务器签名要用原文），两者都只在创建和重置时显示一次。
+    -- status: enabled 启用；disabled 管理者停用；failed 连续投递失败后自动停用。deleted_at 不为空表示已删除，之前发的消息照常显示名字。
+    CREATE TABLE IF NOT EXISTS bots (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, secret TEXT NOT NULL, callback_url TEXT NOT NULL DEFAULT '', receive_all INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'enabled', failures INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_error_at INTEGER, last_delivered_at INTEGER,
+      created_by TEXT NOT NULL, created_at INTEGER NOT NULL, deleted_at INTEGER);
+    -- 机器人在哪些群聊和大厅里：after_seq 是加入时最新一条消息的序号，它只收在这之后的消息。私聊不记在这里，私聊的两位成员就是用户和机器人。
+    CREATE TABLE IF NOT EXISTS bot_rooms (bot_id TEXT NOT NULL, room_id TEXT NOT NULL, added_by TEXT NOT NULL, added_at INTEGER NOT NULL, after_seq INTEGER NOT NULL, PRIMARY KEY (bot_id, room_id));
+    CREATE INDEX IF NOT EXISTS bot_rooms_room ON bot_rooms(room_id);
+    -- 推给机器人的消息：delivered_at 为空表示还在排队或没送到。撤回、编辑只通知真正收到过原消息的机器人。
+    CREATE TABLE IF NOT EXISTS bot_deliveries (message_id TEXT NOT NULL, bot_id TEXT NOT NULL, delivered_at INTEGER, PRIMARY KEY (message_id, bot_id));
+    -- 会话里的系统提示（机器人加入或移出、开关「接收全部消息」）：发送人为 system，正文在生成时写好。
+    CREATE TABLE IF NOT EXISTS message_notices (message_id TEXT PRIMARY KEY, kind TEXT NOT NULL, bot_id TEXT);
     -- 群聊设置：群主（为空或已不在群里时由最早的成员接任）与群公告。
     CREATE TABLE IF NOT EXISTS room_settings (room_id TEXT PRIMARY KEY, owner_id TEXT, announcement TEXT NOT NULL DEFAULT '', announcement_at INTEGER, announcement_by TEXT);
     -- 每条消息、每位接收者仅保存一次实际查看时间。

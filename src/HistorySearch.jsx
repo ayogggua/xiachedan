@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { CalendarDays, ChevronLeft, Search, X, LoaderCircle } from 'lucide-react';
+import { CalendarDays, ChevronLeft, Search, X } from 'lucide-react';
 import { api, formatTime } from './api';
-import { Avatar, IconButton, PrivatePreview } from './components';
+import { Avatar, IconButton, PrivatePreview, Skeleton } from './components';
 import { plainText } from './markdown';
+import { attachmentLabel } from '../shared/preview.js';
 
-const searchText = message => (message.text && plainText(message.text).replace(/\s+/g, ' ')) || message.attachments.map(file => file.name).join('、');
+// 标成剧透的图片和视频不显示文件名。
+// 接龙和预览一样带「[接龙]」。
+const searchText = message => (message.chain && `[接龙] ${message.text}`) || (message.text && plainText(message.text).replace(/\s+/g, ' ')) || message.attachments.map(file => file.spoiler ? attachmentLabel([file]) : file.name).join('、');
 const stamp = timestamp => new Date(timestamp).toDateString() === new Date().toDateString() ? formatTime(timestamp)
   : `${new Date(timestamp).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} ${formatTime(timestamp)}`;
 
@@ -24,20 +27,23 @@ function Highlight({ text, query }) {
 export function useMessageSearch(term, roomId, historyVersion, enabled = true, filters = {}) {
   const [results, setResults] = useState(null);
   const [error, setError] = useState('');
+  // 请求真正发出之后才算「正在搜索」：停顿等待的 250 毫秒不算，加载占位从这里开始计时。
+  const [pending, setPending] = useState(false);
   const filterKey = JSON.stringify(Object.fromEntries(Object.entries(filters).filter(([, value]) => value)));
   useEffect(() => {
-    setResults(null); setError('');
+    setResults(null); setError(''); setPending(false);
     const extra = JSON.parse(filterKey);
     if ((!term && !Object.keys(extra).length) || !enabled) return;
     let cancelled = false;
     const timer = setTimeout(() => {
+      setPending(true);
       api(`search?${new URLSearchParams({ ...(roomId ? { roomId } : {}), q: term, ...extra })}`)
         .then(result => { if (!cancelled) setResults(result.messages); })
         .catch(failure => { if (!cancelled) setError(failure.message); });
     }, 250);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [term, roomId, historyVersion, enabled, filterKey]);
-  return { results, error };
+  return { results, error, pending };
 }
 
 export function SearchResult({ message, term, avatar, title, prefix = '', privateMode, onJump, at }) {
@@ -49,9 +55,10 @@ export function SearchResult({ message, term, avatar, title, prefix = '', privat
   </button>;
 }
 
-export function SearchStatus({ term, results, error, scope }) {
+export function SearchStatus({ term, results, error, scope, pending }) {
   if (error) return <p className="form-error" role="alert">{error}</p>;
-  if (results === null) return <p className="history-empty"><LoaderCircle className="spin" size={14} />正在搜索…</p>;
+  // 搜索结果都放在 aria-live 区域里，加载占位不再自带 status。
+  if (results === null) return pending ? <Skeleton rows={3} label="正在搜索…" live={false} /> : null;
   if (!results.length) return <p className="history-empty">{term ? `${scope || ''}没有找到包含「${term}」的消息。` : '没有符合筛选条件的消息。'}</p>;
   if (results.length === 50) return <p className="history-empty">只显示最近 50 条结果，换个更具体的关键词试试。</p>;
   return null;
@@ -68,7 +75,7 @@ export default function HistorySearch({ room, userMap, members = [], privateMode
   const term = query.trim();
   const from = range ? String((() => { const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - Number(range) + 1); return date.getTime(); })()) : '';
   const filtered = Boolean(sender || type || range);
-  const { results, error } = useMessageSearch(term, room.id, historyVersion, true, { sender, type, from });
+  const { results, error, pending } = useMessageSearch(term, room.id, historyVersion, true, { sender, type, from });
   // 跳到某一天：找那天（或之后最近一天）的第一条消息。
   const [dateNote, setDateNote] = useState('');
   const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -96,7 +103,7 @@ export default function HistorySearch({ room, userMap, members = [], privateMode
       {!term && !filtered ? <p className="history-empty">输入关键词，或按发送人、类型、时间筛选这个会话里的消息。</p> : <>
         {results?.map(message => <SearchResult key={message.id} message={message} term={term} avatar={<Avatar user={userMap[message.senderId]} size={24} />}
           title={userMap[message.senderId]?.name || message.bot || '成员'} privateMode={privateMode} onJump={onJump} />)}
-        <SearchStatus term={term} results={results} error={error} />
+        <SearchStatus term={term} results={results} error={error} pending={pending} />
       </>}
     </div>
   </>;

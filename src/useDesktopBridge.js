@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { readStorage } from './history';
 
 // 隐私模式、窗口激活状态与桌面端事件；网页端没有 window.desktop 时退化为浏览器焦点。
-export default function useDesktopBridge({ notify, onPendingRoom, onOpenRoom }) {
+export default function useDesktopBridge({ notify, onPendingRoom, onOpenRoom, onReply }) {
   const [privateMode, setPrivateMode] = useState(() => readStorage('linliao.privacy', false));
   const [windowActive, setWindowActive] = useState(() => !window.desktop?.onEvent && document.visibilityState === 'visible' && document.hasFocus());
   const privacyRef = useRef(privateMode);
-  const handlers = useRef({ onPendingRoom, onOpenRoom });
+  const handlers = useRef({ onPendingRoom, onOpenRoom, onReply });
   privacyRef.current = privateMode;
-  handlers.current = { onPendingRoom, onOpenRoom };
+  handlers.current = { onPendingRoom, onOpenRoom, onReply };
   const changePrivacy = useCallback(value => {
     const next = typeof value === 'function' ? value(privacyRef.current) : value;
     privacyRef.current = next;
@@ -35,6 +35,7 @@ export default function useDesktopBridge({ notify, onPendingRoom, onOpenRoom }) 
       if (data.type === 'settings') applySettings(data);
       if (data.type === 'visibility') setWindowActive(data.active);
       if (data.type === 'open-room') handlers.current.onOpenRoom(data.roomId);
+      if (data.type === 'notification-reply') handlers.current.onReply?.(data.roomId, data.text, data.userId);
       if (data.type === 'context-menu-error') notify(data.message);
       if (data.type === 'download') notify(data.success ? `已保存到「下载」：${data.name}` : '下载未完成，请重试');
     });

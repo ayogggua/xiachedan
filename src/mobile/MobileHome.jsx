@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { MessageCircle, Users, UserRound, Search, ChevronRight, Settings2, Bookmark, UserPlus, ShieldCheck, Server, LogOut } from 'lucide-react';
-import { Avatar } from '../components';
+import { Avatar, BotTag, botStatusText } from '../components';
 import { mobileClient, chooseServer } from './session';
 
 export function MobileTabs({ tab, onChange, unread }) {
@@ -12,8 +12,9 @@ export function MobileTabs({ tab, onChange, unread }) {
 }
 
 // 和电脑上的通讯录一致：按部门分组，没填部门的排在最后。
-const departments = users => Object.entries(users.reduce((groups, user) => { (groups[user.department || '未设置部门'] ||= []).push(user); return groups; }, {}))
-  .sort(([a], [b]) => (a === '未设置部门') - (b === '未设置部门') || a.localeCompare(b, 'zh-Hans-CN'));
+// 机器人单独一组，排在最后。
+const departments = users => Object.entries(users.reduce((groups, user) => { (groups[user.bot ? '机器人' : user.department || '未设置部门'] ||= []).push(user); return groups; }, {}))
+  .sort(([a], [b]) => (a === '机器人') - (b === '机器人') || (a === '未设置部门') - (b === '未设置部门') || a.localeCompare(b, 'zh-Hans-CN'));
 
 export function MobileHome({ tab, me, users, connected, onDirect, onAction, isAdmin, loggingOut, onLogout }) {
   const [query, setQuery] = useState('');
@@ -23,9 +24,9 @@ export function MobileHome({ tab, me, users, connected, onDirect, onAction, isAd
     return <section className="mobile-home mobile-contacts"><header><h1>通讯录</h1><button aria-label="邀请同事" onClick={() => onAction('invite')}><UserPlus size={22} /></button></header>
       <label className="mobile-contact-search"><Search size={17} /><input type="search" aria-label="搜索成员" placeholder="搜索名字或部门" value={query} onChange={event => setQuery(event.target.value)} /></label>
       <button className="mobile-contact-group" onClick={() => onAction('group')}><span><Users size={21} /></span><b>发起群聊</b><ChevronRight size={17} /></button>
-      <p className="mobile-list-label">{contacts.length} 位联系人</p>
+      <p className="mobile-list-label">{contacts.filter(user => !user.bot).length} 位联系人</p>
       <div className="mobile-contact-list">{departments(contacts).map(([department, members]) => <section key={department} aria-label={department}><h4 className="mobile-contact-department">{department}<small>{members.length}</small></h4>
-        {members.map(user => <button key={user.id} className="mobile-contact" onClick={() => onDirect(user)}><Avatar user={user} size={44} /><span><b>{user.name}</b><small>{user.online ? '在线' : '离线'}</small></span>{user.online && <i className="status-dot online" />}<ChevronRight size={16} /></button>)}</section>)}
+        {members.map(user => <button key={user.id} className="mobile-contact" onClick={() => onDirect(user)}><Avatar user={user} size={44} /><span><b>{user.name}{user.bot && <BotTag />}</b><small>{user.bot ? botStatusText(user) || user.bio : user.online ? '在线' : '离线'}</small></span>{user.online && <i className="status-dot online" />}<ChevronRight size={16} /></button>)}</section>)}
         {!contacts.length && <p className="compact-empty">{query ? '没有找到相关成员' : '还没有其他成员'}</p>}</div>
     </section>;
   }

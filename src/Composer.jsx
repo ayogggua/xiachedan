@@ -1,8 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile, Crop } from 'lucide-react';
+import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile, Crop, EyeOff, Flame } from 'lucide-react';
 import EmojiPicker from './EmojiPicker';
 import { api, upload, uid, formatSize } from './api';
-import { Avatar, IconButton, PrivatePreview, ContextMenu } from './components';
+import { Avatar, IconButton, PrivatePreview, ContextMenu, BotTag } from './components';
 import { previewText } from './history';
 import { matchFormats, applyFormat, insideCodeFence } from './slashCommands';
 import { isSendKey, modKey } from './chatPrefs';
@@ -13,7 +13,7 @@ import ImageEditor from './ImageEditor';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft, injectShare, placeholder, phrases = [] }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onCreateChain, burnAvailable = false, burnMode = 0, onBurn, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft, injectShare, placeholder, phrases = [] }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -25,6 +25,11 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   // 发图默认压缩大图，勾选「原图」时按原文件上传；选择记在本机。
   const [sendOriginal, setSendOriginal] = useState(() => localStorage.getItem('linliao.sendOriginal') === '1');
   const [editingImage, setEditingImage] = useState(null);
+  // 阅后即焚（只在私聊的主输入框）：开着没有和选的时长由 App 按会话记在内存里（换会话、多选、输入框重建都不会丢）；
+  // 开着时这个会话发出的消息、表情都是阅后即焚，只能带图片和视频。
+  const burnSeconds = burnAvailable && !editing ? burnMode : 0;
+  const setBurn = seconds => onBurn?.(seconds);
+  const burnable = type => /^(image|video)\//.test(type);
   // 编辑时输入框临时换成这条消息的正文，草稿原样保留，退出编辑后恢复。
   const [editText, setEditText] = useState('');
   const input = useRef();
@@ -44,9 +49,12 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   }
   // 行首或空格后输入「/」弹出格式菜单，「/」后的文字用来筛选（中文名、英文或拼音首字母）。
   const POLL = { id: 'poll', label: '投票', sample: '', keys: 'poll vote toupiao tp' };
+  const CHAIN = { id: 'chain', label: '接龙', sample: '', keys: 'chain jielong jl signup' };
+  const BURN = { id: 'burn', label: '阅后即焚', sample: '', keys: 'burn yhjf fire flash' };
+  const command = (item, available) => available && !editing && (!slash.query || item.label.includes(slash.query) || item.keys.split(' ').some(key => key.startsWith(slash.query.toLowerCase()))) ? [item] : [];
   // 常用语也能从「/」菜单里找：「/收到」会列出包含「收到」的常用语。
   const phraseOptions = slash ? phrases.filter(text => !slash.query || text.includes(slash.query)).slice(0, 5).map((text, index) => ({ id: `phrase-${index}`, label: text.replace(/\s+/g, ' '), sample: '常用语', phrase: text })) : [];
-  const slashOptions = slash ? [...(slash.query ? phraseOptions : []), ...matchFormats(slash.query), ...(onCreatePoll && !editing && (!slash.query || POLL.label.includes(slash.query) || POLL.keys.split(' ').some(key => key.startsWith(slash.query.toLowerCase()))) ? [POLL] : []), ...(slash.query ? [] : phraseOptions)] : [];
+  const slashOptions = slash ? [...(slash.query ? phraseOptions : []), ...matchFormats(slash.query), ...command(POLL, onCreatePoll), ...command(CHAIN, onCreateChain), ...command(BURN, burnAvailable), ...(slash.query ? [] : phraseOptions)] : [];
   // 表情短码：「:名字」弹出候选（至少两个字母；冒号前不能是字母或数字，避免把 12:30、http: 之类当成短码）。
   const [shortcode, setShortcode] = useState(null);
   const shortcodeOptions = shortcode ? matchShortcodes(shortcode.query) : [];
@@ -64,7 +72,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     setEmojiOpen(false);
     try {
       const { attachment } = await api('stickers/use', { id: sticker.id, roomId: room.id });
-      onQueue({ roomId: room.id, text: '', attachmentIds: [attachment.id], clientId: uid() }, { text: '', files: ['[表情]'] });
+      onQueue({ roomId: room.id, text: '', attachmentIds: [attachment.id], clientId: uid(), ...(burnSeconds ? { burn: burnSeconds } : {}) }, { text: '', files: ['[表情]'] });
     } catch (error) { notify(error.message); }
   }
   function detectSlash(node) {
@@ -87,7 +95,8 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   function chooseFormat(item) {
     const current = editing ? editText : draft.text, start = slash.start, end = start + 1 + slash.query.length;
     setSlash(null);
-    if (item.id === 'poll') { setText(current.slice(0, start) + current.slice(end), [start, start]); onCreatePoll(); return; }
+    if (item.id === 'burn') { setText(current.slice(0, start) + current.slice(end), [start, start]); setBurn(burnSeconds ? 0 : 5); return; }
+    if (item.id === 'poll' || item.id === 'chain') { setText(current.slice(0, start) + current.slice(end), [start, start]); (item.id === 'poll' ? onCreatePoll : onCreateChain)(); return; }
     if (item.phrase) { setText(current.slice(0, start) + item.phrase + current.slice(end), [start + item.phrase.length, start + item.phrase.length]); return; }
     const result = applyFormat(current, start, end, item);
     setText(result.text, result.selection);
@@ -127,6 +136,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     const available = 6 - existing;
     if (files.length > available) notify('每条消息最多 6 个附件');
     const items = Array.from(files).slice(0, available).filter(file => {
+      if (burnSeconds && !burnable(file.type)) { notify(`阅后即焚只能发文字、图片和视频，「${file.name}」没有添加`); return false; }
       if (file.size > 100 * 1024 * 1024) { notify(`${file.name} 超过 100 MB`); return false; }
       if (!file.size) { notify(`${file.name} 是空文件`); return false; }
       return true;
@@ -159,6 +169,10 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   function removeFile(item) {
     URL.revokeObjectURL(item.url);
     update(room.id, state => ({ ...state, files: state.files.filter(file => file.id !== item.id) }));
+  }
+  // 图片、视频标成剧透：别人看到的是遮住的，点了才显示。
+  function toggleSpoiler(item) {
+    update(room.id, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, spoiler: !file.spoiler } : file) }));
   }
   // ⌘B 粗体、⌘I 斜体、⌘E 代码、⌘⇧X 删除线（Windows 用 Ctrl）：给选中的文字加上格式符号。
   function wrapSelection(event) {
@@ -196,6 +210,8 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   async function send() {
     if (editing) return saveEdit();
     if ((!draft.text.trim() && !draft.files.length) || draft.files.some(file => !file.attachment)) return;
+    // 开阅后即焚之前就排进来的普通文件：不发，说清楚原因（服务端同样会拒绝）。
+    if (burnSeconds && draft.files.some(file => !burnable(file.attachment.mime))) return notify('阅后即焚只能发文字、图片和视频，先移除其他文件，或者关掉阅后即焚');
     const roomId = room.id;
     const snapshot = draft;
     const replyTo = reply?.id || null;
@@ -204,7 +220,8 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     const mentions = (snapshot.mentions || []).filter(id => nameOf(id) && snapshot.text.includes(`@${nameOf(id)}`));
     textarea.current?.focus({ preventScroll: true });
     // 交给发件箱发送，输入框立即清空；失败的消息留在会话底部，可重试或删除。
-    onQueue({ roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId: uid(), ...(replyTo ? { replyTo, ...(reply.quote ? { replyQuote: reply.quote } : {}) } : {}), ...(mentions.length ? { mentions } : {}) },
+    const spoilerIds = snapshot.files.filter(file => file.spoiler).map(file => file.attachment.id);
+    onQueue({ roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId: uid(), ...(replyTo ? { replyTo, ...(reply.quote ? { replyQuote: reply.quote } : {}) } : {}), ...(mentions.length ? { mentions } : {}), ...(spoilerIds.length ? { spoilerIds } : {}), ...(burnSeconds ? { burn: burnSeconds } : {}) },
       { text: snapshot.text, files: snapshot.files.map(file => file.file.name) });
     if (replyTo) onCancelReply?.();
     for (const file of snapshot.files) URL.revokeObjectURL(file.url);
@@ -265,17 +282,22 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     {picker && candidates.length > 0 && <div className="mention-picker" role="listbox" id="mention-picker" aria-label="选择要提及的成员">
       {candidates.map((user, index) => <button type="button" role="option" id={`mention-option-${index}`} key={user.id} aria-selected={index === picker.index} className={index === picker.index ? 'active' : ''}
         onPointerDown={event => { event.preventDefault(); chooseMention(user); }}>
-        {user.id === '*' ? <span className="mention-everyone"><Users size={13} /></span> : <Avatar user={user} size={22} />}<span>{user.name}</span>{user.id === '*' && <small>提醒会话里的每个人</small>}
+        {user.id === '*' ? <span className="mention-everyone"><Users size={13} /></span> : <Avatar user={user} size={22} />}<span>{user.name}</span>{user.bot && <BotTag />}{user.id === '*' && <small>提醒会话里的每个人</small>}
       </button>)}
     </div>}
     {notice}
     {editing && <div className="reply-bar editing-bar" role="status"><span className="reply-copy"><b>编辑消息</b><PrivatePreview privateMode={privateMode}>{previewText(editing)}</PrivatePreview></span><IconButton icon={X} label="取消编辑" size={14} onClick={onCancelEdit} /></div>}
+    {burnSeconds > 0 && <div className="reply-bar burn-bar" role="group" aria-label="阅后即焚">
+      <Flame size={15} aria-hidden="true" /><span className="reply-copy"><b>阅后即焚</b><small>对方查看后销毁，无法阻止截屏或拍照</small></span>
+      <span className="burn-choices" role="group" aria-label="对方查看后保留">{[5, 10, 30, 60].map(value => <button type="button" key={value} aria-pressed={burnSeconds === value} className={burnSeconds === value ? 'active' : ''} onClick={() => setBurn(value)}>{value === 60 ? '1 分钟' : `${value} 秒`}</button>)}</span>
+      <IconButton icon={X} label="关闭阅后即焚" size={14} onClick={() => setBurn(0)} /></div>}
     {reply && !editing && <div className="reply-bar" role="status"><span className="reply-copy"><b>回复 {replyAuthor}</b><PrivatePreview privateMode={privateMode}>{reply.quote ? `“${reply.quote}”` : previewText(reply)}</PrivatePreview></span><IconButton icon={X} label="取消回复" size={14} onClick={onCancelReply} /></div>}
-    {draft.files.length > 0 && !editing && <div className="attachment-queue">{draft.files.map(item => <div className={`queued-file ${item.error ? 'failed' : ''}`} key={item.id}>
+    {draft.files.length > 0 && !editing && <div className="attachment-queue">{draft.files.map(item => <div className={`queued-file ${item.error ? 'failed' : ''} ${item.spoiler ? 'spoiler' : ''}`} key={item.id}>
       {item.file.type.startsWith('image/') ? <img src={item.url} alt="待发送图片" /> : <span className="queued-video">{item.file.type.startsWith('video/') ? <Film size={18} /> : <FileText size={18} />}</span>}
       <div><span>{item.file.name}</span><small>{item.error ? '上传失败' : item.attachment ? formatSize(item.file.size) : `上传 ${item.progress}%`}</small></div>
       {item.error && <IconButton icon={RotateCcw} label="重试上传" size={15} onClick={() => uploadItem(item, room.id)} />}
       {compressible(item.file) && item.attachment && <IconButton icon={Crop} label="裁剪或标注图片" size={15} onClick={() => setEditingImage(item)} disabled={sending} />}
+      {/^(image|video)\//.test(item.file.type) && <IconButton icon={EyeOff} label={item.spoiler ? '取消剧透' : '标为剧透（别人点开才看得到）'} size={15} className={item.spoiler ? 'active' : ''} aria-pressed={Boolean(item.spoiler)} onClick={() => toggleSpoiler(item)} disabled={sending} />}
       <IconButton icon={X} label="移除附件" size={15} onClick={() => removeFile(item)} disabled={sending} />
     </div>)}
       {draft.files.some(item => item.original && compressible(item.original)) && <label className="original-toggle" title="不勾选时，大图会压缩后再发送"><input type="checkbox" checked={sendOriginal} onChange={event => toggleOriginal(event.target.checked)} />原图</label>}
@@ -284,7 +306,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     <div className="composer-row">
     {/* 附件统一收进回形针菜单：图片或视频、文件 */}
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
-      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (3 + matchMedia('(pointer: coarse)').matches + Boolean(onCreatePoll) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
+      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (3 + matchMedia('(pointer: coarse)').matches + Boolean(onCreatePoll) + Boolean(onCreateChain) + Boolean(burnAvailable && !editing) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
         { id: 'media', label: '图片或视频', action: () => input.current.click() },
         ...(matchMedia('(pointer: coarse)').matches ? [{ id: 'camera', label: '拍照', action: () => cameraInput.current.click() }] : []),
         { id: 'file', label: '文件（最大 100 MB）', action: () => fileInput.current.click() },
@@ -292,13 +314,15 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
           ? phrases.map((text, index) => ({ id: `phrase-${index}`, label: text.replace(/\s+/g, ' ').slice(0, 40), action: () => insertText(text) }))
           : [{ id: 'none', label: '还没有常用语，在「设置 → 聊天」里添加', action: () => {} }] }) },
         ...(onCreatePoll ? [{ id: 'poll', label: '投票', action: onCreatePoll }] : []),
+        ...(onCreateChain ? [{ id: 'chain', label: '接龙', action: onCreateChain }] : []),
+        ...(burnAvailable && !editing ? [{ id: 'burn', label: burnSeconds ? '关闭阅后即焚' : '阅后即焚', action: () => setBurn(burnSeconds ? 0 : 5) }] : []),
         ...(onSchedule ? [{ id: 'schedule', label: '定时发送…', action: () => onSchedule(draft.text) }] : []),
       ] }); }}><Paperclip size={19} strokeWidth={1.7} /></button>
     {attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
     {emojiOpen && <EmojiPicker onPick={insertText} onSticker={editing ? undefined : sendSticker} notify={notify} onClose={() => setEmojiOpen(false)} />}
     <div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
       {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，发送文件</span></div>}
-      <textarea ref={textarea} aria-label="消息内容" placeholder={placeholder || `发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
+      <textarea ref={textarea} aria-label="消息内容" placeholder={burnSeconds ? `发阅后即焚消息给 ${room.name}` : placeholder || `发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
         aria-autocomplete="list" aria-controls={slashOptions.length ? 'slash-picker' : 'mention-picker'} aria-expanded={Boolean(slashOptions.length || (picker && candidates.length))}
         aria-activedescendant={slashOptions.length ? `slash-option-${slash.index}` : picker && candidates.length ? `mention-option-${picker.index}` : undefined}
         onChange={event => {

@@ -3,7 +3,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Camera, Check, Search, Users, Hash, ArrowRight, Copy, Bot, Rows3, MessagesSquare } from 'lucide-react';
 import { api, upload, absoluteUrl, mediaUrl, formatTime } from './api';
 import { FormattedText } from './markdown';
-import { Modal, Avatar, AvatarPicker, IdentityFields, FileCard, Attachment, nameColor } from './components';
+import { Modal, Avatar, AvatarPicker, IdentityFields, FileCard, Attachment, nameColor, SpoilerBadge, coveredMedia, revealedMedia } from './components';
 import { InvitationShare } from './Invitation';
 import AvatarCropper from './AvatarCropper';
 import { modKey } from './chatPrefs';
@@ -340,7 +340,7 @@ export function WebhooksDialog({ room, onClose, notify }) {
     try { await (window.desktop ? window.desktop.copy(issued.url) : copyText(issued.url)); notify('机器人地址已复制'); }
     catch { setError('复制失败，请选中上方地址复制'); }
   }
-  return <Modal title="群机器人" subtitle={`外部系统可以通过机器人往「${room.name}」发消息，例如告警、构建结果、日报。`} onClose={() => !busy && onClose()}>
+  return <Modal title="群机器人（Webhook）" subtitle={`外部系统可以通过机器人往「${room.name}」发消息，例如告警、构建结果、日报。`} onClose={() => !busy && onClose()}>
     {issued && <section className="webhook-issued" aria-live="polite"><b>「{issued.name}」的地址</b><input aria-label="机器人地址" value={issued.url} readOnly onFocus={event => event.target.select()} />
       <button type="button" className="primary-button full" onClick={copy}><Copy size={15} />复制地址</button>
       <p className="inline-note">地址里含有密钥，只显示这一次，请妥善保存；泄露后可以重置。用法：向地址 POST JSON <code>{'{"text":"内容"}'}</code>，每分钟最多 30 条。</p></section>}
@@ -353,19 +353,20 @@ export function WebhooksDialog({ room, onClose, notify }) {
   </Modal>;
 }
 
-const AUDIT_ACTIONS = { approve: '通过了注册', reject: '拒绝了注册', suspend: '停用了账号', role: '调整了角色', password: '修改了密码', 'reset-password': '重置了密码', 'delete-message': '删除了消息', mute: '禁言了', unmute: '解除了禁言', retention: '把消息保留期限改为', 'recall-window': '把撤回时限改为' };
+const AUDIT_ACTIONS = { approve: '通过了注册', reject: '拒绝了注册', suspend: '停用了账号', role: '调整了角色', password: '修改了密码', 'reset-password': '重置了密码', 'delete-message': '删除了消息', mute: '禁言了', unmute: '解除了禁言', retention: '把消息保留期限改为', 'recall-window': '把撤回时限改为',
+  'bot-create': '创建了机器人', 'bot-update': '修改了机器人', 'bot-receive-all': '修改了「接收全部消息」', 'bot-disable': '停用了机器人', 'bot-enable': '启用了机器人', 'bot-reset': '重置了机器人的凭证', 'bot-delete': '删除了机器人', 'bot-auto-disable': '因连续投递失败被自动停用' };
 // 操作日志：谁在什么时候对谁做了哪项管理操作；被删消息只记会话，不保留内容。
 export function AuditDialog({ onClose }) {
   const [page, setPage] = useState(1);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => { api(`admin/audit?page=${page}`).then(setResult).catch(failure => setError(failure.message)); }, [page]);
-  const where = entry => { if (entry.action !== 'delete-message') return ['role', 'mute'].includes(entry.action) ? `（${entry.detail}）` : ''; try { const detail = JSON.parse(entry.detail); return detail.roomName ? `（在「${detail.roomName}」）` : ''; } catch { return ''; } };
+  const where = entry => { if (entry.action !== 'delete-message') return ['role', 'mute', 'bot-receive-all'].includes(entry.action) ? `（${entry.detail}）` : ''; try { const detail = JSON.parse(entry.detail); return detail.roomName ? `（在「${detail.roomName}」）` : ''; } catch { return ''; } };
   return <Modal title="操作日志" subtitle="管理员的审核、权限、密码和删除消息操作，最新的在前。" wide onClose={onClose}>
     {error && <p className="form-error" role="alert">{error}</p>}
     {!result ? <p className="inline-note">正在加载…</p> : !result.entries.length ? <p className="inline-note">还没有管理操作。</p> : <ul className="audit-list">{result.entries.map(entry => <li key={entry.id}>
       <time>{new Date(entry.createdAt).toLocaleString('zh-CN', { hour12: false })}</time>
-      <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{['retention', 'recall-window'].includes(entry.action) ? ` ${entry.detail}` : entry.action === 'password' ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
+      <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{['retention', 'recall-window'].includes(entry.action) ? ` ${entry.detail}` : ['password', 'bot-auto-disable'].includes(entry.action) ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
     </li>)}</ul>}
     {result?.total > 50 && <div className="account-pagination"><button className="secondary-button" disabled={page === 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>第 {page} 页 · 共 {result.total} 条</span><button className="secondary-button" disabled={page * 50 >= result.total} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
   </Modal>;
@@ -393,6 +394,54 @@ export function PollDialog({ room, onClose, onCreated }) {
     <label className="toggle-row"><input type="checkbox" checked={multiple} onChange={event => setMultiple(event.target.checked)} />允许多选</label>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !question.trim() || filled.length < 2}>{busy ? '正在发起…' : '发起投票'}</button></div>
+  </form></Modal>;
+}
+
+// 发起接龙：标题必填，说明和示例格式可选；长度上限和服务端一致。
+// 弹窗打开（showModal）时浏览器把焦点交给第一个按钮，autoFocus 落不到输入框上：打开后的下一帧再聚焦。
+const useFocusOnOpen = () => { const ref = useRef(null); useEffect(() => { const frame = requestAnimationFrame(() => ref.current?.focus()); return () => cancelAnimationFrame(frame); }, []); return ref; };
+export function ChainDialog({ room, onClose, onCreated }) {
+  const titleInput = useFocusOnOpen();
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [example, setExample] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { const { message } = await api('chains', { roomId: room.id, title, description, example }); onCreated(message); onClose(); }
+    catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title="发起接龙" subtitle={`在「${room.name}」里发起，每人接一行，大家都能看到名单。`} onClose={() => !busy && onClose()}><form onSubmit={submit} className="poll-form">
+    <input ref={titleInput} aria-label="接龙标题" placeholder="标题，例如：周五团建报名" value={title} maxLength={100} onChange={event => setTitle(event.target.value)} />
+    <textarea className="announcement-input" aria-label="说明（可选）" placeholder="说明（可选），例如：写上名字和人数" rows={3} maxLength={500} value={description} onChange={event => setDescription(event.target.value)} />
+    <input aria-label="示例格式（可选）" placeholder="示例格式（可选），例如：张三 2 人" value={example} maxLength={100} onChange={event => setExample(event.target.value)} />
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !title.trim()}>{busy ? '正在发起…' : '发起接龙'}</button></div>
+  </form></Modal>;
+}
+
+// 接龙：写下自己的一行（最多 100 字）；已经参加的可以修改或退出。message 跟着实时更新，接龙结束时提示并不再提交。
+export function ChainEntryDialog({ message, viewerId, onClose, onChanged }) {
+  const own = message.chain.entries.find(entry => entry.userId === viewerId);
+  const input = useFocusOnOpen();
+  const [text, setText] = useState(own?.text || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const closed = Boolean(message.chain.closedAt);
+  async function run(route, body) {
+    setBusy(true); setError('');
+    try { onChanged(await api(route, { messageId: message.id, ...body })); onClose(); }
+    catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  const submit = event => { event.preventDefault(); if (!closed) run('chains/entry', { text }); };
+  return <Modal title={own ? '修改我的接龙' : '接龙'} subtitle={message.text} onClose={() => !busy && onClose()}><form onSubmit={submit} className="poll-form">
+    {message.chain.example && <p className="inline-note">示例：{message.chain.example}</p>}
+    <input ref={input} aria-label="我的一行" placeholder={message.chain.example || '写下你的一行'} value={text} maxLength={100} disabled={closed} onChange={event => setText(event.target.value)} />
+    {closed && <p className="form-error" role="alert">接龙已结束，不能再修改</p>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer">{own && !closed && <button className="text-button danger-text chain-withdraw" type="button" disabled={busy} onClick={() => run('chains/withdraw')}>退出接龙</button>}
+      <button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || closed || !text.trim()}>{busy ? '正在提交…' : own ? '保存' : '接龙'}</button></div>
   </form></Modal>;
 }
 
@@ -478,12 +527,18 @@ function dayLabel(time) {
   if (sameDay(time, yesterday)) return '昨天';
   return date.toLocaleDateString('zh-CN', { year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
 }
+// 剧透图先模糊遮住，点一下揭开，再点才看大图。
+function BundleImage({ file, onPreview }) {
+  const [covered, setCovered] = useState(() => coveredMedia(file));
+  if (covered) return <button type="button" className="bundle-image spoiler-covered" aria-label="剧透图片，按下显示" onClick={() => { revealedMedia.add(file.id); setCovered(false); }}><img src={mediaUrl(file.id)} alt="" loading="lazy" /><SpoilerBadge /></button>;
+  return <button type="button" className="bundle-image" aria-label={`查看图片 ${file.name}`} onClick={() => onPreview(file)}><img src={mediaUrl(file.id)} alt={file.name} loading="lazy" /></button>;
+}
 function BundleEntry({ item, privateMode, onPreview }) {
   if (privateMode) return <p className="bundle-text masked-preview">****</p>;
   const images = item.attachments.filter(file => file.mime.startsWith('image/'));
   return <div className="bundle-entry">
     {item.text && <div className="bundle-text"><FormattedText text={item.text} /></div>}
-    {images.length > 0 && <div className={`bundle-images ${images.length === 1 ? 'single' : ''}`}>{images.map(file => <button type="button" key={file.id} className="bundle-image" aria-label={`查看图片 ${file.name}`} onClick={() => onPreview(file)}><img src={mediaUrl(file.id)} alt={file.name} loading="lazy" /></button>)}</div>}
+    {images.length > 0 && <div className={`bundle-images ${images.length === 1 ? 'single' : ''}`}>{images.map(file => <BundleImage key={file.id} file={file} onPreview={onPreview} />)}</div>}
     {item.attachments.filter(file => !images.includes(file)).map(file => file.mime.startsWith('video/') ? <Attachment key={file.id} file={file} /> : <FileCard key={file.id} file={file} />)}
   </div>;
 }

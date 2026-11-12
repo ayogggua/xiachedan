@@ -5,7 +5,7 @@ import { disablePush, pushId } from './push';
 import { popoutRoom } from './popout';
 import { chatPref } from './chatPrefs';
 import { playMessageSound } from './sound';
-import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
+import { burnDeadline, merge, previewText, sanitizeMessage, sanitizeState } from './history';
 import { plainText } from './markdown';
 import useMessageReads from './useMessageReads';
 import { isQuiet } from './quiet';
@@ -58,6 +58,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     const history = historyRef.current;
     let changed = false;
     for (const id of messageIds) if (!history.hidden.has(id)) { history.hidden.add(id); changed = true; }
+    setBurnContents(previous => messageIds.some(id => id in previous) ? Object.fromEntries(Object.entries(previous).filter(([id]) => !messageIds.includes(id))) : previous);
     for (const [roomId, seq] of Object.entries(cleared)) if ((history.cleared[roomId] || 0) < seq) { history.cleared[roomId] = seq; changed = true; }
     if (!changed) return;
     setMessages(previous => Object.fromEntries(Object.entries(previous).map(([id, items]) => [id, merge(items, [], history)])));
@@ -106,6 +107,18 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, poll } : message) } : previous);
     touchThread();
   }, []);
+  // 接龙更新只换掉卡片里的名单，不算新消息、不提醒。
+  const applyChain = useCallback(({ roomId, messageId, chain }) => {
+    setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, chain } : message) } : previous);
+    touchThread();
+  }, []);
+  // 阅后即焚：接收人点开后拿到的内容只放在这里（内存里，不写进消息列表、不落盘），到点或销毁就删掉。
+  // 消息列表里接收人那一份始终是遮住的占位，重新加载、断线重连都不会把内容带回来。{ [消息标识]: { text, attachments, replyTo } }
+  const [burnContents, setBurnContents] = useState({});
+  const forgetBurn = useCallback(ids => setBurnContents(previous => ids.some(id => id in previous) ? Object.fromEntries(Object.entries(previous).filter(([id]) => !ids.includes(id))) : previous), []);
+  const applyBurnState = useCallback(({ roomId, messageId, burn }) => {
+    setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId && message.burn && !message.burn.destroyedAt ? { ...message, burn } : message) } : previous);
+  }, []);
   // 编辑后的消息只替换正文等字段，不当作新消息提醒；侧栏预览也跟着更新。
   const applyEdit = useCallback(message => {
     // 话题里的回复不在主时间线上：只让话题面板刷新，不并进主聊天。
@@ -113,6 +126,44 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     setMessages(previous => previous[message.roomId] ? { ...previous, [message.roomId]: merge(previous[message.roomId], [message], historyRef.current) } : previous);
     setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.lastMessage?.id === message.id ? { ...room, lastMessage: { ...room.lastMessage, ...message } } : room) } : previous);
   }, []);
+  // 销毁（服务器通知，或本机倒计时先到）：两边都只剩「已销毁」，内容从内存里删掉。
+  const applyBurned = useCallback(message => {
+    forgetBurn([message.id]);
+    applyEdit(message);
+    touchThread();
+  }, [applyEdit, forgetBurn]);
+  const openBurn = useCallback(async message => {
+    const { message: opened } = await api('burn/open', { messageId: message.id });
+    if (opened.burn?.destroyedAt) return applyBurned(opened);
+    setBurnContents(previous => ({ ...previous, [opened.id]: { text: opened.text, attachments: opened.attachments, replyTo: opened.replyTo } }));
+    applyBurnState({ roomId: opened.roomId, messageId: opened.id, burn: opened.burn });
+  }, [applyBurned, applyBurnState]);
+  // 本机倒计时到点：不等服务器的通知（可能断着网），先把内容清掉、显示「已销毁」；服务器那边按自己的时间销毁。
+  // 页面在后台时浏览器会推迟计时器，回到前台时立刻重新检查一遍。
+  const [burnCheck, setBurnCheck] = useState(0);
+  useEffect(() => {
+    const wake = () => { if (document.visibilityState === 'visible') setBurnCheck(value => value + 1); };
+    document.addEventListener('visibilitychange', wake);
+    return () => document.removeEventListener('visibilitychange', wake);
+  }, []);
+  useEffect(() => {
+    const counting = Object.values(messages).flat().filter(message => message.burn?.expiresAt && !message.burn.destroyedAt && !message.recalledAt);
+    const gone = Object.keys(burnContents).filter(id => !counting.some(message => message.id === id));
+    if (gone.length) forgetBurn(gone);
+    if (!counting.length) return;
+    const next = Math.min(...counting.map(message => burnDeadline(message.burn)));
+    const timer = setTimeout(() => {
+      const now = Date.now(), due = counting.filter(message => burnDeadline(message.burn) <= now);
+      if (!due.length) return setMessages(previous => ({ ...previous }));
+      const ids = new Set(due.map(message => message.id));
+      forgetBurn([...ids]);
+      setMessages(previous => Object.fromEntries(Object.entries(previous).map(([roomId, items]) => [roomId, items.map(message => ids.has(message.id)
+        ? { ...message, text: '', attachments: [], replyTo: null, burn: { ...message.burn, destroyedAt: now } } : message)])));
+      setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => ids.has(room.lastMessage?.id) ? { ...room, lastMessage: { ...room.lastMessage, text: '', attachments: [] } } : room) } : previous);
+      touchThread();
+    }, Math.max(0, next - Date.now()) + 30);
+    return () => clearTimeout(timer);
+  }, [messages, burnContents, forgetBurn, burnCheck]);
   const reportRead = useMessageReads(state?.me.id, connected, applyReceipt);
   const meId = state?.me.id;
   // 先在本地记为已读，未读角标立即更新；回执在后台上报。
@@ -178,6 +229,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     if (message.recalledAt || !current || message.senderId === current.me.id || (mutedRef?.current.has(message.roomId) && !important) || isQuiet(important)) return;
     // 拍一拍只提醒被拍的人。
     if (message.nudge && message.nudge.targetId !== current.me.id) return;
+    // 系统提示（机器人加入等）只留在会话里，不弹通知、不响。
+    if (message.notice) return;
     // 提示音：正在看这个会话时不响；Windows 的系统通知自带声音，弹出时不重复响。
     const watching = activeRoom.current === message.roomId && document.hasFocus() && !document.hidden;
     // 独立窗口不响也不弹通知，交给主窗口。
@@ -187,7 +240,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     const sender = current.users.find(user => user.id === message.senderId);
     const hidden = privacyRef.current;
     const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : keywordHit ? '[关键词] ' : ''}${sender?.name || message.bot || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
-    window.desktop.message({ id: message.id, roomId: message.roomId, privateMode: hidden,
+    window.desktop.message({ id: message.id, roomId: message.roomId, privateMode: hidden, reply: true, me: current.me.id,
       title: title.slice(0, 120), body: hidden ? '****' : message.nudge ? '拍了拍你' : previewText(message).slice(0, 240),
     }).then(shown => { if (!(shown && window.desktop.platform === 'windows')) ring(); }).catch(error => notify(error.message));
   }, [notify, syncHistory, privacyRef]);
@@ -226,6 +279,18 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (cancelled) return;
         setMessages(previous => ({ ...previous, [roomId]: complete ? merge(merge(previous[roomId] || [], missed, historyRef.current), latest.messages, historyRef.current) : merge([], latest.messages, historyRef.current) }));
         setHasMore(previous => ({ ...previous, [roomId]: complete && roomId in previous ? previous[roomId] : latest.hasMore }));
+        // 补齐只拿回最新的几页：更早、已经加载着的阅后即焚、接龙和投票再向服务器核对一次，
+        // 免得离线期间已经销毁的阅后即焚还显示着内容、接龙名单停在旧的样子；服务器不再给出的（已删除）一并去掉。
+        const fetched = new Set([...missed, ...latest.messages].map(message => message.id));
+        const stale = complete ? (messagesRef.current[roomId] || []).filter(message => !fetched.has(message.id) && !message.recalledAt
+          && ((message.burn && !message.burn.destroyedAt) || message.chain || message.poll)).slice(-200).map(message => message.id) : [];
+        if (stale.length) {
+          let current = null;
+          try { current = (await api('message-states', { roomId, messageIds: stale })).messages; } catch {}
+          if (cancelled || !current) return;
+          const alive = new Set(current.map(message => message.id)), checked = new Set(stale);
+          setMessages(previous => previous[roomId] ? { ...previous, [roomId]: merge(previous[roomId].filter(message => !checked.has(message.id) || alive.has(message.id)), current, historyRef.current) } : previous);
+        }
       } catch (error) { if (!cancelled) notify(error.message); }
     }
     function connect() {
@@ -262,6 +327,9 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'keywords') applyKeywords(data.keywords);
         if (data.type === 'phrases') applyPhrases(data.phrases);
         if (data.type === 'message-poll') applyPoll(data);
+        if (data.type === 'message-chain') applyChain(data);
+        if (data.type === 'message-burn') applyBurnState(data);
+        if (data.type === 'message-burned') applyBurned(data.message);
         if (data.type === 'message-thread') {
           setMessages(previous => previous[data.roomId] ? { ...previous, [data.roomId]: previous[data.roomId].map(message => message.id === data.rootId ? { ...message, thread: data.thread } : message) } : previous);
           setThreadTick(tick => ({ rootId: data.rootId, n: tick.n + 1 }));
@@ -292,15 +360,21 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     window.addEventListener('linliao:resume', resume);
     document.addEventListener('visibilitychange', resume);
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); window.removeEventListener('online', resume); window.removeEventListener('linliao:resume', resume); window.removeEventListener('pagehide', leave); document.removeEventListener('visibilitychange', resume); };
-  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally, syncHistory, stopTyping]);
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyChain, applyBurnState, applyBurned, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
     api(`messages?roomId=${encodeURIComponent(selected)}`).then(result => {
       if (cancelled) return;
+      // 最新一页的 hasMore 只说明「这一页之前还有」。如果之前已经一路往前翻到了头（hasMore 为 false），
+      // 而缓存里最早那条比这一页还早，说明更早的都已经在缓存里：保持 false，不再显示「查看更早的消息」。
+      // 服务端按 seq 分页、只会隐藏不会补出更早的消息；缓存被丢弃（重连、清空、退出）时 hasMore 会一起重置。
+      // 对不上（缓存里没有比这一页更早的）就照旧信服务端，宁可多显示按钮，也不能把历史藏起来。
+      const cachedOldest = messagesRef.current[selected]?.[0]?.seq;
+      const knownComplete = cachedOldest !== undefined && cachedOldest < (result.messages[0]?.seq ?? Infinity);
       setMessages(previous => ({ ...previous, [selected]: merge(previous[selected] || [], result.messages, historyRef.current) }));
-      setHasMore(previous => ({ ...previous, [selected]: result.hasMore }));
+      setHasMore(previous => ({ ...previous, [selected]: previous[selected] === false && knownComplete ? false : result.hasMore }));
     }).catch(error => { if (!cancelled) notify(error.message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [selected, state?.me.id, loggingOut, notify]);
@@ -333,5 +407,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, applyChain, threadTick, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally, burnContents, openBurn };
 }

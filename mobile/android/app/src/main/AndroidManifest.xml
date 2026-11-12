@@ -34,4 +34,6 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 网页里的 navigator.vibrate（左滑回复、长按菜单的震动反馈）在 WebView 中需要这项普通权限，安装时自动授予。 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 </manifest>
