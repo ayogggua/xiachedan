@@ -7,6 +7,7 @@ export const FORMATS = [
   { id: 'bold', label: '粗体', sample: '**文字**', keys: 'bold jiacu cuti ct jc', before: '**', placeholder: '粗体', after: '**' },
   { id: 'italic', label: '斜体', sample: '*文字*', keys: 'italic xieti xt', before: '*', placeholder: '斜体', after: '*' },
   { id: 'strike', label: '删除线', sample: '~~文字~~', keys: 'strike strikethrough shanchuxian scx', before: '~~', placeholder: '删除线', after: '~~' },
+  { id: 'spoiler', label: '剧透', sample: '||文字||', keys: 'spoiler jutou jt zhedang', before: '||', placeholder: '剧透内容', after: '||' },
   { id: 'code', label: '行内代码', sample: '`代码`', keys: 'code inline daima dm', before: '`', placeholder: '代码', after: '`' },
   { id: 'codeblock', label: '代码块', sample: '```', keys: 'code block codeblock daimakuai dmk', before: '```\n', placeholder: '', after: '\n```', block: true },
   { id: 'quote', label: '引用', sample: '>', keys: 'quote blockquote yinyong yy', before: '> ', placeholder: '引用内容', block: true },

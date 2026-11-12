@@ -12,7 +12,8 @@ import { lanAddresses } from './network.js';
 import { createAuth } from './auth.js';
 import { fetchPreview } from './linkPreview.js';
 import { createVapidKeys, sendPush, validEndpoint, validKeys, vapidPublicKey } from './webpush.js';
-import { plainText, previewText } from '../shared/preview.js';
+import { createBots } from './bots.js';
+import { URL_PATTERN, attachmentLabel, cutMasked, looseText, maskSpoilers, plainText, previewText, quotable } from '../shared/preview.js';
 import { isPresetAvatar } from '../shared/avatars.js';
 import { SELECT_LIMIT } from '../shared/limits.js';
 
@@ -50,6 +51,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   scheduleInterval = 15000,
   scheduleMinLead = 30000,
   pushSender = sendPush,
+  // 机器人投递的可调参数（测试用）：retryDelays、timeoutMs、maxFailures、now、dnsServers、lookup、maxLookups、connect、tls、log。
+  botOptions = {},
 } = {}) {
   if (!['cloud', 'local'].includes(mode)) throw new Error('CHAT_MODE 必须是 cloud 或 local');
   const cloud = mode === 'cloud';
@@ -77,6 +80,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const failures = new Map();
   const limits = new Map();
   const stmt = sql => db.prepare(sql);
+  // 每条消息都要查一次的阅后即焚、接龙记录：语句只准备一次，序列化一页消息时不再每行重新解析 SQL。
+  const prepared = new Map();
+  const cached = sql => prepared.get(sql) || prepared.set(sql, db.prepare(sql)).get(sql);
   const recalledAt = id => stmt('SELECT recalled_at FROM message_recalls WHERE message_id=?').get(id)?.recalled_at || null;
   // 引用内容随原消息变化：原消息被撤回或清空后只保留标识。
   const replyFor = id => {
@@ -84,12 +90,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!row) return null;
     if (!row.id || row.seq <= clearedThroughSeq()) return { id: row.replyTo, missing: true };
     if (recalledAt(row.id)) return { id: row.id, seq: row.seq, senderId: row.sender_id, recalled: true };
-    const quote = stmt('SELECT quote FROM message_reply_quotes WHERE message_id=?').get(id)?.quote;
-    return { id: row.id, seq: row.seq, senderId: row.sender_id, text: row.text.slice(0, 200), ...(quote ? { quote } : {}),
-      attachments: JSON.parse(row.attachments).map(file => ({ name: file.name, mime: file.mime })) };
+    // 阅后即焚消息不能被引用（发送时拦下）；万一有，也只给标记，不给内容。
+    if (isBurn(row.id)) return { id: row.id, seq: row.seq, senderId: row.sender_id, burn: true, text: '', attachments: [] };
+    const saved = stmt('SELECT quote FROM message_reply_quotes WHERE message_id=?').get(id)?.quote;
+    // 引用片段碰到了原消息里的剧透（早先的版本没有拦）就不再给出，只显示整条的摘要。
+    const quote = saved && (quotable(row.text, saved) || !looseText(row.text).includes(looseText(saved))) ? saved : null;
+    // 先把剧透换成 [剧透] 再截断：截在剧透中间会丢掉结尾的 ||，客户端就认不出那是剧透了。剧透图不带文件名。
+    // 引用的是接龙时带上标记，摘要显示成「[接龙] 标题」。
+    const chain = Boolean(cached('SELECT 1 FROM chains WHERE message_id=?').get(row.id));
+    return { id: row.id, seq: row.seq, senderId: row.sender_id, text: cutMasked(maskSpoilers(row.text), 200), ...(quote ? { quote } : {}), ...(chain ? { chain: true } : {}),
+      attachments: JSON.parse(row.attachments).map(file => file.spoiler ? { name: '', mime: file.mime, spoiler: true } : { name: file.name, mime: file.mime }) };
   };
-  // 比较引用片段和原文时忽略格式符号和空白：原文是 Markdown，用户选中的是渲染后的文字。
-  const looseText = text => text.replace(/[*_~`#>|\\[\]()!-]/g, '').replace(/\s+/g, '').toLowerCase();
   const mentionsOf = id => stmt('SELECT user_id FROM message_mentions WHERE message_id=? ORDER BY rowid').all(id).map(row => row.user_id);
   // 按表情第一次出现的先后排列，每个表情附上回应的成员。
   const reactionsOf = id => {
@@ -113,6 +124,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const votes = stmt('SELECT user_id, option_index FROM poll_votes WHERE message_id=? ORDER BY voted_at, rowid').all(id);
     return { multiple: Boolean(poll.multiple), closedAt: poll.closed_at, options: JSON.parse(poll.options).map((text, index) => ({ text, voters: votes.filter(vote => vote.option_index === index).map(vote => vote.user_id) })) };
   };
+  const chainOf = id => {
+    const chain = cached('SELECT * FROM chains WHERE message_id=?').get(id);
+    if (!chain) return null;
+    const entries = cached('SELECT user_id, text, joined_at, edited_at FROM chain_entries WHERE message_id=? ORDER BY id').all(id)
+      .map(row => ({ userId: row.user_id, text: row.text, joinedAt: row.joined_at, editedAt: row.edited_at }));
+    return { description: chain.description, example: chain.example, closedAt: chain.closed_at, closedBy: chain.closed_by, entries };
+  };
   const NOT_THREAD = 'id NOT IN (SELECT message_id FROM message_threads)';
   const threadOf = id => stmt('SELECT root_id FROM message_threads WHERE message_id=?').get(id)?.root_id || null;
   const threadInfo = id => {
@@ -123,10 +141,25 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     return { count: row.count, lastAt: row.lastAt, participants };
   };
   const bundleOf = id => { const row = stmt('SELECT title, items FROM message_bundles WHERE message_id=?').get(id); return row ? { title: row.title, items: JSON.parse(row.items) } : null; };
-  const serializeMessage = row => row ? { ...baseMessage(row), bundle: bundleOf(row.id), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id), nudge: nudgeOf(row.id), card: cardOf(row.id) } : null;
+  // viewerId：看这条消息的人。阅后即焚消息只有发送人能拿到内容（见 burnView），不传时一律按别人看待。
+  const serializeMessage = (row, viewerId) => row ? burnView({ ...baseMessage(row), bundle: bundleOf(row.id), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), chain: chainOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id), nudge: nudgeOf(row.id), card: cardOf(row.id), notice: noticeOf(row.id), burn: burnOf(row.id) }, viewerId) : null;
+  // 阅后即焚：只在私聊里，发送时选 5、10、30 秒或 1 分钟。接收人点开（/api/burn/open）的那一刻按服务器时钟开始倒计时，
+  // 到点由服务器销毁：正文、附件文件、引用、链接预览缓存都删掉，只留一行「已销毁」。now 让客户端按自己的时钟换算剩余时间。
+  const BURN_SECONDS = [5, 10, 30, 60];
+  const isBurn = id => Boolean(cached('SELECT 1 FROM message_burns WHERE message_id=?').get(id));
+  const NOT_BURN = 'id NOT IN (SELECT message_id FROM message_burns)';
+  const burnOf = id => {
+    const row = cached('SELECT * FROM message_burns WHERE message_id=?').get(id);
+    return row ? { seconds: row.seconds, openedAt: row.opened_at, expiresAt: row.opened_at ? row.opened_at + row.seconds * 1000 : null, destroyedAt: row.destroyed_at, now: Date.now() } : null;
+  };
+  // 除了发送人，谁都拿不到没销毁的阅后即焚内容：列表、推送、实时事件里正文、附件、引用都是空的；接收人只能通过 /api/burn/open 取一次看。
+  const burnView = (message, viewerId) => !message.burn || message.burn.destroyedAt || message.recalledAt || message.senderId === viewerId ? message
+    : { ...message, text: '', attachments: [], replyTo: null, mentions: [] };
   // 名片：推荐的是哪位成员。
   const cardOf = id => { const row = stmt('SELECT user_id FROM message_cards WHERE message_id=?').get(id); return row ? { userId: row.user_id } : null; };
   const nudgeOf = id => { const row = stmt('SELECT target_id FROM message_nudges WHERE message_id=?').get(id); return row ? { targetId: row.target_id } : null; };
+  // 系统提示（机器人加入、开关「接收全部消息」等）：正文在生成时写好，这里只给类型和相关的机器人。
+  const noticeOf = id => { const row = cached('SELECT kind, bot_id FROM message_notices WHERE message_id=?').get(id); return row ? { kind: row.kind, botId: row.bot_id } : null; };
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -147,7 +180,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const ownerId = () => stmt('SELECT user_id FROM space_admin WHERE id=1').get()?.user_id;
   const isRemoved = id => Boolean(stmt('SELECT 1 FROM removed_users WHERE user_id=?').get(id));
   const spaceInfo = () => ({ name: workspace().name, ownerId: ownerId(), mode });
-  const userById = id => (!cloud || auth.activeId(id)) ? stmt('SELECT id, name, avatar FROM users WHERE id=? AND id NOT IN (SELECT user_id FROM removed_users)').get(id) : null;
+  // 只找真人成员；机器人不是 users 里能登录的人，需要时用 bots.botRow。
+  const userById = id => (!cloud || auth.activeId(id)) ? stmt('SELECT id, name, avatar FROM users WHERE id=? AND id NOT IN (SELECT user_id FROM removed_users) AND id NOT IN (SELECT id FROM bots)').get(id) : null;
   const tokenFrom = req => {
     const cookie = req.headers.cookie?.split(';').map(s => s.trim()).find(s => s.startsWith('linliao_session='));
     return cookie ? cookie.slice('linliao_session='.length) : '';
@@ -155,7 +189,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const authUser = req => {
     if (cloud) return auth.user(req);
     const token = tokenFrom(req);
-    return token ? stmt('SELECT id, name, avatar FROM users WHERE token_hash=? AND id NOT IN (SELECT user_id FROM removed_users)').get(hash(token)) : null;
+    return token ? stmt('SELECT id, name, avatar FROM users WHERE token_hash=? AND id NOT IN (SELECT user_id FROM removed_users) AND id NOT IN (SELECT id FROM bots)').get(hash(token)) : null;
   };
   const canAccess = (room, userId) => room && !isRemoved(userId) && (!cloud || auth.activeId(userId)) && (room.kind === 'public' || JSON.parse(room.members).includes(userId));
   const requireRoom = (id, userId) => {
@@ -177,12 +211,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const onlineIds = () => new Set([...sockets].filter(s => s.readyState === WebSocket.OPEN).map(s => s.userId));
   const users = () => {
     const online = onlineIds();
-    const rows = stmt(cloud ? "SELECT u.id,u.name,u.avatar FROM users u JOIN accounts a ON a.user_id=u.id WHERE a.status IN ('approved','suspended') ORDER BY u.created_at" : 'SELECT id, name, avatar FROM users ORDER BY created_at').all();
+    const rows = stmt(cloud ? "SELECT u.id,u.name,u.avatar FROM users u JOIN accounts a ON a.user_id=u.id WHERE a.status IN ('approved','suspended') ORDER BY u.created_at" : 'SELECT id, name, avatar FROM users WHERE id NOT IN (SELECT id FROM bots) ORDER BY created_at').all();
     const profiles = new Map(stmt('SELECT * FROM user_profiles').all().map(row => [row.user_id, row]));
     const mutes = new Map(stmt('SELECT user_id, until FROM member_mutes').all().map(row => [row.user_id, row.until]));
     const colors = new Map(stmt('SELECT user_id, color FROM user_name_colors').all().map(row => [row.user_id, row.color]));
     return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); const profile = profiles.get(user.id);
-      return { ...user, removed, online: !removed && online.has(user.id), status: removed ? null : statusOf(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, nameColor: colors.get(user.id) ?? null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; });
+      return { ...user, removed, online: !removed && online.has(user.id), status: removed ? null : statusOf(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, nameColor: colors.get(user.id) ?? null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; })
+      .concat(bots.userViews());
   };
   // 群主：记录的群主不在群里（或旧数据没有记录）时，由成员列表里最早的人接任；创建群聊时创建者排在第一位。
   const groupSettings = room => {
@@ -220,8 +255,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
-      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq DESC LIMIT 1`).get(room.id, userId, userId)),
-      avatar: roomAvatar(room.id), ...managerView(room, userId), autoDelete: stmt('SELECT seconds FROM room_auto_delete WHERE room_id=?').get(room.id)?.seconds || 0, ...(room.kind === 'group' ? groupSettings(room) : {}) }));
+      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq DESC LIMIT 1`).get(room.id, userId, userId), userId),
+      avatar: roomAvatar(room.id), ...managerView(room, userId), autoDelete: stmt('SELECT seconds FROM room_auto_delete WHERE room_id=?').get(room.id)?.seconds || 0, ...(room.kind === 'group' ? groupSettings(room) : {}),
+      ...(room.kind === 'direct' ? {} : { bots: bots.roomBotIds(room.id) }) }));
   // 禁言状态：返回截止时间，一直禁言为 Infinity，没有禁言为 null；过期的记录顺手清掉。
   const muteOf = id => {
     const row = stmt('SELECT until FROM member_mutes WHERE user_id=?').get(id);
@@ -285,7 +321,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const pushedReminders = new Set();
   const pushMessage = (message, room) => {
-    if (message.recalledAt) return;
+    if (message.recalledAt || message.notice) return;
     const rows = stmt('SELECT * FROM push_subscriptions WHERE user_id<>?').all(message.senderId || '');
     if (!rows.length) return;
     const sender = message.bot || (message.senderId && stmt('SELECT name FROM users WHERE id=?').get(message.senderId)?.name) || '新消息';
@@ -312,7 +348,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const { ownerId, adminIds } = groupSettings(room);
     if (userId !== ownerId && !adminIds.includes(userId)) return {};
     const policy = stmt('SELECT invite_token FROM room_group_policy WHERE room_id=?').get(room.id);
-    return { inviteToken: policy?.invite_token || null, joinRequests: stmt('SELECT id, user_id, invited_by, created_at FROM room_join_requests WHERE room_id=? ORDER BY created_at').all(room.id)
+    return { inviteToken: policy?.invite_token || null, joinRequests: stmt('SELECT id, user_id, invited_by, created_at FROM room_join_requests WHERE room_id=? ORDER BY created_at, rowid').all(room.id)
       .map(row => ({ id: row.id, userId: row.user_id, invitedBy: row.invited_by, createdAt: row.created_at })) };
   };
   const addToGroup = (room, ids) => {
@@ -330,8 +366,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
+    // 带着阅后即焚内容的事件只原样发给发送人自己的连接，其他连接收到遮住的版本。
+    const secret = event.message?.burn && burnView(event.message) !== event.message;
+    const masked = secret && JSON.stringify({ ...event, message: burnView(event.message) });
     for (const socket of sockets) if (socket.readyState === WebSocket.OPEN && !isRemoved(socket.userId) && (!cloud || auth.validSocket(socket)) && accepts(socket)) {
-      if (socket.bufferedAmount > 1024 * 1024) socket.terminate(); else socket.send(payload);
+      if (socket.bufferedAmount > 1024 * 1024) socket.terminate(); else socket.send(secret && socket.userId !== event.message.senderId ? masked : payload);
     }
   };
   const broadcast = (event, roomId) => {
@@ -341,7 +380,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const target = targetId ? stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(targetId) : null;
     deliver(event, socket => (!roomId || canAccess(room, socket.userId)) && !(target && hiddenFor(socket.userId, target)));
     // 推送放到下一轮事件循环，不拖慢消息接口的响应。
-    if (event.type === 'message' && room) setImmediate(() => { try { pushMessage(event.message, room); } catch (error) { console.error({ message: 'push failed', error: error.message }); } });
+    if (event.type === 'message' && room) setImmediate(() => { try { pushMessage(burnView(event.message), room); } catch (error) { console.error({ message: 'push failed', error: error.message }); } });
+    // 机器人收消息也放到下一轮：投递在后台排队进行，不影响发消息。
+    if (room && ['message', 'message-recalled', 'message-edited'].includes(event.type)) setImmediate(() => { try { bots.onEvent(event, room); } catch (error) { if (!closing) console.error({ message: 'bot delivery failed', error: error.message }); } });
   };
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
   const userCreated = (req, res, name, avatar) => {
@@ -374,12 +415,15 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       res.set({ 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Linliao, X-Setup-Key, X-Linliao-Client, Authorization', 'Access-Control-Max-Age': '600' });
       return res.sendStatus(204);
     }
-    // 机器人地址由外部服务器调用，凭令牌鉴权，不带浏览器的来源与自定义请求头。
-    const hook = req.path.startsWith('/api/hooks/');
+    // 机器人地址和机器人接口由外部服务器调用，凭令牌鉴权，不带浏览器的来源与自定义请求头。
+    const hook = req.path.startsWith('/api/hooks/') || req.path.startsWith('/api/bot/');
     if (!hook && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (!originOK(req) || req.get('X-Linliao') !== '1')) return next(fail('请求来源无效', 403));
     next();
   });
   app.use(express.json({ limit: '64kb' }));
+  // 只有发消息的接口（POST /api/messages）能发阅后即焚。别的接口（定时发送、投票、接龙、名片、转发、拍一拍、编辑、机器人……）
+  // 带着为真的 burn 一律拒绝，不能悄悄发成普通消息。
+  app.use('/api', (req, _res, next) => next(req.body && typeof req.body === 'object' && req.body.burn && !(req.method === 'POST' && req.path === '/messages') ? fail('这里不能发阅后即焚消息') : undefined));
   if (cloud) {
     try { auth = await createAuth({ db, app, production, rateLimit,
       closeUser: (id, sessionHash) => { for (const socket of sockets) if (sessionHash ? socket.sessionHash === sessionHash : socket.userId === id) socket.close(4001, 'account-changed'); },
@@ -388,6 +432,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   }
   app.get('/api/health', (_req, res) => { stmt('SELECT 1').get(); res.json({ app: 'linliao', version: '1.4.1', mode, ok: true, mobile: cloud, release: process.env.CHAT_RELEASE || 'development' }); });
   app.get('/api/bootstrap', (req, res) => {
+    sweepBurns();
     const ws = workspace();
     const me = authUser(req);
     res.json({ configured: Boolean(ws), workspace: ws ? spaceInfo() : null,
@@ -476,7 +521,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     broadcast({ type: 'message', message }, webhook.room_id);
     res.status(201).json({ ok: true, id });
   });
+  const bots = createBots({ db, stmt, mode, fail, textValue, rateLimit, broadcast, serializeMessage, userById, canAccess, requireRoom, groupSettings,
+    isManager: user => isManager(user), clearedThroughSeq, recalledAt, isBurn, refreshUsers: () => broadcast({ type: 'users', users: users() }), options: botOptions });
+  bots.registerApi(app);
   app.use('/api', (req, _res, next) => {
+    // 先销毁已经到点的阅后即焚消息，之后的任何接口都拿不到它们的内容。
+    sweepBurns();
     req.user = authUser(req);
     if (req.user && cloud) touchDevice(req);
     next(req.user ? undefined : fail(cloud ? '请先登录并等待管理员审核通过' : '请先加入空间', 401));
@@ -548,15 +598,23 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json({ message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } });
   });
   // 撤回与管理员删除共用：清空正文和附件，删掉相关的已读、引用、提及、回应等记录，并通知会话里的人。
+  // 删掉阅后即焚内容之后截断预写日志：撤回、管理员删除、销毁、保留期限和自动删除都要这样，原文才不会留在日志里等下一次检查点。
+  const scrubLog = () => { try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {} };
   const recallMessage = (row, removedBy) => {
     const id = row.id;
     if (!recalledAt(id)) {
+      const burned = isBurn(id);
       db.exec('BEGIN');
       try {
         if (removedBy) stmt('INSERT OR IGNORE INTO message_removals VALUES (?,?,?)').run(id, removedBy.id, Date.now());
         stmt('DELETE FROM room_pins WHERE message_id=?').run(id);
         stmt('DELETE FROM polls WHERE message_id=?').run(id);
         stmt('DELETE FROM poll_votes WHERE message_id=?').run(id);
+        stmt('DELETE FROM chains WHERE message_id=?').run(id);
+        stmt('DELETE FROM chain_entries WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_burns WHERE message_id=?').run(id);
+        stmt('DELETE FROM burn_files WHERE message_id=?').run(id);
+        clearTimeout(burnTimers.get(id)); burnTimers.delete(id);
         const bundled = JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(id)?.items || '[]').flatMap(item => item.attachments);
         for (const file of [...JSON.parse(row.attachments), ...bundled]) for (const id of [file.id, file.thumbId].filter(Boolean)) {
           stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(id);
@@ -575,9 +633,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('DELETE FROM message_versions WHERE message_id=?').run(id);
         stmt('DELETE FROM message_nudges WHERE message_id=?').run(id);
         stmt('DELETE FROM message_cards WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_notices WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
+      if (burned) scrubLog();
       broadcast({ type: 'message-recalled', message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)) }, row.room_id);
       const root = threadOf(id);
       if (root) broadcast({ type: 'message-thread', roomId: row.room_id, rootId: root, thread: threadInfo(root) }, row.room_id);
@@ -671,6 +731,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     requireRoom(row.room_id, req.user.id);
     if (row.sender_id !== req.user.id) throw fail('只能编辑自己发送的消息', 403);
     if (pollOf(id)) throw fail('投票不能编辑');
+    if (chainOf(id)) throw fail('接龙不能编辑');
+    if (isBurn(id)) throw fail('阅后即焚消息不能编辑');
     if (nudgeOf(id)) throw fail('拍一拍不能编辑');
     if (cardOf(id)) throw fail('名片不能编辑');
     if (recalledAt(id)) throw fail('消息已撤回');
@@ -678,7 +740,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (text.length > 10000) throw fail('每条消息最多 10000 个字符');
     if (!text && row.attachments === '[]') throw fail('消息不能为空');
     if (text !== row.text) {
-      const kept = mentionsOf(id).filter(target => target === '*' ? text.includes('@所有人') : text.includes(`@${userById(target)?.name}`));
+      const kept = mentionsOf(id).filter(target => target === '*' ? text.includes('@所有人') : text.includes(`@${(userById(target) || bots.botRow(target))?.name}`));
       db.exec('BEGIN');
       try {
         const lost = editedAt(id) && !stmt('SELECT 1 FROM message_versions WHERE message_id=?').get(id) ? 1 : 0;
@@ -696,7 +758,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 编辑历史：会话成员可以看到每个版本和写下的时间；撤回或清空后不再提供。
   app.get('/api/message-history', (req, res) => {
     const row = typeof req.query.id === 'string' && req.query.id.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(req.query.id);
-    if (!row || row.seq <= clearedThroughSeq() || recalledAt(row.id)) throw fail('消息不存在或已撤回', 404);
+    if (!row || row.seq <= clearedThroughSeq() || recalledAt(row.id) || isBurn(row.id)) throw fail('消息不存在或已撤回', 404);
     requireRoom(row.room_id, req.user.id);
     const saved = stmt('SELECT text, replaced_at, earlier_lost FROM message_versions WHERE message_id=? ORDER BY id').all(row.id);
     const versions = saved.map((version, index) => ({ text: version.text, at: index ? saved[index - 1].replaced_at : saved[0].earlier_lost ? null : row.created_at }));
@@ -714,11 +776,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_nudges; DELETE FROM message_cards; DELETE FROM message_hidden; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_nudges; DELETE FROM message_cards; DELETE FROM message_hidden; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM chains; DELETE FROM chain_entries; DELETE FROM message_burns; DELETE FROM burn_files; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM message_notices; DELETE FROM bot_deliveries; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     cleanFiles();
+    for (const timer of burnTimers.values()) clearTimeout(timer);
+    burnTimers.clear();
     broadcast({ type: 'history-cleared', throughSeq });
     let compacted = true;
     try { db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);'); }
@@ -732,7 +796,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!cursors || typeof cursors !== 'object' || Array.isArray(cursors) ||
       Object.entries(cursors).some(([id, seq]) => !id || id.length > 100 || !Number.isSafeInteger(seq) || seq < 0)) throw fail('已读位置无效');
     const count = stmt(`SELECT COALESCE(MAX(seq), ?) AS throughSeq,
-      COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) THEN 1 ELSE 0 END), 0) AS unreadCount,
+      COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) AND id NOT IN (SELECT message_id FROM message_notices) THEN 1 ELSE 0 END), 0) AS unreadCount,
       COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls)
         AND EXISTS (SELECT 1 FROM message_mentions WHERE message_id=messages.id AND user_id IN (?, '*')) THEN 1 ELSE 0 END), 0) AS mentionCount
       FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD} AND ${visibleTo()}`);
@@ -780,11 +844,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const unique = [...new Set(ids)];
     const found = stmt(`SELECT * FROM messages WHERE id IN (${unique.map(() => '?').join(',')}) ORDER BY seq`).all(...unique);
     for (const row of found) requireRoom(row.room_id, req.user.id);
-    // 已撤回、已清空、拍一拍和名片不能转发：跳过它们，其余照常发出，并告诉前端跳过了几条。
-    const rows = found.filter(row => row.seq > clearedThroughSeq() && !recalledAt(row.id) && !nudgeOf(row.id) && !cardOf(row.id));
+    // 已撤回、已清空、拍一拍、名片和阅后即焚消息不能转发：跳过它们，其余照常发出，并告诉前端跳过了几条。
+    const rows = found.filter(row => row.seq > clearedThroughSeq() && !recalledAt(row.id) && !nudgeOf(row.id) && !cardOf(row.id) && !isBurn(row.id) && !noticeOf(row.id));
     if (!rows.length) {
       if (found.length !== unique.length || found.some(row => row.seq <= clearedThroughSeq() || recalledAt(row.id))) throw fail('有消息已撤回或已被清空', 404);
+      if (found.some(row => isBurn(row.id))) throw fail('阅后即焚消息不能转发');
       if (found.some(row => nudgeOf(row.id))) throw fail('拍一拍不能转发');
+      if (found.some(row => noticeOf(row.id))) throw fail('系统提示不能转发');
       throw fail('名片不能转发，可以在资料卡里重新推荐');
     }
     const skipped = unique.length - rows.length;
@@ -853,6 +919,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!row || row.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
     requireRoom(row.room_id, req.user.id);
     if (recalledAt(row.id)) throw fail('消息已撤回');
+    if (isBurn(row.id)) throw fail('阅后即焚消息不能回应');
     const removed = stmt('DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?').run(row.id, req.user.id, emoji).changes;
     if (!removed && !stmt('SELECT 1 FROM message_reactions WHERE message_id=? AND emoji=?').get(row.id, emoji) && stmt('SELECT COUNT(DISTINCT emoji) AS n FROM message_reactions WHERE message_id=?').get(row.id).n >= 20) throw fail('这条消息的表情种类已经很多了');
     if (!removed) stmt('INSERT INTO message_reactions VALUES (?,?,?,?)').run(row.id, req.user.id, emoji, Date.now());
@@ -913,6 +980,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const file = typeof req.body?.fileId === 'string' && stmt('SELECT * FROM uploads WHERE id=?').get(req.body.fileId);
     if (!file || file.purpose !== 'message' || !file.claimed) throw fail('图片不存在', 404);
     requireRoom(file.room_id, req.user.id);
+    if (stmt('SELECT 1 FROM burn_files WHERE upload_id=?').get(file.id)) throw fail('阅后即焚的图片不能添加为表情');
     if (!STICKER_MIMES.includes(file.mime)) throw fail('只能把图片添加为表情');
     if (file.size > 5 * 1024 * 1024) throw fail('表情图片不能超过 5 MB');
     if (stmt('SELECT COUNT(*) AS n FROM user_stickers WHERE user_id=?').get(req.user.id).n >= 120) throw fail('最多收藏 120 个表情，先删掉一些');
@@ -945,6 +1013,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT INTO upload_stickers VALUES (?)').run(id);
     res.status(201).json({ attachment: { id, name: sticker.name, mime: sticker.mime, size: sticker.size } });
   });
+  // 私聊双方都「只对自己删除」（或清空了会话）的阅后即焚消息谁都打不开了：不等保留期限，按到点销毁的办法立即清掉内容、文件和日志。
+  // 只有一方删除时照旧：发送人删了，接收人仍能打开；接收人删了，发送人仍看得到自己的内容。
+  const burnIfUnreachable = row => {
+    const burn = cached('SELECT destroyed_at FROM message_burns WHERE message_id=?').get(row.id);
+    if (!burn || burn.destroyed_at || recalledAt(row.id)) return;
+    const room = stmt('SELECT members FROM rooms WHERE id=?').get(row.room_id);
+    if (room && JSON.parse(room.members).every(userId => hiddenFor(userId, row))) destroyBurn(row.id);
+  };
   // 只对自己删除消息：别人照常能看到；顺带去掉自己的收藏和提醒。
   app.post('/api/messages/hide', (req, res) => {
     rateLimit(req, 'hide', 60);
@@ -960,6 +1036,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       stmt('DELETE FROM reminders WHERE user_id=? AND message_id=?').run(req.user.id, row.id);
     }
     deliver({ type: 'messages-hidden', messageIds: rows.map(row => row.id) }, socket => socket.userId === req.user.id);
+    for (const row of rows) burnIfUnreachable(row);
     res.json({ messageIds: rows.map(row => row.id) });
   });
   // 只对自己清空会话：记下当前最后一条的位置，之前的消息对自己不再显示，以后的新消息照常。
@@ -971,6 +1048,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt(`DELETE FROM saved_messages WHERE user_id=? AND message_id IN (SELECT id FROM messages WHERE room_id=? AND seq<=?)`).run(req.user.id, room.id, throughSeq);
     stmt(`DELETE FROM reminders WHERE user_id=? AND message_id IN (SELECT id FROM messages WHERE room_id=? AND seq<=?)`).run(req.user.id, room.id, throughSeq);
     deliver({ type: 'room-cleared', roomId: room.id, throughSeq }, socket => socket.userId === req.user.id);
+    for (const row of stmt('SELECT m.id, m.room_id, m.seq FROM messages m JOIN message_burns b ON b.message_id=m.id WHERE m.room_id=? AND m.seq<=? AND b.destroyed_at IS NULL').all(room.id, throughSeq)) burnIfUnreachable(row);
     res.json({ roomId: room.id, throughSeq });
   });
   app.get('/api/push', (_req, res) => res.json({ publicKey: vapidPublicKey(vapidKey()) }));
@@ -1034,7 +1112,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/user-note', (req, res) => {
     rateLimit(req, 'notes', 60);
     const id = req.body?.userId;
-    if (typeof id !== 'string' || !userById(id)) throw fail('成员不存在', 404);
+    if (typeof id !== 'string' || !(userById(id) || (bots.botRow(id) && !bots.botRow(id).deleted_at))) throw fail('成员不存在', 404);
     if (id === req.user.id) throw fail('不能给自己写备注');
     if (typeof req.body.note !== 'string' || req.body.note.trim().length > 200) throw fail('备注最多 200 个字');
     const note = req.body.note.trim();
@@ -1068,13 +1146,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   });
   app.post('/api/rooms', (req, res) => {
     rateLimit(req, 'rooms', 12);
-    const target = typeof req.body.userId === 'string' && userById(req.body.userId);
+    // 也可以和机器人私聊：已经开过的照常打开，新开只限启用中的机器人。
+    const bot = typeof req.body.userId === 'string' && bots.botRow(req.body.userId);
+    if (bot?.deleted_at) throw fail('机器人不存在', 404);
+    const target = typeof req.body.userId === 'string' && (userById(req.body.userId) || bot);
     let room;
     if (target) {
       if (target.id === req.user.id) throw fail('选择另一位成员开始私聊');
       const members = [req.user.id, target.id].sort();
       const existing = stmt("SELECT * FROM rooms WHERE kind='direct' AND members=?").get(JSON.stringify(members));
       if (existing) return res.json({ id: existing.id });
+      if (bot && bot.status !== 'enabled') throw fail('机器人已停用，暂时不能私聊', 403);
       room = { id: randomUUID(), name: '', kind: 'direct', members };
     } else {
       if (req.body.userId) throw fail('成员不存在');
@@ -1118,6 +1200,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
     stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
     if (ownerId === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
+    // 最后一个人退出后群聊谁都看不到了，群里的机器人也一起移出。
+    if (!members.length) stmt('DELETE FROM bot_rooms WHERE room_id=?').run(room.id);
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
     res.json({ ok: true });
@@ -1165,6 +1249,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('DELETE FROM webhooks WHERE id=?').run(webhook.id);
     res.json({ ok: true });
   });
+  // 机器人账号的管理（空间管理者）和拉进群、移出群（群主、群管理员；大厅是空间管理者），见 bots.js。
+  bots.registerManagement(app);
   // 群主把群主身份转给群里的另一位成员。
   app.post('/api/room-owner', (req, res) => {
     const room = requireGroupOwner(req.body?.roomId, req.user.id);
@@ -1286,11 +1372,23 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (req.query.after !== undefined) {
       const after = Math.max(0, Number(req.query.after) || 0);
       const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq LIMIT 201`).all(room.id, after, req.user.id, req.user.id);
-      return res.json({ messages: withReads(rows.slice(0, 200).map(serializeMessage)), hasNewer: rows.length > 200 });
+      return res.json({ messages: withReads(rows.slice(0, 200).map(row => serializeMessage(row, req.user.id))), hasNewer: rows.length > 200 });
     }
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq<? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq DESC LIMIT 51`).all(room.id, before, req.user.id, req.user.id);
-    res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
+    res.json({ messages: withReads(rows.slice(0, 50).reverse().map(row => serializeMessage(row, req.user.id))), hasMore: rows.length > 50 });
+  });
+  // 重连后核对已经加载过的较早消息（补齐只覆盖最新的几页）：阅后即焚是否已开始计时或销毁、接龙和投票的最新名单。
+  // 只给这个会话里自己看得到的；已经删掉的不再给出，客户端据此去掉。阅后即焚照常只有发送人拿到内容。
+  app.post('/api/message-states', (req, res) => {
+    rateLimit(req, 'message-states', 120);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const ids = req.body?.messageIds;
+    if (!Array.isArray(ids) || ids.length > 200 || ids.some(id => typeof id !== 'string' || !id || id.length > 100)) throw fail('消息无效');
+    const unique = [...new Set(ids)];
+    const rows = unique.length ? stmt(`SELECT * FROM messages WHERE room_id=? AND id IN (${unique.map(() => '?').join(',')}) AND seq>? AND ${visibleTo()} ORDER BY seq`)
+      .all(room.id, ...unique, clearedThroughSeq(), req.user.id, req.user.id) : [];
+    res.json({ messages: withReads(rows.map(row => serializeMessage(row, req.user.id))) });
   });
   // 消息链接：按消息标识找到所在会话和位置，供客户端跳转。没有权限与不存在一律返回 404，不泄露消息是否存在。
   app.get('/api/message-location', (req, res) => {
@@ -1307,7 +1405,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const roomIds = stmt('SELECT * FROM rooms').all().filter(room => canAccess(room, me)).map(room => room.id);
     if (!roomIds.length) return res.json({ items: [], hasMore: false });
     const inRooms = `m.room_id IN (${roomIds.map(() => '?').join(',')})`;
-    const alive = `m.seq>? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo('m')}`;
+    const alive = `m.seq>? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND m.${NOT_BURN} AND ${visibleTo('m')}`;
     const base = [clearedThroughSeq(), me, me, ...roomIds];
     const mentions = stmt(`SELECT DISTINCT m.*, m.created_at AS at, m.sender_id AS actor FROM message_mentions x JOIN messages m ON m.id=x.message_id
       WHERE x.user_id IN (?, '*') AND m.sender_id<>? AND ${alive} AND ${inRooms} AND m.created_at<? ORDER BY m.created_at DESC LIMIT 51`).all(me, me, ...base, before);
@@ -1340,7 +1438,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 话题：根消息和它的全部回复（最多 500 条，按时间先后）。
   app.get('/api/thread', (req, res) => {
     const root = typeof req.query.rootId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.query.rootId);
-    if (!root || root.seq <= clearedThroughSeq()) throw fail('话题不存在', 404);
+    if (!root || root.seq <= clearedThroughSeq() || isBurn(root.id)) throw fail('话题不存在', 404);
     requireRoom(root.room_id, req.user.id);
     const replies = stmt(`SELECT m.* FROM message_threads t JOIN messages m ON m.id=t.message_id WHERE t.root_id=? AND ${visibleTo('m')} ORDER BY m.seq LIMIT 500`).all(root.id, req.user.id, req.user.id);
     res.json({ root: withReads([serializeMessage(root)])[0], replies: withReads(replies.map(serializeMessage)) });
@@ -1375,6 +1473,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const message = typeof req.body?.messageId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.body.messageId);
     if (!message || message.seq <= clearedThroughSeq() || recalledAt(message.id)) throw fail('消息不存在或已撤回', 404);
     requireRoom(message.room_id, req.user.id);
+    if (isBurn(message.id)) throw fail('阅后即焚消息不能设置提醒');
     const remindAt = timeValue(req.body.remindAt);
     if (stmt('SELECT COUNT(*) AS n FROM reminders WHERE user_id=?').get(req.user.id).n >= 100) throw fail('最多同时保留 100 个提醒');
     const id = randomUUID();
@@ -1384,10 +1483,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
   // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
   let retentionCheckedAt = 0;
-  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_nudges', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders', 'message_cards', 'message_hidden'];
+  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_nudges', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'chains', 'chain_entries', 'message_burns', 'burn_files', 'message_threads', 'reminders', 'message_cards', 'message_hidden', 'message_notices', 'bot_deliveries'];
   // 删除一批消息：附件、所有关联数据一起清掉，再通知各会话的成员。
   const deleteMessages = rows => {
     if (!rows.length) return 0;
+    const burned = rows.some(row => isBurn(row.id));
     db.exec('BEGIN');
     try {
       for (const row of rows) {
@@ -1398,6 +1498,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
           stmt('DELETE FROM upload_thumbnails WHERE upload_id=?').run(id);
         }
         for (const table of MESSAGE_TABLES) stmt(`DELETE FROM ${table} WHERE message_id=?`).run(row.id);
+        clearTimeout(burnTimers.get(row.id)); burnTimers.delete(row.id);
         stmt('DELETE FROM message_reply_quotes WHERE message_id IN (SELECT message_id FROM message_replies WHERE reply_to=?)').run(row.id);
         stmt('DELETE FROM message_replies WHERE reply_to=?').run(row.id);
         stmt('DELETE FROM message_threads WHERE root_id=?').run(row.id);
@@ -1406,9 +1507,51 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     cleanFiles();
+    if (burned) scrubLog();
     const byRoom = Map.groupBy(rows, row => row.room_id);
     for (const [roomId, items] of byRoom) broadcast({ type: 'messages-deleted', roomId, ids: items.map(item => item.id) }, roomId);
     return rows.length;
+  };
+  // 销毁到点的阅后即焚消息：删附件文件（含缩略图）、清空正文，引用、提及、回应、编辑历史、置顶、收藏、提醒和链接预览缓存一起删掉，
+  // 然后截断预写日志，库文件和日志里都不再有原文；最后告诉双方所有设备。到点的计时器、每次接口访问、定时任务和启动时都会检查。
+  const burnTimers = new Map();
+  // 和客户端认网址、取链接预览用同一个规则（shared/preview.js）；剧透紧跟网址时客户端按遮掉剧透后的文字取，这里两种都算上。
+  const linksIn = text => [text, maskSpoilers(text, ' ')].flatMap(value => [...value.matchAll(URL_PATTERN)].map(match => match[0]))
+    .map(value => { try { return new URL(value).href; } catch { return null; } }).filter(Boolean);
+  const destroyBurn = id => {
+    clearTimeout(burnTimers.get(id)); burnTimers.delete(id);
+    const row = stmt('SELECT * FROM messages WHERE id=?').get(id);
+    const burn = stmt('SELECT * FROM message_burns WHERE message_id=?').get(id);
+    if (!row || !burn || burn.destroyed_at) return;
+    db.exec('BEGIN');
+    try {
+      const files = new Set([...JSON.parse(row.attachments).flatMap(file => [file.id, file.thumbId]), ...stmt('SELECT upload_id FROM burn_files WHERE message_id=?').all(id).map(item => item.upload_id)].filter(Boolean));
+      for (const fileId of files) {
+        stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(fileId);
+        stmt('DELETE FROM uploads WHERE id=?').run(fileId);
+        stmt('DELETE FROM upload_thumbnails WHERE upload_id=? OR thumb_id=?').run(fileId, fileId);
+      }
+      stmt('DELETE FROM burn_files WHERE message_id=?').run(id);
+      for (const url of new Set(linksIn(row.text))) stmt('DELETE FROM link_previews WHERE url=?').run(url);
+      stmt("UPDATE messages SET text='', attachments='[]' WHERE id=?").run(id);
+      for (const table of ['message_reply_quotes', 'message_replies', 'message_mentions', 'message_reactions', 'message_edits', 'message_versions', 'message_forwards', 'room_pins', 'saved_messages', 'reminders']) stmt(`DELETE FROM ${table} WHERE message_id=?`).run(id);
+      stmt('UPDATE message_burns SET destroyed_at=? WHERE message_id=?').run(Date.now(), id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    cleanFiles();
+    scrubLog();
+    broadcast({ type: 'message-burned', message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)) }, row.room_id);
+  };
+  const sweepBurns = () => {
+    for (const { message_id: id } of cached('SELECT message_id FROM message_burns WHERE destroyed_at IS NULL AND opened_at IS NOT NULL AND opened_at + seconds * 1000 <= ?').all(Date.now())) {
+      try { destroyBurn(id); } catch (error) { console.error({ message: 'burn failed', error: error.message }); }
+    }
+  };
+  const scheduleBurn = (id, expiresAt) => {
+    clearTimeout(burnTimers.get(id));
+    const timer = setTimeout(() => { burnTimers.delete(id); sweepBurns(); }, Math.max(0, expiresAt - Date.now()) + 20);
+    timer.unref();
+    burnTimers.set(id, timer);
   };
   const purgeExpired = () => {
     const days = retentionDays();
@@ -1429,6 +1572,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const runSchedules = () => {
     const now = Date.now();
+    sweepBurns();
     purgeExpired();
     purgeAutoDelete();
     for (const row of stmt('SELECT * FROM scheduled_messages WHERE send_at<=? ORDER BY send_at').all(now)) {
@@ -1443,7 +1587,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const row of stmt('SELECT * FROM reminders WHERE remind_at<=?').all(now)) {
       const message = stmt('SELECT * FROM messages WHERE id=?').get(row.message_id);
       const room = message && stmt('SELECT * FROM rooms WHERE id=?').get(message.room_id);
-      if (!message || recalledAt(message.id) || message.seq <= clearedThroughSeq() || !canAccess(room, row.user_id)) { stmt('DELETE FROM reminders WHERE id=?').run(row.id); pushedReminders.delete(row.id); continue; }
+      if (!message || recalledAt(message.id) || isBurn(message.id) || message.seq <= clearedThroughSeq() || !canAccess(room, row.user_id)) { stmt('DELETE FROM reminders WHERE id=?').run(row.id); pushedReminders.delete(row.id); continue; }
       // 不在线时先推送到手机（每条提醒只推一次），等上线后再在页面里提醒。
       if (!online.has(row.user_id)) {
         if (!pushedReminders.has(row.id)) {
@@ -1514,10 +1658,84 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!poll.closed_at) stmt('UPDATE polls SET closed_at=? WHERE message_id=?').run(Date.now(), row.id);
     res.json(pollChanged(row));
   });
+  // 接龙：群聊和大厅里发起（私聊不行）；标题 1–100 字，说明最多 500 字，示例格式最多 100 字。
+  // 每人一行（1–100 字，换行折成空格），序号按加入先后；最多 200 人。卡片原地更新，不算新消息，不提醒。
+  const CHAIN_LIMIT = 200;
+  app.post('/api/chains', (req, res) => {
+    rateLimit(req, 'chains', 10);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    if (room.kind === 'direct') throw fail('私聊里不能发起接龙');
+    requireRoomVoice(room, req.user);
+    const title = textValue(req.body?.title, 101), description = typeof req.body?.description === 'string' ? req.body.description.trim() : '', example = textValue(req.body?.example, 101).replace(/\s+/g, ' ');
+    if (!title) throw fail('请输入接龙标题');
+    if (title.length > 100) throw fail('接龙标题最多 100 个字');
+    if (description.length > 500) throw fail('接龙说明最多 500 个字');
+    if (example.length > 100) throw fail('示例格式最多 100 个字');
+    const id = randomUUID();
+    db.exec('BEGIN');
+    try {
+      stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, title, '[]', `chain:${id}`, Date.now());
+      stmt('INSERT INTO chains (message_id,description,example) VALUES (?,?,?)').run(id, description, example);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
+    broadcast({ type: 'message', message }, room.id);
+    res.status(201).json({ message });
+  });
+  // 只有现在还在会话里的人能操作；离开或被移出的人那一行留着，但改不了。撤回或清空后接龙随之消失。
+  const requireChain = (req, id) => {
+    const row = typeof id === 'string' && id.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(id);
+    const chain = row && stmt('SELECT * FROM chains WHERE message_id=?').get(row.id);
+    if (!chain || row.seq <= clearedThroughSeq() || recalledAt(row.id)) throw fail('接龙不存在', 404);
+    const room = requireRoom(row.room_id, req.user.id);
+    return { row, chain, room };
+  };
+  const chainChanged = row => {
+    const event = { roomId: row.room_id, messageId: row.id, chain: chainOf(row.id) };
+    broadcast({ type: 'message-chain', ...event }, row.room_id);
+    return event;
+  };
+  // 加入或修改自己的那一行：和发言一样，禁言、全员禁言时不行；结束后谁都不能再改。
+  app.post('/api/chains/entry', (req, res) => {
+    rateLimit(req, 'chain-entry', 60);
+    const { row, chain, room } = requireChain(req, req.body?.messageId);
+    requireRoomVoice(room, req.user);
+    if (chain.closed_at) throw fail('接龙已结束');
+    const text = typeof req.body?.text === 'string' ? req.body.text.replace(/\s+/g, ' ').trim() : '';
+    if (!text) throw fail('写点内容再接龙');
+    if (text.length > 100) throw fail('每行最多 100 个字');
+    db.exec('BEGIN');
+    try {
+      const mine = stmt('SELECT id FROM chain_entries WHERE message_id=? AND user_id=?').get(row.id, req.user.id);
+      if (mine) stmt('UPDATE chain_entries SET text=?, edited_at=? WHERE id=?').run(text, Date.now(), mine.id);
+      else {
+        if (stmt('SELECT COUNT(*) AS n FROM chain_entries WHERE message_id=?').get(row.id).n >= CHAIN_LIMIT) throw fail(`接龙最多 ${CHAIN_LIMIT} 人，已经满了`);
+        stmt('INSERT INTO chain_entries (message_id,user_id,text,joined_at) VALUES (?,?,?,?)').run(row.id, req.user.id, text, Date.now());
+      }
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    res.json(chainChanged(row));
+  });
+  app.post('/api/chains/withdraw', (req, res) => {
+    rateLimit(req, 'chain-entry', 60);
+    const { row, chain, room } = requireChain(req, req.body?.messageId);
+    requireRoomVoice(room, req.user);
+    if (chain.closed_at) throw fail('接龙已结束');
+    if (!stmt('DELETE FROM chain_entries WHERE message_id=? AND user_id=?').run(row.id, req.user.id).changes) throw fail('你还没有参加这个接龙');
+    res.json(chainChanged(row));
+  });
+  // 结束接龙：发起人可以结束；群主、群管理员（大厅是空间管理者）也可以，发起人离开后不会没人能结束。
+  const canCloseChain = (row, room, user) => row.sender_id === user.id || (room.kind === 'group' ? (({ ownerId, adminIds }) => ownerId === user.id || adminIds.includes(user.id))(groupSettings(room)) : room.kind === 'public' && isManager(user));
+  app.post('/api/chains/close', (req, res) => {
+    const { row, chain, room } = requireChain(req, req.body?.messageId);
+    if (!canCloseChain(row, room, req.user)) throw fail('只有发起人、群主或管理员可以结束接龙', 403);
+    if (!chain.closed_at) stmt('UPDATE chains SET closed_at=?, closed_by=? WHERE message_id=?').run(Date.now(), req.user.id, row.id);
+    res.json(chainChanged(row));
+  });
   // 收藏夹：最近收藏的在前，最多列 200 条；撤回、清空或已无权访问的消息不列出。
   app.get('/api/saved', (req, res) => {
     const rows = stmt(`SELECT s.saved_at AS savedAt, m.* FROM saved_messages s JOIN messages m ON m.id=s.message_id
-      WHERE s.user_id=? AND m.seq>? AND m.id NOT IN (SELECT message_id FROM message_recalls) ORDER BY s.saved_at DESC LIMIT 200`).all(req.user.id, clearedThroughSeq());
+      WHERE s.user_id=? AND m.seq>? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND m.${NOT_BURN} ORDER BY s.saved_at DESC LIMIT 200`).all(req.user.id, clearedThroughSeq());
     const rooms = new Map();
     const allowed = row => { if (!rooms.has(row.room_id)) rooms.set(row.room_id, stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id)); return canAccess(rooms.get(row.room_id), req.user.id); };
     res.json({ items: rows.filter(allowed).map(row => ({ savedAt: row.savedAt, message: serializeMessage(row) })) });
@@ -1531,6 +1749,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (req.body.saved === false) stmt('DELETE FROM saved_messages WHERE user_id=? AND message_id=?').run(req.user.id, message.id);
     else {
       if (recalledAt(message.id)) throw fail('消息已撤回');
+      if (isBurn(message.id)) throw fail('阅后即焚消息不能收藏');
       stmt('INSERT OR IGNORE INTO saved_messages VALUES (?,?,?)').run(req.user.id, message.id, Date.now());
     }
     deliver({ type: 'saved' }, socket => socket.userId === req.user.id);
@@ -1539,7 +1758,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 会话内置顶消息。
   const canPin = (room, user) => room.kind === 'direct' || isManager(user) || (room.kind === 'group' && groupSettings(room).ownerId === user.id);
   const pinsOf = room => stmt(`SELECT p.pinned_by AS pinnedBy, p.pinned_at AS pinnedAt, m.* FROM room_pins p JOIN messages m ON m.id=p.message_id
-    WHERE p.room_id=? AND m.seq>? ORDER BY p.pinned_at DESC`).all(room.id, clearedThroughSeq()).map(row => ({ pinnedBy: row.pinnedBy, pinnedAt: row.pinnedAt, message: serializeMessage(row) }));
+    WHERE p.room_id=? AND m.seq>? AND m.${NOT_BURN} ORDER BY p.pinned_at DESC`).all(room.id, clearedThroughSeq()).map(row => ({ pinnedBy: row.pinnedBy, pinnedAt: row.pinnedAt, message: serializeMessage(row) }));
   app.get('/api/room-pins', (req, res) => {
     const room = requireRoom(req.query.roomId, req.user.id);
     res.json({ pins: pinsOf(room), canPin: canPin(room, req.user) });
@@ -1550,6 +1769,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!canPin(room, req.user)) throw fail('只有群主或管理员可以置顶消息', 403);
     const message = typeof req.body?.messageId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.body.messageId);
     if (!message || message.room_id !== room.id || message.seq <= clearedThroughSeq() || recalledAt(message.id)) throw fail('消息不存在或已撤回', 404);
+    if (req.body.pinned !== false && isBurn(message.id)) throw fail('阅后即焚消息不能置顶');
     if (req.body.pinned === false) stmt('DELETE FROM room_pins WHERE room_id=? AND message_id=?').run(room.id, message.id);
     else {
       if (stmt('SELECT COUNT(*) AS n FROM room_pins WHERE room_id=?').get(room.id).n >= 20 && !stmt('SELECT 1 FROM room_pins WHERE room_id=? AND message_id=?').get(room.id, message.id)) throw fail('每个会话最多置顶 20 条消息');
@@ -1588,23 +1808,29 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const time = value => new Date(value - offset * 60000).toISOString().slice(0, 16).replace('T', ' ');
     const names = new Map(stmt('SELECT id, name FROM users').all().map(user => [user.id, user.name]));
     const nameOf = id => names.get(id) || '已离开的成员';
-    const senderOf = message => message.bot ? `${message.bot}（机器人）` : nameOf(message.senderId);
+    const senderOf = message => message.bot ? `${message.bot}（机器人）` : bots.isBot(message.senderId) ? `${nameOf(message.senderId)}（机器人）` : nameOf(message.senderId);
     const members = JSON.parse(room.members);
     const title = room.kind === 'direct' ? nameOf(members.find(id => id !== req.user.id) || req.user.id) : room.name;
     const blocks = [];
     for (const row of stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND ${visibleTo()} ORDER BY seq`).iterate(room.id, clearedThroughSeq(), req.user.id, req.user.id)) {
       const message = serializeMessage(row);
+      if (message.notice) { blocks.push(`${time(message.createdAt)}  [系统] ${message.text}`); continue; }
       const lines = [`${time(message.createdAt)}  ${senderOf(message)}${message.forwardedFrom ? `（转发自 ${nameOf(message.forwardedFrom.senderId)}）` : ''}${message.editedAt ? '（已编辑）' : ''}`];
       if (message.recalledAt) lines.push(message.removedBy ? '（消息已被管理员删除）' : '（消息已撤回）');
+      // 阅后即焚消息不导出内容（发送人自己导出也一样）。
+      else if (message.burn) lines.push('[阅后即焚消息]');
       else {
         const quote = message.replyTo;
-        if (quote) lines.push(`↪ 回复 ${quote.senderId ? nameOf(quote.senderId) : ''}：${quote.missing ? '原消息已不存在' : quote.recalled ? '原消息已撤回' : quote.text.replace(/\s+/g, ' ').slice(0, 40) || '[附件]'}`);
+        if (quote) lines.push(`↪ 回复 ${quote.senderId ? nameOf(quote.senderId) : ''}：${quote.missing ? '原消息已不存在' : quote.recalled ? '原消息已撤回' : cutMasked(quote.text.replace(/\s+/g, ' '), 40) || '[附件]'}`);
         if (message.nudge) lines.push(`[拍一拍] 拍了拍 ${message.nudge.targetId === message.senderId ? '自己' : nameOf(message.nudge.targetId)}`);
-        else if (message.bundle) lines.push(`[聊天记录] ${message.bundle.title}`, ...message.bundle.items.map(item => `  ${item.senderName}：${item.text || item.attachments.map(file => `[${file.name}]`).join(' ')}`));
+        else if (message.bundle) lines.push(`[聊天记录] ${message.bundle.title}`, ...message.bundle.items.map(item => `  ${item.senderName}：${item.text ? maskSpoilers(item.text) : item.attachments.map(file => file.spoiler ? attachmentLabel([file]) : `[${file.name}]`).join(' ')}`));
         else if (message.card) lines.push(`[名片] ${nameOf(message.card.userId)}`);
         else if (message.poll) lines.push(`[投票${message.poll.multiple ? '，多选' : ''}${message.poll.closedAt ? '，已结束' : ''}] ${message.text}`, ...message.poll.options.map(option => `  · ${option.text}：${option.voters.length} 票`));
-        else if (message.text) lines.push(message.text);
-        for (const file of message.attachments) lines.push(`[附件] ${file.name}（${sizeText(file.size)}）`);
+        else if (message.chain) lines.push(`[接龙${message.chain.closedAt ? '，已结束' : ''}] ${message.text}`, ...(message.chain.description ? [message.chain.description] : []),
+          ...message.chain.entries.map((entry, index) => `  ${index + 1}. ${nameOf(entry.userId)}：${entry.text}`));
+        // 导出也不露出剧透：文字换成 [剧透]，剧透图和视频不写文件名。
+        else if (message.text) lines.push(maskSpoilers(message.text));
+        for (const file of message.attachments) lines.push(file.spoiler ? `[附件] ${attachmentLabel([file])}（${sizeText(file.size)}）` : `[附件] ${file.name}（${sizeText(file.size)}）`);
       }
       blocks.push(lines.join('\n'));
     }
@@ -1620,7 +1846,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const media = "json_extract(f.value, '$.mime') LIKE 'image/%' OR json_extract(f.value, '$.mime') LIKE 'video/%'";
     const rows = stmt(`SELECT m.id AS messageId, m.seq, m.sender_id AS senderId, m.created_at AS createdAt, f.value AS file FROM messages m, json_each(m.attachments) f
-      WHERE m.room_id=? AND m.seq>? AND m.seq<? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo('m')} AND ${kind === 'media' ? `(${media})` : `NOT (${media})`}
+      WHERE m.room_id=? AND m.seq>? AND m.seq<? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND m.${NOT_BURN} AND ${visibleTo('m')} AND ${kind === 'media' ? `(${media})` : `NOT (${media})`}
       ORDER BY m.seq DESC, f.key LIMIT 61`).all(room.id, clearedThroughSeq(), before, req.user.id, req.user.id);
     res.json({ items: rows.slice(0, 60).map(row => ({ ...row, file: JSON.parse(row.file) })), hasMore: rows.length > 60 });
   });
@@ -1649,9 +1875,20 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     rateLimit(req, 'search', 120);
     const pattern = `%${query.replace(/[\\%_]/g, char => `\\${char}`)}%`;
     const keyword = query ? "AND (text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(messages.attachments) WHERE json_extract(value, '$.name') LIKE ? ESCAPE '\\'))" : '';
-    const rows = stmt(`SELECT * FROM messages WHERE room_id IN (${roomIds.map(() => '?').join(',')}) AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo()}
+    // 剧透里的文字和剧透图的文件名搜不到：SQL 先粗筛，再按去掉剧透之后的正文和不是剧透的文件名复核，凑够 50 条为止。
+    // 复核时剧透换成搜不到的字符，不换成「[剧透]」，否则搜「剧透」会命中占位本身。
+    const needle = query.toLowerCase();
+    const visible = row => (!needle || maskSpoilers(row.text, '\u0000').toLowerCase().includes(needle) || JSON.parse(row.attachments).some(file => !file.spoiler && file.name.toLowerCase().includes(needle)))
+      && (req.query.type !== 'link' || /https?:\/\//.test(maskSpoilers(row.text)));
+    const rows = [];
+    // 阅后即焚消息搜不到：只在命中的行里排除（放进 SQL 会让没有命中的整段扫描也逐行多查一次）。
+    for (const row of stmt(`SELECT * FROM messages WHERE room_id IN (${roomIds.map(() => '?').join(',')}) AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo()}
       ${keyword} ${filters.map(filter => `AND ${filter}`).join(' ')}
-      ORDER BY seq DESC LIMIT 50`).all(...roomIds, clearedThroughSeq(), req.user.id, req.user.id, ...(query ? [pattern, pattern] : []), ...args);
+      ORDER BY seq DESC`).iterate(...roomIds, clearedThroughSeq(), req.user.id, req.user.id, ...(query ? [pattern, pattern] : []), ...args)) {
+      if (!visible(row) || isBurn(row.id) || noticeOf(row.id)) continue;
+      rows.push(row);
+      if (rows.length === 50) break;
+    }
     res.json({ messages: rows.map(serializeMessage) });
   });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
@@ -1767,40 +2004,57 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const clientId = textValue(req.body.clientId, 80);
     if (!clientId) throw fail('消息标识缺失，请重试');
     const existing = stmt('SELECT * FROM messages WHERE sender_id=? AND client_id=?').get(req.user.id, clientId);
-    if (existing) return res.json({ message: withReads([serializeMessage(existing)])[0] });
+    if (existing) return res.json({ message: withReads([serializeMessage(existing, req.user.id)])[0] });
+    const burn = req.body.burn === undefined || req.body.burn === null || req.body.burn === 0 ? 0 : req.body.burn;
+    if (burn && !BURN_SECONDS.includes(burn)) throw fail('阅后即焚只能选 5 秒、10 秒、30 秒或 1 分钟');
+    if (burn && room.kind !== 'direct') throw fail('阅后即焚只能在私聊里使用');
+    const directBot = bots.directBot(room);
+    if (directBot?.deleted_at) throw fail('机器人已删除，消息不会再送达', 403);
+    if (burn && directBot) throw fail('和机器人的私聊不能发阅后即焚消息');
     const messageText = typeof req.body.text === 'string' ? req.body.text.trim() : '';
     if (messageText.length > 10000) throw fail('每条消息最多 10000 个字符');
     const ids = Array.isArray(req.body.attachmentIds) ? [...new Set(req.body.attachmentIds)] : [];
     if (ids.length > 6) throw fail('每条消息最多 6 个附件');
+    // 剧透：发送人把其中的图片或视频标成剧透，别人看到的是遮住的，点了才显示；标记记在附件信息里，转发时跟着走。
+    const spoilerInput = req.body.spoilerIds === undefined ? [] : req.body.spoilerIds;
+    if (!Array.isArray(spoilerInput) || spoilerInput.some(id => typeof id !== 'string' || !ids.includes(id))) throw fail('剧透标记无效');
+    const spoilers = new Set(spoilerInput);
     const attachments = ids.map(id => {
       if (typeof id !== 'string') throw fail('附件无效');
       const file = stmt('SELECT * FROM uploads WHERE id=?').get(id);
       if (!file || file.owner_id !== req.user.id || file.room_id !== room.id || file.purpose !== 'message' || file.claimed) throw fail('附件不可用，请重新选择');
       const thumb = stmt('SELECT thumb_id FROM upload_thumbnails WHERE upload_id=?').get(file.id)?.thumb_id;
       const sticker = Boolean(stmt('SELECT 1 FROM upload_stickers WHERE upload_id=?').get(file.id));
-      return { id: file.id, name: file.name, mime: file.mime, size: file.size, ...(thumb ? { thumbId: thumb } : {}), ...(sticker ? { sticker: true } : {}) };
+      const spoiler = spoilers.has(file.id) && !sticker && /^(image|video)\//.test(file.mime);
+      return { id: file.id, name: file.name, mime: file.mime, size: file.size, ...(thumb ? { thumbId: thumb } : {}), ...(sticker ? { sticker: true } : {}), ...(spoiler ? { spoiler: true } : {}) };
     });
     if (!messageText && !attachments.length) throw fail('消息不能为空');
+    // 阅后即焚只带文字、图片和视频：别的文件只能下载着看，没法做到「看完就没」。
+    if (burn && attachments.some(file => !/^(image|video)\//.test(file.mime))) throw fail('阅后即焚只能发文字、图片和视频');
     // 只能引用同一会话里仍然可见的消息，避免借引用读取其他会话的内容。
     const replyTo = req.body.replyTo === undefined || req.body.replyTo === null ? null : req.body.replyTo;
     let replyTarget = null;
     if (replyTo !== null) {
       const target = typeof replyTo === 'string' && replyTo.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(replyTo);
       if (!target || target.room_id !== room.id || target.seq <= clearedThroughSeq() || recalledAt(target.id)) throw fail('引用的消息不可用');
+      if (isBurn(target.id)) throw fail('阅后即焚消息不能引用');
       replyTarget = target;
     }
     const replyQuote = replyTarget && typeof req.body.replyQuote === 'string' ? req.body.replyQuote.trim() : '';
-    if (replyQuote && (replyQuote.length > 500 || !looseText(replyQuote) || !looseText(replyTarget.text).includes(looseText(replyQuote)))) throw fail('引用的文字不在原消息里');
+    // 只能引用原消息里没遮住的文字（碰到剧透的片段对不上，见 shared/preview.js 的 quotable）。
+    if (replyQuote && (replyQuote.length > 500 || !quotable(replyTarget.text, replyQuote))) throw fail('引用的文字不在原消息里');
     // 话题回复：根消息必须是同一会话里仍可见的普通消息（话题里的回复不能再开话题）。
     const threadRoot = req.body.threadOf === undefined || req.body.threadOf === null ? null : req.body.threadOf;
     if (threadRoot !== null) {
       const root = typeof threadRoot === 'string' && threadRoot.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(threadRoot);
-      if (!root || root.room_id !== room.id || root.seq <= clearedThroughSeq() || recalledAt(root.id) || threadOf(root.id)) throw fail('话题不可用');
+      if (!root || root.room_id !== room.id || root.seq <= clearedThroughSeq() || recalledAt(root.id) || threadOf(root.id) || isBurn(root.id)) throw fail('话题不可用');
+      if (burn) throw fail('话题里不能发阅后即焚消息');
     }
     // @提及必须是会话成员且正文里确实写了「@名字」，避免看不见的提醒；@所有人在群聊里人人可用，大厅仅空间管理者可用。
     const mentionInput = req.body.mentions === undefined ? [] : req.body.mentions;
     if (!Array.isArray(mentionInput) || mentionInput.length > 50 || mentionInput.some(value => typeof value !== 'string')) throw fail('提及的成员无效');
     const mentions = [...new Set(mentionInput)];
+    if (burn && mentions.length) throw fail('阅后即焚消息不能 @ 别人');
     for (const target of mentions) {
       if (target === '*') {
         const manager = req.user.id === ownerId() || ['admin', 'super_admin'].includes(req.user.role);
@@ -1808,8 +2062,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         if (!messageText.includes('@所有人')) throw fail('提及的成员无效');
         continue;
       }
-      const member = userById(target);
-      if (!member || target === req.user.id || !canAccess(room, target) || !messageText.includes(`@${member.name}`)) throw fail('提及的成员无效');
+      // 会话里的机器人也可以 @（群聊和大厅里默认只有 @它的消息才发给它）。
+      const bot = !userById(target) && bots.botRow(target);
+      const member = userById(target) || (bot && !bot.deleted_at && bots.membership(target, room) ? bot : null);
+      if (!member || target === req.user.id || (!bot && !canAccess(room, target)) || !messageText.includes(`@${member.name}`)) throw fail('提及的成员无效');
     }
     const id = randomUUID();
     db.exec('BEGIN');
@@ -1820,12 +2076,35 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (replyQuote) stmt('INSERT INTO message_reply_quotes VALUES (?,?)').run(id, replyQuote);
       if (threadRoot) stmt('INSERT INTO message_threads VALUES (?,?)').run(id, threadRoot);
       for (const target of mentions) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
+      if (burn) {
+        stmt('INSERT INTO message_burns (message_id,seconds) VALUES (?,?)').run(id, burn);
+        for (const file of attachments) for (const fileId of [file.id, file.thumbId].filter(Boolean)) stmt('INSERT OR IGNORE INTO burn_files VALUES (?,?)').run(fileId, id);
+      }
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
-    const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
+    // 发送人自己拿到完整内容；广播时其他人的连接收到的是遮住的（见 deliver）。
+    const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id), req.user.id), readBy: [] };
     broadcast({ type: 'message', message }, room.id);
     if (threadRoot) broadcast({ type: 'message-thread', roomId: room.id, rootId: threadRoot, thread: threadInfo(threadRoot) }, room.id);
     res.status(201).json({ message });
+  });
+  // 接收人点开阅后即焚消息：第一次点开时按服务器时间记下打开时间、开始倒计时，并告诉双方所有设备；
+  // 每次点开（倒计时内）都把内容返回给这一台设备，不会重新计时。发送人自己不需要打开。已读回执不算打开。
+  app.post('/api/burn/open', (req, res) => {
+    rateLimit(req, 'burn-open', 60);
+    const row = typeof req.body?.messageId === 'string' && req.body.messageId.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(req.body.messageId);
+    const burn = row && stmt('SELECT * FROM message_burns WHERE message_id=?').get(row.id);
+    // 看不到这个会话的人和消息不存在时得到同样的回答，不透露消息在不在。
+    if (!burn || row.seq <= clearedThroughSeq() || recalledAt(row.id) || hiddenFor(req.user.id, row) || !canAccess(stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id), req.user.id)) throw fail('消息不存在或已撤回', 404);
+    if (row.sender_id === req.user.id) throw fail('自己发的阅后即焚消息不用打开');
+    if (!burn.opened_at && !burn.destroyed_at) {
+      const openedAt = Date.now();
+      stmt('UPDATE message_burns SET opened_at=? WHERE message_id=? AND opened_at IS NULL').run(openedAt, row.id);
+      scheduleBurn(row.id, openedAt + burn.seconds * 1000);
+      broadcast({ type: 'message-burn', roomId: row.room_id, messageId: row.id, burn: burnOf(row.id) }, row.room_id);
+    }
+    // 销毁以后这里拿到的也只是空的「已销毁」。
+    res.json({ message: withReads([serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(row.id), row.sender_id)])[0] });
   });
   // 拍一拍：会话里出现「A 拍了拍 B」；只能拍会话里的成员（也可以拍自己），每人每分钟最多 10 次。
   // 推荐名片：在会话里发一张某位成员的名片，点开就是他的资料卡。
@@ -1851,6 +2130,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     rateLimit(req, 'nudge', 10);
     const room = requireRoom(req.body?.roomId, req.user.id);
     requireRoomVoice(room, req.user);
+    if (bots.directBot(room)) throw fail('和机器人的私聊里不能拍一拍');
     const target = typeof req.body.userId === 'string' && userById(req.body.userId);
     if (!target || !canAccess(room, target.id)) throw fail('只能拍会话里的成员');
     const id = randomUUID();
@@ -1872,6 +2152,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       requireRoom(file.room_id, req.user.id);
       if (!file.claimed && file.owner_id !== req.user.id) throw fail('文件尚未发送', 403);
     }
+    // 阅后即焚的附件：发送人随时能看；接收人只在点开之后、销毁之前能看。其他时候和不存在一样。
+    const burnFile = stmt('SELECT b.*, m.sender_id FROM burn_files f JOIN message_burns b ON b.message_id=f.message_id JOIN messages m ON m.id=f.message_id WHERE f.upload_id=?').get(file.id);
+    if (burnFile && (burnFile.destroyed_at || (burnFile.sender_id !== req.user.id && !(burnFile.opened_at && burnFile.opened_at + burnFile.seconds * 1000 > Date.now())))) throw fail('文件不存在', 404);
+    if (!burnFile && stmt('SELECT 1 FROM burn_files WHERE upload_id=?').get(file.id)) throw fail('文件不存在', 404);
+    // 阅后即焚的图片和视频只能在页面里看，不提供下载。
+    if (burnFile && req.query.download === '1') throw fail('阅后即焚的附件不能下载', 403);
     // 普通文件只能下载：不按文件内容渲染，也不允许执行脚本。
     const previewable = /^(image|video)\//.test(file.mime);
     res.set('Content-Type', previewable ? file.mime : 'application/octet-stream');
@@ -1932,6 +2218,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       broadcast({ type: 'users', users: users() });
     });
   });
+  // 启动时：停机期间到点的阅后即焚消息马上销毁，还在倒计时的重新计时。
+  sweepBurns();
+  for (const row of stmt('SELECT message_id, opened_at, seconds FROM message_burns WHERE destroyed_at IS NULL AND opened_at IS NOT NULL').all()) scheduleBurn(row.message_id, row.opened_at + row.seconds * 1000);
   const scheduler = setInterval(runSchedules, scheduleInterval);
   scheduler.unref();
   const heartbeat = setInterval(() => {
@@ -1955,6 +2244,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   return { server, address, setupUrl: `${address}/#setup=${setupKey}`, close: async () => {
     if (closing) return;
     closing = true;
+    for (const timer of burnTimers.values()) clearTimeout(timer);
+    bots.close();
     clearInterval(heartbeat);
     clearInterval(scheduler);
     for (const socket of sockets) socket.terminate();

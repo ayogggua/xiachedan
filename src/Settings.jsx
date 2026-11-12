@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bell, ChevronLeft, ChevronRight, ExternalLink, Info, KeyRound, X, LoaderCircle, LogOut, MessageSquare, Palette, PencilLine, Server, ShieldCheck, UserRound, Wifi } from 'lucide-react';
+import { Bell, Bot, ChevronLeft, ChevronRight, ExternalLink, Info, KeyRound, X, LoaderCircle, LogOut, MessageSquare, Palette, PencilLine, Server, ShieldCheck, UserRound, Wifi } from 'lucide-react';
 import { api, absoluteUrl, formatSize } from './api';
 import { mobileClient } from './mobile/session';
 import { FormattedText } from './markdown';
@@ -9,7 +9,7 @@ import { THEMES } from './useTheme';
 import { ACCENTS, FONT_SIZES, WALLPAPERS, wallpaperCss, readWallpaperImage, saveWallpaperImage } from './appearance';
 import { SKINS } from './skin';
 import { readQuiet, saveQuiet, isQuiet } from './quiet';
-import { modKey } from './chatPrefs';
+import { canVibrate, modKey } from './chatPrefs';
 import { playMessageSound } from './sound';
 import { disablePush, enablePush, needsHomeScreen, pushState, pushSupported } from './push';
 import { appLockSupported, LOCK_TIMEOUTS } from './AppLock';
@@ -45,7 +45,7 @@ function PushSettings({ settings, notify }) {
     <Switch label="手机推送" checked={enabled} disabled={busy} onChange={change} /></SettingRow>;
 }
 
-export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, skin, onSkin, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
+export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onBots, onChanged, appearance, onAppearance, skin, onSkin, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -80,6 +80,7 @@ export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, them
       <SettingRow title="私聊中显示双方的头像和名字"><Switch label="私聊中显示双方的头像和名字" checked={chatPrefs.showBothInDirect} onChange={value => onChatPrefs({ showBothInDirect: value })} /></SettingRow>
       </>}
       <SettingRow title="双击消息点 👍" description="关闭后，双击消息里的文字可以选中词语。"><Switch label="双击消息点赞" checked={chatPrefs.quickReact} onChange={value => onChatPrefs({ quickReact: value })} /></SettingRow>
+      {matchMedia('(pointer: coarse)').matches && canVibrate() && <SettingRow title="震动反馈" description="左滑消息回复、长按打开菜单时轻震一下。"><Switch label="震动反馈" checked={chatPrefs.haptics} onChange={value => onChatPrefs({ haptics: value })} /></SettingRow>}
       {/* 触屏设备上回车总是换行，用发送按钮发送，不需要这一项。 */}
       {!matchMedia('(pointer: coarse)').matches && <>
       <h4>发送消息</h4>
@@ -106,7 +107,7 @@ export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, them
     space: <>
       <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{absoluteUrl('')}</span></div><i className={connected ? 'online' : ''} /></div>
       {!cloud && <p className="inline-note">所有聊天都通过局域网连接，消息和附件保存在创建空间的电脑上。局域网传输使用 HTTP，请在可信网络内使用。</p>}
-      {onAudit && <section><h4>管理</h4><button type="button" className="secondary-button" onClick={onAudit}>查看操作日志</button>
+      {onAudit && <section><h4>管理</h4><span className="admin-actions"><button type="button" className="secondary-button" onClick={onAudit}>查看操作日志</button>{onBots && <button type="button" className="secondary-button" onClick={onBots}><Bot size={15} />机器人</button>}</span>
       <label className="toggle-row retention-row">消息保留期限<select aria-label="消息保留期限" value={workspace.retentionDays || 0} onChange={async event => { try { await api('admin/retention', { days: Number(event.target.value) }); await onChanged?.(); notify('保留期限已更新'); } catch (error) { notify(error.message); } }}>{[[0, '永久保留'], [30, '30 天'], [90, '90 天'], [180, '180 天'], [365, '1 年']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       {workspace.retentionDays > 0 && <p className="inline-note">超过 {workspace.retentionDays} 天的消息和附件会被自动删除，无法恢复。</p>}
       <label className="toggle-row retention-row">消息撤回时限<select aria-label="消息撤回时限" value={workspace.recallWindow || 0} onChange={async event => { try { await api('admin/recall-window', { seconds: Number(event.target.value) }); await onChanged?.(); notify('撤回时限已更新'); } catch (error) { notify(error.message); } }}>{[[0, '不限'], [120, '2 分钟'], [86400, '24 小时']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></section>}

@@ -34,12 +34,13 @@ export default function useUnread(state, messages, lastRead, connected, historyV
     const exact = snapshot.historyVersion === historyVersion && saved?.afterSeq === afterSeq;
     const throughSeq = Math.max(afterSeq, exact ? saved.throughSeq : 0);
     // Socket events beyond the server snapshot are counted once, even if a response arrives later.
-    const counted = (messages[room.id] || []).filter(message => !message.recalledAt && message.senderId !== userId);
+    // 系统提示（机器人加入、开关「接收全部消息」等）只是一行说明，不算未读。
+    const counted = (messages[room.id] || []).filter(message => !message.recalledAt && !message.notice && message.senderId !== userId);
     const liveCount = counted.filter(message => message.seq > throughSeq && !message.readBy?.includes(userId)).length;
     // 隐私模式下可以先看后面的消息，游标却停在更早的未读处；已回执过的消息不再计入未读。
     const seenAhead = exact ? counted.filter(message => message.seq > afterSeq && message.seq <= throughSeq && message.readBy?.includes(userId)).length : 0;
     const count = (exact ? saved.unreadCount - seenAhead : 0) + liveCount;
-    const hasUnread = count > 0 || (!exact && !room.lastMessage?.recalledAt && room.lastMessage?.senderId !== userId && room.lastMessage?.seq > afterSeq);
+    const hasUnread = count > 0 || (!exact && !room.lastMessage?.recalledAt && !room.lastMessage?.notice && room.lastMessage?.senderId !== userId && room.lastMessage?.seq > afterSeq);
     // 未读里有没有 @我 或 @所有人 的消息；旧版主机不返回 mentionCount 时只看已加载的消息。
     const mentionsMe = message => message.mentions?.some(id => id === userId || id === '*');
     const liveMentions = counted.filter(message => message.seq > throughSeq && !message.readBy?.includes(userId) && mentionsMe(message)).length;

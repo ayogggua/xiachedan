@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ChevronLeft, Film, FileText, Download } from 'lucide-react';
 import { api, mediaUrl, formatSize } from './api';
-import { IconButton } from './components';
+import { IconButton, Skeleton, SpoilerBadge, coveredMedia } from './components';
 
 // 会话里发过的图片、视频和文件：图片网格点开大图，文件可以直接下载或跳回原消息。
 export default function RoomFiles({ room, userMap, privateMode, historyVersion, onBack, onPreview, onJump }) {
@@ -20,12 +20,13 @@ export default function RoomFiles({ room, userMap, privateMode, historyVersion, 
       <button key={key} type="button" className={kind === key ? 'active' : ''} aria-pressed={kind === key} onClick={() => setKind(key)}>{label}</button>)}</div>
     <div className="history-results">
       {error && <p className="form-error" role="alert">{error}</p>}
-      {!items ? <p className="history-empty">正在加载…</p> : !items.length ? <p className="history-empty">{kind === 'media' ? '这里还没有发过图片或视频。' : '这里还没有发过文件。'}</p>
-        : kind === 'media' ? <div className="media-grid">{items.map(item => <button type="button" key={`${item.messageId}-${item.file.id}`} className={`media-tile ${privateMode ? 'masked' : ''}`}
-          title={`${userMap[item.senderId]?.name || '成员'} · ${day(item.createdAt)}`} aria-label={item.file.name}
-          onClick={() => item.file.mime.startsWith('image/') && !privateMode ? onPreview(item.file) : onJump({ id: item.messageId, seq: item.seq, roomId: room.id })}>
+      {!items ? !error && <Skeleton kind={kind} rows={kind === 'media' ? 9 : 5} /> : !items.length ? <p className="history-empty">{kind === 'media' ? '这里还没有发过图片或视频。' : '这里还没有发过文件。'}</p>
+        : kind === 'media' ? <div className="media-grid">{items.map(item => { const covered = coveredMedia(item.file); return <button type="button" key={`${item.messageId}-${item.file.id}`} className={`media-tile ${privateMode || covered ? 'masked' : ''}`}
+          title={`${userMap[item.senderId]?.name || '成员'} · ${day(item.createdAt)}`} aria-label={covered ? '剧透，跳到这条消息' : item.file.name}
+          onClick={() => item.file.mime.startsWith('image/') && !privateMode && !covered ? onPreview(item.file) : onJump({ id: item.messageId, seq: item.seq, roomId: room.id })}>
           {item.file.mime.startsWith('image/') ? <img src={mediaUrl(item.file.thumbId || item.file.id)} alt="" loading="lazy" /> : <span className="media-video"><Film size={20} /></span>}
-        </button>)}</div>
+          {covered && <SpoilerBadge />}
+        </button>; })}</div>
         : <ul className="file-list">{items.map(item => <li key={`${item.messageId}-${item.file.id}`}>
           <button type="button" className="file-jump" onClick={() => onJump({ id: item.messageId, seq: item.seq, roomId: room.id })}><FileText size={18} />
             <span><b>{item.file.name}</b><small>{formatSize(item.file.size)} · {userMap[item.senderId]?.name || '成员'} · {day(item.createdAt)}</small></span></button>

@@ -6,17 +6,20 @@ import { readStorage } from './history';
 // 每条消息的 clientId 不变，服务端按它去重，响应丢失后重发也不会出现两条。队列存在本机，重启后继续。
 const temporary = error => !error.status || error.status >= 500 || error.status === 429;
 
-export default function useOutbox({ storageKey, connected, onSent }) {
+export default function useOutbox({ storageKey, connected, onSent, onFailed }) {
   const [items, setItems] = useState([]);
-  const context = useRef({ key: null, items: [], running: false, connected, onSent });
+  const context = useRef({ key: null, items: [], running: false, connected, onSent, onFailed });
   context.current.connected = connected;
   context.current.onSent = onSent;
+  // 没发出去时告诉调用方（第三个参数：true 是确定失败，false 是会自动重发），比如通知里的回复要另外提醒。
+  context.current.onFailed = onFailed;
 
   const commit = useCallback(next => {
     context.current.items = next;
     setItems(next);
     if (!context.current.key) return;
-    try { localStorage.setItem(context.current.key, JSON.stringify(next.map(({ status, error, ...item }) => item))); } catch {}
+    // 阅后即焚消息只在内存里排队，不写进本机存储：没发出去就关掉页面，内容不会留在磁盘上。
+    try { localStorage.setItem(context.current.key, JSON.stringify(next.filter(item => !item.payload.burn).map(({ status, error, ...item }) => item))); } catch {}
   }, []);
   const patch = useCallback((clientId, change) => commit(context.current.items.map(item => item.clientId === clientId ? { ...item, ...change } : item)), [commit]);
 
@@ -33,8 +36,9 @@ export default function useOutbox({ storageKey, connected, onSent }) {
           commit(context.current.items.filter(entry => entry.clientId !== item.clientId));
           context.current.onSent(message);
         } catch (error) {
-          if (temporary(error)) { patch(item.clientId, { status: 'waiting', error: '网络不稳定，连接恢复后自动重发' }); break; }
+          if (temporary(error)) { patch(item.clientId, { status: 'waiting', error: '网络不稳定，连接恢复后自动重发' }); context.current.onFailed?.(item, error.message, false); break; }
           patch(item.clientId, { status: 'failed', error: error.message });
+          context.current.onFailed?.(item, error.message, true);
         }
       }
     } finally { context.current.running = false; }

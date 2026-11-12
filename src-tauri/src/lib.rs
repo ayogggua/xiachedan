@@ -75,6 +75,8 @@ struct Session {
   unread_messages: Option<usize>,
   seen: VecDeque<String>,
   notification_rooms: HashMap<i32, String>,
+  // 带回复框的通知是谁的（页面报来的成员标识）：回复时交回页面核对，换了账号就不发。
+  notification_owners: HashMap<i32, String>,
   notification_error: String,
   connecting: bool,
 }
@@ -164,6 +166,9 @@ fn open_address(app: &AppHandle, desktop: &Desktop, origin: &str, fragment: Opti
     session.unread.clear();
     session.unread_messages = None;
     session.seen.clear();
+    // 换了空间：旧通知不能再打开或回复到新空间里同名的会话（大厅在每个空间都叫 lobby）。
+    session.notification_rooms.clear();
+    session.notification_owners.clear();
     session.config.server = Some(origin.to_string());
     desktop.save(&session);
   }
@@ -178,6 +183,24 @@ fn open_notification(app: &AppHandle, id: Option<i32>) {
   let desktop = app.state::<Arc<Desktop>>();
   let room = id.and_then(|id| desktop.session.lock().unwrap().notification_rooms.get(&id).cloned());
   show(app, &desktop, room.filter(|room| !room.is_empty()));
+}
+
+// 在通知里直接回复：交给页面以当前身份发送，不打开窗口。页面没准备好或认不出这条通知时不能悄悄丢掉，另弹一条说明。
+#[cfg(target_os = "macos")]
+fn reply_notification(app: &AppHandle, id: Option<i32>, text: String) {
+  let desktop = app.state::<Arc<Desktop>>();
+  let (target, ready) = {
+    let session = desktop.session.lock().unwrap();
+    let room = id.and_then(|id| session.notification_rooms.get(&id).cloned()).filter(|room| valid_id(room));
+    let owner = id.and_then(|id| session.notification_owners.get(&id).cloned()).filter(|owner| valid_id(owner));
+    (room.zip(owner), session.renderer_ready)
+  };
+  match target {
+    Some((room, owner)) if ready => emit(app, &desktop, "notification-reply", json!({ "roomId": room, "userId": owner, "text": text.chars().take(10000).collect::<String>() })),
+    Some((room, _)) => { notify(app, &desktop, &room, "回复没有发出", "虾扯蛋正在连接，请稍后打开会话重新发送。", None); }
+    // 上一次运行、换过空间之前弹出的通知：找不到它属于哪里，不发。
+    None => { notify(app, &desktop, "", "回复没有发出", "这条提醒已经失效（来自之前的空间或上一次打开的虾扯蛋），请打开会话重新发送。", None); }
+  }
 }
 
 fn go_home(app: &AppHandle, desktop: &Desktop) {
@@ -288,13 +311,19 @@ fn update_settings(app: &AppHandle, desktop: &Desktop, value: &Value) -> Result<
   Ok(state)
 }
 
-fn notify(app: &AppHandle, desktop: &Desktop, room: &str, title: &str, body: &str) -> bool {
+// reply_owner 只在 macOS 生效：给了成员标识，通知就带「回复」输入框，回复时以此核对身份。
+fn notify(app: &AppHandle, desktop: &Desktop, room: &str, title: &str, body: &str, reply_owner: Option<&str>) -> bool {
   let id = desktop.next_notification.fetch_add(1, Ordering::Relaxed);
-  desktop.session.lock().unwrap().notification_rooms.insert(id, room.to_string());
+  let replyable = reply_owner.is_some_and(|owner| valid_id(owner)) && !room.is_empty();
+  {
+    let mut session = desktop.session.lock().unwrap();
+    session.notification_rooms.insert(id, room.to_string());
+    if let Some(owner) = reply_owner.filter(|_| replyable) { session.notification_owners.insert(id, owner.to_string()); }
+  }
   #[cfg(target_os = "macos")]
-  let shown: Result<(), ()> = { macos_notification::show(id, title, body); Ok(()) };
+  let shown: Result<(), ()> = { macos_notification::show(id, title, body, replyable); Ok(()) };
   #[cfg(not(target_os = "macos"))]
-  let shown = app.notification().builder().id(id).title(title).body(body).show();
+  let shown = { let _ = replyable; app.notification().builder().id(id).title(title).body(body).show() };
   match shown {
     Ok(()) => { desktop.session.lock().unwrap().notification_error.clear(); true }
     Err(_) => {
@@ -422,6 +451,15 @@ struct Notice {
   body: String,
   #[serde(rename = "privateMode")]
   private_mode: Option<bool>,
+  // 页面自己的状态提醒（如通知里的回复没发出）：不是消息内容，隐私模式下照常显示，不带回复框，也不把会话标成未读。
+  #[serde(default)]
+  notice: bool,
+  // 页面能处理通知里的回复（旧版页面不带这一项，就不显示回复框，免得回复被悄悄丢掉）。
+  #[serde(default)]
+  reply: bool,
+  // 弹提醒时页面上登录的成员，回复前用来核对还是不是同一个人。
+  #[serde(default)]
+  me: String,
 }
 
 #[tauri::command]
@@ -436,14 +474,16 @@ fn desktop_message(app: AppHandle, webview: Webview, desktop: Shared<'_>, value:
     session.seen.push_back(value.id.clone());
     if session.seen.len() > SEEN_LIMIT { session.seen.pop_front(); }
     if is_active(&app) && session.current_room.as_deref() == Some(value.room_id.as_str()) { return Ok(false) }
-    session.unread.insert(value.room_id.clone());
+    if !value.notice { session.unread.insert(value.room_id.clone()); }
     // 两端都做遮挡；页面未声明隐私状态时按隐私处理。
     (session.config.notifications_enabled != Some(false), session.config.private_mode != Some(false) || value.private_mode != Some(false))
   };
   render(&app, &desktop);
   if !enabled { return Ok(false) }
-  let (title, body) = if private_mode { ("虾扯蛋 · 新消息", "****") } else { (value.title.as_str(), value.body.as_str()) };
-  Ok(notify(&app, &desktop, &value.room_id, if title.is_empty() { "虾扯蛋 · 新消息" } else { title }, body))
+  let (title, body) = if private_mode && !value.notice { ("虾扯蛋 · 新消息", "****") } else { (value.title.as_str(), value.body.as_str()) };
+  // 内容被遮挡（隐私模式、应用锁定）时不带回复框：看不到消息就不该从通知里回。
+  let owner = (value.reply && !private_mode && !value.notice).then_some(value.me.as_str());
+  Ok(notify(&app, &desktop, &value.room_id, if title.is_empty() { "虾扯蛋 · 新消息" } else { title }, body, owner))
 }
 
 #[derive(Deserialize)]
@@ -476,7 +516,7 @@ fn test_notification(app: &AppHandle, desktop: &Desktop) -> Result<bool, String>
   };
   if !enabled { return Err("请先开启新消息提醒".into()) }
   let body = if private_mode { "****" } else { "收到新消息时，虾扯蛋会在这里提醒你。" };
-  Ok(notify(app, desktop, "", "虾扯蛋 · 测试提醒", body))
+  Ok(notify(app, desktop, "", "虾扯蛋 · 测试提醒", body, None))
 }
 
 #[tauri::command]
@@ -796,7 +836,9 @@ pub fn run() {
       *desktop.tray.lock().unwrap() = Some(tray);
       let clicked = handle.clone();
       #[cfg(target_os = "macos")]
-      macos_notification::install(move |id| open_notification(&clicked, id));
+      let replied = handle.clone();
+      #[cfg(target_os = "macos")]
+      macos_notification::install(move |id| open_notification(&clicked, id), move |id, text| reply_notification(&replied, id, text));
       #[cfg(not(target_os = "macos"))]
       app.notification().on_action(move |performed| {
         if performed.action_id() != "tap" { return }
