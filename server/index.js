@@ -191,7 +191,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const token = tokenFrom(req);
     return token ? stmt('SELECT id, name, avatar FROM users WHERE token_hash=? AND id NOT IN (SELECT user_id FROM removed_users) AND id NOT IN (SELECT id FROM bots)').get(hash(token)) : null;
   };
-  const canAccess = (room, userId) => room && !isRemoved(userId) && (!cloud || auth.activeId(userId)) && (room.kind === 'public' || JSON.parse(room.members).includes(userId));
+  const canAccess = (room, userId) => room && !isRemoved(userId) && (!cloud || auth.activeId(userId)) && JSON.parse(room.members).includes(userId);
   const requireRoom = (id, userId) => {
     const room = typeof id === 'string' ? stmt('SELECT * FROM rooms WHERE id=?').get(id) : null;
     if (!canAccess(room, userId)) throw fail('无法访问这个会话', 403);
@@ -353,7 +353,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const addToGroup = (room, ids) => {
     const members = [...new Set([...JSON.parse(room.members), ...ids])];
-    if (members.length > 100) throw fail('单个群聊最多 100 人');
+    if (room.kind === 'group' && members.length > 100) throw fail('单个群聊最多 100 人');
     stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
     for (const id of ids) stmt('DELETE FROM room_join_requests WHERE room_id=? AND user_id=?').run(room.id, id);
   };
@@ -453,8 +453,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       stmt('INSERT INTO workspace (id,name,invite_code) VALUES (1,?,?)').run(spaceName, inviteCode);
-      stmt('INSERT INTO rooms (id,name,kind,created_at) VALUES (?,?,?,?)').run('lobby', '大厅', 'public', Date.now());
       const me = userCreated(req, res, name, req.body.avatar);
+      stmt('INSERT INTO rooms (id,name,kind,members,created_at) VALUES (?,?,?,?,?)').run('lobby', '大厅', 'public', JSON.stringify([me.id]), Date.now());
       stmt('INSERT INTO space_admin (id,user_id) VALUES (1,?)').run(me.id);
       db.exec('COMMIT');
       res.status(201).json({ me });
@@ -567,6 +567,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json({ revoked: targets.length });
   });
   app.get('/api/state', (req, res) => res.json({ ...stateFor(req.user), ...(cloud ? auth.mobileAccess(req) : {}) }));
+  // 查找聊天对象与是否加入大厅无关；账号仅支持完整匹配，响应不返回手机号或邮箱。
+  app.get('/api/users/search', (req, res) => {
+    rateLimit(req, 'user-search', 60);
+    if (typeof req.query.q !== 'string' || req.query.q.length > 254) throw fail('请输入昵称、完整手机号或邮箱');
+    const query = req.query.q.trim().toLowerCase();
+    if (!query) return res.json({ users: [] });
+    const phone = /^(?:\+86|0086)1\d{10}$/.test(query) ? query.replace(/^(?:\+86|0086)/, '') : query;
+    const accountIds = new Set(cloud ? stmt('SELECT user_id FROM accounts WHERE phone=? OR email=?').all(phone, query).map(row => row.user_id) : []);
+    res.json({ users: users().filter(user => !user.removed && user.id !== req.user.id &&
+      (accountIds.has(user.id) || [user.name, user.department, user.bio].some(value => value.toLowerCase().includes(query)))).slice(0, 50) });
+  });
   app.post('/api/remove-member', (req, res) => {
     if (req.user.id !== ownerId()) throw fail('只有空间创建者可以移除成员', 403);
     const id = req.body?.userId;
@@ -1193,13 +1204,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 退出群聊：群主退出时由最早的成员接任；最后一个人退出后群聊对所有人不可见。
   app.post('/api/room-leave', (req, res) => {
     const room = requireRoom(req.body?.roomId, req.user.id);
-    if (room.kind !== 'group') throw fail('只能退出群聊');
+    if (!['group', 'public'].includes(room.kind)) throw fail('只能退出群聊或大厅');
+    if (room.kind === 'public' && req.user.id === ownerId()) throw fail('空间创建者需要保留在大厅中', 403);
     const members = JSON.parse(room.members).filter(id => id !== req.user.id);
-    const ownerId = groupSettings(room).ownerId;
+    const previousOwner = room.kind === 'group' ? groupSettings(room).ownerId : null;
     stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
     stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
     stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
-    if (ownerId === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
+    if (previousOwner === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
     // 最后一个人退出后群聊谁都看不到了，群里的机器人也一起移出。
     if (!members.length) stmt('DELETE FROM bot_rooms WHERE room_id=?').run(room.id);
     broadcast({ type: 'rooms' }, room.id);
@@ -1333,14 +1345,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     broadcast({ type: 'rooms' }, room.id);
     res.json({ adminIds: groupSettings(stmt('SELECT * FROM rooms WHERE id=?').get(room.id)).adminIds });
   });
-  // 移出群成员：群主可以移出任何人；管理员只能移出普通成员。
+  // 大厅由空间管理者移出成员；普通群沿用群主和群管理员的权限。
   app.post('/api/room-remove', (req, res) => {
-    const room = requireGroupManager(req.body?.roomId, req.user.id);
-    const { ownerId, adminIds } = groupSettings(room);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    if (room.kind === 'public') {
+      if (!isManager(req.user)) throw fail('只有空间管理员可以移出大厅成员', 403);
+    } else requireGroupManager(room.id, req.user.id);
+    const { ownerId: roomOwner, adminIds } = room.kind === 'public' ? { ownerId: ownerId(), adminIds: [] } : groupSettings(room);
     const target = req.body?.userId;
     const members = JSON.parse(room.members);
     if (typeof target !== 'string' || target === req.user.id || !members.includes(target)) throw fail('请选择群里的另一位成员');
-    if (target === ownerId || (req.user.id !== ownerId && adminIds.includes(target))) throw fail('只有群主可以移出管理员', 403);
+    if (target === roomOwner || (req.user.id !== roomOwner && adminIds.includes(target))) throw fail(room.kind === 'public' ? '不能移出空间创建者' : '只有群主可以移出管理员', 403);
     stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members.filter(id => id !== target)), room.id);
     stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
     stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, target);
@@ -1351,10 +1366,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/room-members', (req, res) => {
     rateLimit(req, 'members', 20);
     const room = requireRoom(req.body.roomId, req.user.id);
-    if (room.kind !== 'group') throw fail('只能向群聊邀请成员');
+    if (!['group', 'public'].includes(room.kind)) throw fail('只能向群聊或大厅邀请成员');
+    if (room.kind === 'public' && !isManager(req.user)) throw fail('只有空间管理员可以邀请成员加入大厅', 403);
     const ids = Array.isArray(req.body.memberIds) ? [...new Set(req.body.memberIds)] : [];
     if (!ids.length || ids.length > 100 || ids.some(id => typeof id !== 'string' || !userById(id))) throw fail('请选择有效成员');
-    const { ownerId, adminIds, joinApproval } = groupSettings(room);
+    const { ownerId, adminIds, joinApproval } = room.kind === 'group' ? groupSettings(room) : { joinApproval: false };
     // 开了入群审批时，普通成员拉的人先进申请，群主或管理员同意后才加入。
     const fresh = ids.filter(id => !JSON.parse(room.members).includes(id));
     if (joinApproval && req.user.id !== ownerId && !adminIds.includes(req.user.id)) {

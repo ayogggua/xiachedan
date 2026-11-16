@@ -94,7 +94,9 @@ export async function createAuth({ db, app, production, closeUser, changed, rate
       stmt('INSERT INTO users VALUES (?,?,?,?,?)').run(id, '管理员', 'cat', hash(randomBytes(32)), Date.now());
       stmt("INSERT INTO accounts (user_id,phone,password_hash,role,status,must_change_password,updated_at) VALUES (?,?,?,'super_admin','approved',1,?)").run(id, ADMIN_PHONE, encoded, Date.now());
       stmt('INSERT OR IGNORE INTO workspace VALUES (1,?,?)').run(process.env.CHAT_SPACE_NAME?.trim().slice(0, 32) || '虾扯蛋', randomBytes(6).toString('hex').toUpperCase());
-      stmt("INSERT OR IGNORE INTO rooms (id,name,kind,created_at) VALUES ('lobby','大厅','public',?)").run(Date.now());
+      stmt("INSERT OR IGNORE INTO rooms (id,name,kind,members,created_at) VALUES ('lobby','大厅','public',?,?)").run(JSON.stringify([id]), Date.now());
+      const members = JSON.parse(stmt("SELECT members FROM rooms WHERE id='lobby'").get().members);
+      stmt("UPDATE rooms SET members=? WHERE id='lobby'").run(JSON.stringify([...new Set([...members, id])]));
       stmt('INSERT OR REPLACE INTO space_admin VALUES (1,?)').run(id);
     });
   }

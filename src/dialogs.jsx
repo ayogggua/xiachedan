@@ -102,10 +102,10 @@ export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
     event.preventDefault(); setBusy(true); setError('');
     try {
       const result = room ? await api('room-members', { roomId: room.id, memberIds: selected }) : await api('rooms', { name, memberIds: selected });
-      await onCreated(result.id || room.id); onClose(); notify(result.pending ? '已发送入群申请，等待群主或管理员同意' : room ? '成员已加入群聊' : '群聊已创建');
+      await onCreated(result.id || room.id); onClose(); notify(result.pending ? '已发送入群申请，等待群主或管理员同意' : room ? room.kind === 'public' ? '成员已加入大厅' : '成员已加入群聊' : '群聊已创建');
     } catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  return <Modal title={room ? `邀请成员加入${room.name}` : '把大家聚在一起'} subtitle={room ? '新成员加入后可以查看群聊历史消息。' : '创建一个群聊，让话题有自己的小天地。'} onClose={onClose}><form onSubmit={submit}>
+  return <Modal title={room ? `邀请成员加入${room.name}` : '把大家聚在一起'} subtitle={room ? `新成员加入后可以查看${room.kind === 'public' ? '大厅' : '群聊'}历史消息。` : '创建一个群聊，让话题有自己的小天地。'} onClose={onClose}><form onSubmit={submit}>
     {!room && <><label className="field-label" htmlFor="group-name">群聊名称</label><input id="group-name" placeholder="例如：午饭研究所" value={name} maxLength={24} onChange={event => setName(event.target.value)} required /></>}
     <div className="field-label group-select-label"><span>选择成员</span><small>已选 {selected.length} 人</small></div><div className="search-input"><Search size={16} /><input placeholder="搜索昵称" aria-label="搜索群成员" value={search} onChange={event => setSearch(event.target.value)} /></div>
     <div className="member-picker">{filtered.map(user => <label className="member-option" key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={event => setSelected(previous => event.target.checked ? [...previous, user.id] : previous.filter(id => id !== user.id))} /><Avatar user={user} size={36} online={user.online} /><span>{user.name}<small>{user.online ? '在线' : '离线'}</small></span><span className={`selection-check ${selected.includes(user.id) ? 'checked' : ''}`}>{selected.includes(user.id) && <Check size={13} />}</span></label>)}{!filtered.length && <div className="compact-empty"><Users size={25} /><p>{candidates.length ? '没有找到这个昵称' : room ? '空间里的成员都已在群中' : '还没有其他成员，先邀请同事加入空间吧'}</p></div>}</div>

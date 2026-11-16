@@ -11,6 +11,7 @@ import { ShareTargetDialog, ProfileDialog, RoomAvatarDialog, InviteDialog, Group
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
+import useUserSearch from './useUserSearch';
 import usePinnedDrag from './usePinnedDrag';
 import useOutbox from './useOutbox';
 import { SettingsDialog } from './Settings';
@@ -79,7 +80,7 @@ function classicTime(at) {
 }
 
 export default function App() {
-  const [selected, setSelected] = useState(popoutRoom || 'lobby');
+  const [selected, setSelected] = useState(popoutRoom || undefined);
   const [lastRead, setLastRead] = useState(() => readStorage('linliao.read', {}));
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
@@ -373,6 +374,8 @@ export default function App() {
   useEffect(() => { requestAnimationFrame(checkUnreadAnchor); }, [checkUnreadAnchor, lastSeq, loading]);
   const searchTerm = search.trim();
   const globalSearch = useMessageSearch(searchTerm, null, historyVersion, Boolean(state?.me));
+  const userSearch = useUserSearch(state?.users, searchTerm, Boolean(state?.me), state?.notes);
+  const contactSearch = useUserSearch(state?.users, contactQuery, Boolean(state?.me) && modal === 'members', state?.notes);
   useEffect(() => {
     if (!messageList.current || loading) return;
     const spot = pendingSpot.current;
@@ -689,6 +692,8 @@ export default function App() {
     ? <button type="button" className={className} data-user-id={user.id} aria-label={`查看${user.name}的资料`} {...profileClick(user)}>{children}</button> : children;
   // 群里资料卡上的管理操作：群主能设管理员、移出任何人；管理员只能移出普通成员。
   function groupActionsFor(user) {
+    if (room.kind === 'public') return (isOwner || isAdmin) && user.id !== state.workspace.ownerId
+      ? [{ label: '移出大厅', danger: true, action: () => { setProfileCard(null); setGroupAction({ type: 'remove', user }); } }] : [];
     const amOwner = groupOwner === state.me.id, targetAdmin = groupAdmins.includes(user.id), targetOwner = user.id === groupOwner;
     const setAdmin = admin => async () => { setProfileCard(null); try { await api('room-admins', { roomId: room.id, userId: user.id, admin }); await refresh(); notify(admin ? `已把「${user.name}」设为管理员` : `已取消「${user.name}」的管理员`); } catch (error) { notify(error.message); } };
     return [
@@ -931,7 +936,7 @@ export default function App() {
   const rooms = conversations.map(room => ({ ...room, name: roomName(room) }));
   const room = rooms.find(room => room.id === selected && !room.hidden);
   // 机器人只算在它加入的群聊和大厅里；私聊里它本来就是两位成员之一。
-  const inRoom = (target, user) => user.bot && target.kind !== 'direct' ? (target.bots || []).includes(user.id) : target.kind === 'public' || target.members.includes(user.id);
+  const inRoom = (target, user) => user.bot && target.kind !== 'direct' ? (target.bots || []).includes(user.id) : target.members.includes(user.id);
   const groupMembers = !room ? [] : state.users.filter(user => !user.removed && inRoom(room, user));
   // 会接收这里全部消息的机器人（私聊里机器人总是收全部，另有说明）。
   const listeningBots = room && room.kind !== 'direct' ? groupMembers.filter(user => user.bot?.receiveAll) : [];
@@ -1019,7 +1024,7 @@ export default function App() {
   const roomIcon = (target, size = 32) => target.kind === 'direct' ? <Avatar user={peerOf(target)} size={size} online={peerOf(target)?.bot ? undefined : peerOf(target)?.online} /> : target.avatar ? <Avatar user={{ avatar: target.avatar }} size={size} /> : <span className="room-avatar">{target.kind === 'public' ? <Hash size={16} /> : <Users size={16} />}</span>;
   const fitSidebar = raw => raw < 160 ? 76 : Math.min(440, Math.max(220, Math.round(raw)));
   const compact = sidebarWidth === 76;
-  const searchBox = <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>;
+  const searchBox = <label className="sidebar-search"><Search size={14} /><input aria-label="搜索用户、会话和消息" placeholder="搜索用户、会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>;
   const anyUnread = rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread));
   const markAllRead = () => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); };
   // 经典风格：搜索框旁的「＋」收纳发起聊天、邀请、文件夹和全部已读；左侧导航栏放原来侧栏顶部和底部的入口。
@@ -1097,14 +1102,14 @@ export default function App() {
       const rect = event.currentTarget.getBoundingClientRect();
       setContextMenu({ x: rect.left - 100, y: rect.bottom + 4, label: `管理${user.name}`, items: [
         { id: 'mute', label: user.muted ? '解除禁言' : '禁言…', action: async () => { if (!user.muted) return setMutingUser(user); try { await api('admin/mute', { userId: user.id, muted: false }); notify('已解除禁言'); } catch (error) { notify(error.message); } } },
+        ...(roomPanel && room?.kind === 'public' && room.members.includes(user.id) ? [{ id: 'remove-lobby', label: '移出大厅', danger: true, action: () => setGroupAction({ type: 'remove', user }) }] : []),
         ...(isOwner && !cloud ? [{ id: 'remove', label: '从空间移除', action: () => setRemoving(user) }] : []),
       ] });
     }}>管理</button>}
     {inGroup && !user.bot && groupOwner === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setGroupAction({ type: 'transfer', user })} aria-label={`把群主转让给${user.name}`}>转让</button>}
     {roomPanel && user.bot && canManageRoomBots && <button className="remove-member" onClick={() => setGroupAction({ type: 'removeBot', user })} aria-label={`把机器人${user.name}移出`}>移出</button>}</div>; };
   // 通讯录：按部门分组，没填部门的放最后；组内在线的排前面。
-  const contactNeedle = contactQuery.trim().toLowerCase();
-  const contactGroups = Object.entries(state.users.filter(user => !user.removed && (!contactNeedle || [user.name, user.department, user.bio].some(value => value?.toLowerCase().includes(contactNeedle))))
+  const contactGroups = Object.entries(contactSearch.users
     .reduce((groups, user) => { (groups[user.bot ? '机器人' : user.department || '未设置部门'] ||= []).push(user); return groups; }, {}))
     .sort(([a], [b]) => (a === '机器人') - (b === '机器人') || (a === '未设置部门') - (b === '未设置部门') || a.localeCompare(b, 'zh-Hans-CN'))
     .map(([department, members]) => [department, members.sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name, 'zh-Hans-CN'))]);
@@ -1147,6 +1152,11 @@ export default function App() {
         {activeFolder && <IconButton icon={PencilLine} label="编辑这个文件夹" size={14} onClick={() => setEditingFolder(activeFolder)} />}
         <IconButton icon={FolderPlus} label="新建文件夹" size={14} onClick={() => setEditingFolder('new')} /></div>}
       <nav className="conversation-scroll" aria-label="会话">
+        {searchTerm && <section aria-label="用户搜索结果" aria-live="polite"><div className="section-label"><span>用户</span></div>
+          {userSearch.users.filter(user => user.id !== state.me.id).map(user => <button key={user.id} className="member-row" onClick={() => { setSearch(''); directMessage(user); }}>
+            <Avatar user={user} size={32} online={user.bot ? undefined : user.online} /><span className="member-name">{user.name}{user.bot && <BotTag />}{user.department && <small className="member-department">{user.department}</small>}</span><MessageCircle size={16} /></button>)}
+          {userSearch.error ? <p className="sidebar-empty" role="alert">{userSearch.error}</p> : userSearch.loading ? <p className="sidebar-empty">正在搜索用户…</p> : !userSearch.users.some(user => user.id !== state.me.id) && <p className="sidebar-empty">没有找到相关用户</p>}
+        </section>}
         {classic ? (() => {
           // 经典风格：一个列表，置顶的在前，其余按最后一条消息的时间排。
           const pinnedRooms = filtered.filter(target => target.pinned), ids = query || tabKey !== 'all' ? undefined : pinnedRooms.map(target => target.id);
@@ -1195,7 +1205,7 @@ export default function App() {
         {!connected && !loggingOut && <div className="offline-pill glass" role="status"><WifiOff size={14} />正在重新连接，消息会在恢复后自动发送</div>}
         <div className="message-scroll" ref={messageList} onScroll={onMessageScroll}><div className="message-list" ref={messageContent}>
         {hasMore[selected] && <button className="load-older" onClick={loadOlder} disabled={loading}>{loading ? '正在加载…' : '查看更早的消息'}</button>}
-        {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? cloud ? '大家都在，随便扯两句。' : '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请同事加入</button>}</div>}
+        {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? '来大厅，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && (isOwner || isAdmin) && <button className="secondary-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}</div>}
         {!currentMessages.length && loading && <Skeleton kind="message" rows={6} label="正在加载消息…" />}
         {messageGroups.map(group => { const first = group.messages[0]; const mine = first.senderId === state.me.id; const author = userOf(first); const withAvatar = showAvatar(mine) && !first.nudge && !first.notice; const avatar = withAvatar && !first.recalledAt && !first.burn?.destroyedAt && <div className="group-avatar">{avatarButton(first.bot ? null : author, <Avatar user={author} size={classic ? 36 : 32} />)}</div>;
           return <React.Fragment key={first.id}>{group.timeLabel && <div className="time-divider"><span>{group.timeLabel}</span></div>}{!classic && group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''} ${withAvatar && (classic || chatPrefs.avatarMode === 'top') ? 'avatar-top' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => <Message {...messageHandlers} key={message.id} message={message} users={state.users} nicknames={nicknamesKey} showName={position === 0 && !first.nudge && showNameOf(mine)} reEditable={Boolean(recalledTexts[message.id])} quickReact={chatPrefs.quickReact}
@@ -1231,7 +1241,7 @@ export default function App() {
         ? <RoomFiles room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onPreview={setPreview} onJump={jumpToMessage} />
         : panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} members={groupMembers} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
-        : <><div className="members-panel-heading"><h3>{classic ? '聊天信息' : '会话成员'} <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}{canManageRoomBots && <button className="add-member-button" onClick={() => setModal('addBot')}><Bot size={15} />添加机器人</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => setPanelView('files')}><Images size={16} /><span>图片与文件</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => downloadExport(room.id)}><Download size={16} /><span>导出聊天记录</span></button>
+        : <><div className="members-panel-heading"><h3>{classic ? '聊天信息' : '会话成员'} <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{(room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))) && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}{canManageRoomBots && <button className="add-member-button" onClick={() => setModal('addBot')}><Bot size={15} />添加机器人</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => setPanelView('files')}><Images size={16} /><span>图片与文件</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => downloadExport(room.id)}><Download size={16} /><span>导出聊天记录</span></button>
           {room.kind === 'group' && (editingNickname !== null
             ? <form className="nickname-form" onSubmit={event => { event.preventDefault(); saveNickname(editingNickname); }}><input autoFocus aria-label="我在本群的昵称" maxLength={16} placeholder={`留空则显示「${userMap[state.me.id]?.name}」`} value={editingNickname} onChange={event => setEditingNickname(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setEditingNickname(null); } }} />
                 <button type="button" className="secondary-button" onClick={() => setEditingNickname(null)}>取消</button><button className="primary-button">保存</button></form>
@@ -1264,7 +1274,7 @@ export default function App() {
           {room.kind === 'public' && (isOwner || isAdmin) && <button className="history-entry" onClick={() => setGroupAction({ type: 'webhooks' })}><Bot size={16} /><span>大厅机器人</span><ChevronRight size={14} /></button>}
           {listeningBots.length > 0 && <p className="bot-listening-note" role="note"><Bot size={14} aria-hidden="true" /><span>{listeningBots.map(user => `「${user.name}」`).join('、')}会接收这里的全部消息，不只是 @它的消息。</span></p>}
           <div className="members-list">{groupMembers.map(user => memberRow(user, 30, room.kind === 'group', true, true))}</div>
-          {room.kind === 'group' && <button className="leave-group" onClick={() => setGroupAction({ type: 'leave' })}><LogOut size={15} />退出群聊</button>}</>}</aside>}</div>
+          {(room.kind === 'group' || (room.kind === 'public' && !isOwner)) && <button className="leave-group" onClick={() => setGroupAction({ type: 'leave' })}><LogOut size={15} />{room.kind === 'public' ? '退出大厅' : '退出群聊'}</button>}</>}</aside>}</div>
       </> : <div className="empty-conversation"><MessageCircle size={32} /><h2>选择一个对话</h2><button className="secondary-button" onClick={() => setModal('members')}>发起私聊</button></div>}
     </main>
     {modal === 'profile' && <ProfileDialog me={{ ...state.me, ...userMap[state.me.id] }} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
@@ -1275,9 +1285,9 @@ export default function App() {
     {['group', 'addMembers'].includes(modal) && <GroupDialog users={state.users.filter(user => !user.removed && !user.bot)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} />}
     {modal === 'connection' && <SettingsDialog appLock={appLock} pushSettings={{ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }} phrases={state.phrases || []} onPhrases={async list => applyPhrases((await api('phrases', { phrases: list })).phrases)} onSetStatus={() => setModal('status')} keywords={state.keywords || []} onKeywords={async list => applyKeywords((await api('keywords', { keywords: list })).keywords)} onShortcuts={() => setModal('shortcuts')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} skin={skin} onSkin={setSkin} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} onBots={(cloud ? isAdmin : isOwner) ? () => setModal('bots') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
     {modal === 'members' && <Modal title="通讯录" subtitle={`${state.users.filter(user => !user.removed && !user.bot).length} 位成员，${online.length} 人在线。单击查看资料，双击直接私聊。`} onClose={() => setModal(null)} className="contacts-dialog">
-      <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus aria-label="搜索成员" placeholder="搜索名字、部门或签名" value={contactQuery} onChange={event => setContactQuery(event.target.value)} /></label>
+      <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus aria-label="搜索成员" placeholder="搜索昵称、完整手机号或邮箱" value={contactQuery} onChange={event => setContactQuery(event.target.value)} /></label>
       <div className="space-members">{contactGroups.map(([department, members]) => <section key={department} aria-label={department}><h4 className="contacts-group">{department}<small>{members.length}</small></h4>{members.map(user => memberRow(user, 32, false, true))}</section>)}
-        {!contactGroups.length && <p className="history-empty">没有找到「{contactQuery.trim()}」</p>}</div>
+        {contactSearch.error ? <p className="form-error" role="alert">{contactSearch.error}</p> : contactSearch.loading ? <p className="history-empty">正在搜索用户…</p> : !contactGroups.length && <p className="history-empty">没有找到「{contactQuery.trim()}」</p>}</div>
       <div className="modal-footer"><button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请新同事</button></div></Modal>}
     {preview && !privateMode && (() => {
       // 没揭开的剧透图不进左右翻页。
@@ -1293,10 +1303,10 @@ export default function App() {
       note={state.notes?.[profileCard.userId] || ''} onSaveNote={note => saveNote(userMap[profileCard.userId], note)}
       onMessage={() => { setProfileCard(null); directMessage(userMap[profileCard.userId]); }} onSetStatus={() => { setProfileCard(null); setModal('status'); }}
       groupNickname={nicknames[profileCard.userId]}
-      groupActions={room?.kind === 'group' && profileCard.userId !== state.me.id && room.members.includes(profileCard.userId) ? groupActionsFor(userMap[profileCard.userId])
+      groupActions={room && room.kind !== 'direct' && profileCard.userId !== state.me.id && room.members.includes(profileCard.userId) ? groupActionsFor(userMap[profileCard.userId])
         : canManageRoomBots && (room.bots || []).includes(profileCard.userId) ? [{ label: '移出机器人', danger: true, action: () => { setProfileCard(null); setGroupAction({ type: 'removeBot', user: userMap[profileCard.userId] }); } }] : []}
       onSetDepartment={(cloud ? isAdmin : isOwner) && profileCard.userId !== state.me.id && !userMap[profileCard.userId].bot ? async department => { try { await api('admin/department', { userId: profileCard.userId, department }); notify('部门已更新'); } catch (error) { notify(error.message); throw error; } } : undefined}
-      onNudge={room && !userMap[profileCard.userId].bot && !peer?.bot && (room.kind === 'public' || room.members.includes(profileCard.userId)) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onShare={userMap[profileCard.userId].bot ? undefined : () => { setProfileCard(null); setSharingCard(userMap[profileCard.userId]); }} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, document.querySelector('dialog[open]') || document.body)}
+      onNudge={room && !userMap[profileCard.userId].bot && !peer?.bot && room.members.includes(profileCard.userId) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onShare={userMap[profileCard.userId].bot ? undefined : () => { setProfileCard(null); setSharingCard(userMap[profileCard.userId]); }} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, document.querySelector('dialog[open]') || document.body)}
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id && !user.bot)} onClose={closeReadDetail}
       onOpenProfile={(user, element) => { openProfile(user, element); setReadDetail(null); }} />}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}
@@ -1344,12 +1354,12 @@ export default function App() {
       onConfirm={async () => { await api('room-bots', { roomId: room.id, botId: groupAction.user.id, add: false }); await refresh(); notify(`已把「${groupAction.user.name}」移出`); }} onClose={() => setGroupAction(null)} />}
     {groupAction?.type === 'name' && room?.kind === 'group' && <GroupEditDialog room={room} field="name" onClose={() => setGroupAction(null)} onSaved={refresh} />}
     {groupAction?.type === 'announcement' && room?.kind === 'group' && <GroupEditDialog room={room} field="announcement" onClose={() => setGroupAction(null)} onSaved={refresh} />}
-    {groupAction?.type === 'remove' && room && <ConfirmDialog title={`把「${groupAction.user.name}」移出「${room.name}」？`} subtitle="移出后对方看不到这个群的新消息，需要重新邀请才能回来。" confirmLabel="移出" busyLabel="正在移出…" danger
-      onConfirm={async () => { await api('room-remove', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify(`已把「${groupAction.user.name}」移出群聊`); }} onClose={() => setGroupAction(null)} />}
+    {groupAction?.type === 'remove' && room && <ConfirmDialog title={`把「${groupAction.user.name}」移出「${room.name}」？`} subtitle="移出后对方无法访问这个会话，需要重新邀请才能回来。" confirmLabel="移出" busyLabel="正在移出…" danger
+      onConfirm={async () => { await api('room-remove', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify(`已把「${groupAction.user.name}」移出${room.kind === 'public' ? '大厅' : '群聊'}`); }} onClose={() => setGroupAction(null)} />}
     {groupAction?.type === 'transfer' && room && <ConfirmDialog title={`把群主转让给「${groupAction.user.name}」？`} subtitle="转让后，你会变成普通成员，不能再设置管理员和转让群主。" confirmLabel="确认转让" busyLabel="正在转让…"
       onConfirm={async () => { await api('room-owner', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify('群主已转让'); }} onClose={() => setGroupAction(null)} />}
-    {groupAction?.type === 'leave' && room && <ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将看不到这个群的消息，需要群里的人重新邀请才能回来。'} confirmLabel="退出群聊" busyLabel="正在退出…" danger
-      onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}
+    {groupAction?.type === 'leave' && room && <ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将无法访问这个会话，需要管理员或群成员重新邀请才能回来。'} confirmLabel={room.kind === 'public' ? '退出大厅' : '退出群聊'} busyLabel="正在退出…" danger
+      onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected(null); setShowMembers(false); await refresh(); notify(room.kind === 'public' ? '已退出大厅' : '已退出群聊'); }} onClose={() => setGroupAction(null)} />}
     {switcher && <QuickSwitcher rooms={ordered} icon={target => roomIcon(target, 24)} unread={unread} onOpen={id => { setSwitcher(false); openRoom(id); }} onClose={() => setSwitcher(false)} />}
     {quoting && <Modal title="引用部分文字" subtitle="选中要引用的那一段，再点「引用」；不选就引用整条。" onClose={() => setQuoting(null)}>
       <textarea ref={quoteArea} className="quote-select" aria-label="消息内容" readOnly rows={6} value={plainText(quoting.text)} />

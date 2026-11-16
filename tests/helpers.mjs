@@ -37,7 +37,7 @@ async function start(options) {
     close: async () => { await server.close(); rmSync(dataDir, { recursive: true, force: true }); } };
 }
 
-// 局域网模式：创建空间的人（owner）已登录；join(name) 用邀请码加入一位新成员。
+// 局域网模式：join 默认由创建者显式邀请到大厅，沿用消息测试的成员场景。
 export async function startLocal({ setup = true, ...options } = {}) {
   const context = await start({ mode: 'local', ...options });
   const setupKey = new URL(context.server.setupUrl).hash.replace('#setup=', '');
@@ -51,11 +51,15 @@ export async function startLocal({ setup = true, ...options } = {}) {
   context.ownerId = created.body.me.id;
   const invite = await owner.get('/api/invite');
   context.inviteCode = invite.body.code;
-  context.join = async (name, avatar = 'bird') => {
+  context.join = async (name, avatar = 'bird', { lobby = true } = {}) => {
     const member = client(context.base);
     const joined = await member.post('/api/join', { inviteCode: context.inviteCode, name, avatar });
     if (joined.status !== 201) throw new Error(`join failed: ${joined.status} ${JSON.stringify(joined.body)}`);
     member.id = joined.body.me.id;
+    if (lobby) {
+      const invited = await owner.post('/api/room-members', { roomId: 'lobby', memberIds: [member.id] });
+      if (invited.status !== 200) throw new Error(`lobby invite failed: ${invited.status}`);
+    }
     return member;
   };
   return context;
@@ -64,7 +68,7 @@ export async function startLocal({ setup = true, ...options } = {}) {
 export const ADMIN_PHONE = '19977167586';
 export const ADMIN_PASSWORD = 'Admin-pass-2026';
 
-// 账号模式：管理员已改过初始密码并登录；member(name) 注册并审核通过一位新成员。
+// 账号模式：member 默认注册、审核后由管理员显式邀请到大厅。
 export async function startCloud(options = {}) {
   process.env.CHAT_ADMIN_INITIAL_PASSWORD = 'Initial-pass-2026';
   const context = await start({ mode: 'cloud', ...options });
@@ -83,10 +87,14 @@ export async function startCloud(options = {}) {
     member.id = registered.body.account.id;
     return member;
   };
-  context.member = async (name) => {
+  context.member = async (name, { lobby = true } = {}) => {
     const member = await context.register(name);
     const approved = await admin.post('/api/admin/review', { userId: member.id, status: 'approved' });
     if (approved.status !== 200) throw new Error(`approve failed: ${approved.status}`);
+    if (lobby) {
+      const invited = await admin.post('/api/room-members', { roomId: 'lobby', memberIds: [member.id] });
+      if (invited.status !== 200) throw new Error(`lobby invite failed: ${invited.status}`);
+    }
     return member;
   };
   return context;

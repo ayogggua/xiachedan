@@ -58,7 +58,9 @@ describe('群管理', () => {
     assert.deepEqual((await roomOf(carol, id)).members, [carol.id]);
     assert.equal((await carol.post('/api/room-leave', { roomId: id })).status, 200);
     assert.equal(await roomOf(carol, id), undefined);
-    assert.equal((await bob.post('/api/room-leave', { roomId: 'lobby' })).status, 400);
+    assert.equal((await bob.post('/api/room-leave', { roomId: 'lobby' })).status, 200);
+    assert.equal(await roomOf(bob, 'lobby'), undefined);
+    assert.equal((await send(bob, 'lobby', '退出大厅后')).status, 403);
   });
 
   test('旧数据没有群主记录时，由成员列表里第一位当群主', async () => {

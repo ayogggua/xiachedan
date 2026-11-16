@@ -68,7 +68,17 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   const adoptCleared = next => { Object.assign(historyRef.current.cleared, next.cleared || {}); };
   const refresh = useCallback(async () => {
-    try { const next = await api('state'); if (!logoutPending.current) { syncHistory(next.recalls, next.clearedThroughSeq); adoptCleared(next); setState(sanitizeState(next, historyRef.current)); } return next; }
+    try {
+      const next = await api('state');
+      if (!logoutPending.current) {
+        syncHistory(next.recalls, next.clearedThroughSeq); adoptCleared(next);
+        const allowed = new Set(next.rooms.map(room => room.id));
+        setMessages(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => allowed.has(id))));
+        setHasMore(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => allowed.has(id))));
+        setState(sanitizeState(next, historyRef.current));
+      }
+      return next;
+    }
     catch (error) { if (error.status === 401 && !logoutPending.current) location.reload(); throw error; }
   }, [syncHistory]);
   const applyReceipt = useCallback(receipt => {
@@ -260,8 +270,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     let cancelled = false, socket, delay = 700;
     async function synchronize() {
       try {
-        await refresh();
-        const roomId = activeRoom.current;
+        const next = await refresh();
+        const roomId = next.rooms.find(room => room.id === activeRoom.current)?.id;
         // 其他会话的缓存可能缺了断线期间的消息，丢掉后切过去时重新加载，避免中间出现空洞。
         setMessages(previous => roomId && previous[roomId] ? { [roomId]: previous[roomId] } : {});
         setHasMore(previous => roomId && roomId in previous ? { [roomId]: previous[roomId] } : {});
@@ -361,8 +371,9 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     document.addEventListener('visibilitychange', resume);
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); window.removeEventListener('online', resume); window.removeEventListener('linliao:resume', resume); window.removeEventListener('pagehide', leave); document.removeEventListener('visibilitychange', resume); };
   }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyChain, applyBurnState, applyBurned, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally, syncHistory, stopTyping]);
+  const selectedAllowed = Boolean(state?.rooms.some(room => room.id === selected));
   useEffect(() => {
-    if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
+    if (!state?.me.id || !selectedAllowed || loggingOut) { setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
     api(`messages?roomId=${encodeURIComponent(selected)}`).then(result => {
@@ -377,7 +388,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       setHasMore(previous => ({ ...previous, [selected]: previous[selected] === false && knownComplete ? false : result.hasMore }));
     }).catch(error => { if (!cancelled) notify(error.message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [selected, state?.me.id, loggingOut, notify]);
+  }, [selected, selectedAllowed, state?.me.id, loggingOut, notify]);
   async function loadOlder() {
     const current = messages[selected] || [];
     if (loading || !current.length) return false;

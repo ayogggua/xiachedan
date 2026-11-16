@@ -179,6 +179,19 @@ export function openStore(directory) {
       created_at INTEGER NOT NULL
     );
   `);
+  // 旧大厅只初始化一次成员名单，保留已有成员；以后注册、登录或重启都不再补入。
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (!db.prepare("SELECT 1 FROM space_settings WHERE key='public_members_explicit'").get()) {
+      const members = db.prepare(`SELECT u.id FROM users u LEFT JOIN accounts a ON a.user_id=u.id
+        WHERE u.id NOT IN (SELECT user_id FROM removed_users)
+        AND u.id NOT IN (SELECT id FROM bots)
+        AND (a.user_id IS NULL OR a.status IN ('approved','suspended')) ORDER BY u.created_at`).all().map(user => user.id);
+      db.prepare("UPDATE rooms SET members=? WHERE kind='public'").run(JSON.stringify(members));
+      db.prepare("INSERT INTO space_settings (key,value) VALUES ('public_members_explicit','1')").run();
+    }
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
   return db;
 }
 
