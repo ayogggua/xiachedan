@@ -1,0 +1,30 @@
+.arcade-launcher {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-bright) 26%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-bright) 10%, transparent);
+  color: var(--accent-bright);
+  transition: background-color 150ms, border-color 150ms, transform 150ms;
+}
+.arcade-launcher > svg { display: block; }
+.arcade-launcher:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
+.arcade-launcher:active { transform: translateY(1px); }
+.arcade-launcher--rail { width: 44px; height: 44px; }
+.arcade-launcher--mobile { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .arcade-launcher:hover {
+    background: color-mix(in srgb, var(--accent-bright) 19%, transparent);
+    border-color: color-mix(in srgb, var(--accent-bright) 48%, transparent);
+  }
+}
+@media (max-width: 760px) {
+  .arcade-launcher--mobile { display: inline-grid; width: 44px; height: 44px; align-self: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arcade-launcher { transition: none; }
+}
