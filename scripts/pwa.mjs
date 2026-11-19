@@ -29,7 +29,8 @@ export default function pwa() {
           params: { title: 'title', text: 'text', url: 'url', files: [{ name: 'files', accept: ['image/*', 'video/*', 'audio/*', 'text/*', 'application/*'] }] } },
       }, null, 2);
       const files = [...new Set(['/index.html', '/manifest.webmanifest', '/icons/apple-touch-icon.png',
-        ...icons.map(icon => icon.src), ...Object.keys(bundle).filter(file => !file.endsWith('.map')).map(file => `/${file}`)])].sort();
+        // Game sounds load on use, so opening chat does not download the sound bank.
+        ...icons.map(icon => icon.src), ...Object.keys(bundle).filter(file => !/\.(?:map|wav)$/.test(file)).map(file => `/${file}`)])].sort();
       const hash = createHash('sha256').update(JSON.stringify(files)).update(manifest).update(worker)
         .update(String(bundle['index.html']?.source || ''));
       for (const icon of [...icons.map(icon => icon.src), '/icons/apple-touch-icon.png']) hash.update(readFileSync(new URL(`../public${icon}`, import.meta.url)));

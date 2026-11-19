@@ -1402,8 +1402,8 @@ export default function App() {
       syncHistory([message]); notify('消息已撤回');
       if (recalling.text?.trim() && !recalling.burn) { setRecalledTexts(previous => ({ ...previous, [message.id]: { text: recalling.text } })); setTimeout(() => forgetRecalled(message.id), 10 * 60000); }
     }} />}
-    {modal === 'arcade' && !appLock.locked && <Suspense fallback={<Modal title="游戏厅" onClose={() => setModal(null)}><p role="status">正在打开游戏厅…</p></Modal>}><Arcade me={state.me} connected={connected} onClose={() => setModal(null)} /></Suspense>}
-    <ArcadeInvitation userId={state.me.id} hidden={appLock.locked} onOpen={() => setModal('arcade')} />
+    {['arcade', 'arcade-joined'].includes(modal) && !appLock.locked && <Suspense fallback={<Modal title="游戏厅" onClose={() => setModal(null)}><p role="status">正在打开游戏厅…</p></Modal>}><Arcade me={state.me} connected={connected} enterTable={modal === 'arcade-joined'} onClose={() => setModal(null)} /></Suspense>}
+    <ArcadeInvitation userId={state.me.id} hidden={appLock.locked} onOpen={() => setModal('arcade-joined')} />
     {toastElement}
   </div></>;
 }
