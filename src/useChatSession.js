@@ -309,10 +309,11 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       clearTimeout(reconnect.current);
       const currentSocket = new WebSocket(socketUrl(), socketProtocols());
       socket = socketRef.current = currentSocket;
-      socket.onopen = () => { if (cancelled || logoutPending.current || socket !== currentSocket) return currentSocket.close(); setConnected(true); delay = 700; presence(); synchronize(); };
+      socket.onopen = () => { if (cancelled || logoutPending.current || socket !== currentSocket) return currentSocket.close(); setConnected(true); delay = 700; presence(); synchronize(); window.dispatchEvent(new Event('linliao:arcade-changed')); };
       socket.onmessage = event => {
         if (cancelled || logoutPending.current || socket !== currentSocket) return;
         let data; try { data = JSON.parse(event.data); } catch { return; }
+        if (data.type === 'arcade-changed') window.dispatchEvent(new Event('linliao:arcade-changed'));
         if (data.type === 'message') { receive(data.message); stopTyping(data.message.roomId, data.message.senderId); }
         if (data.type === 'typing') setTyping(previous => ({ ...previous, [data.roomId]: { ...previous[data.roomId], [data.userId]: Date.now() + 5000 } }));
         if (data.type === 'message-recalled') { syncHistory([data.message]); applyEdit(data.message); }

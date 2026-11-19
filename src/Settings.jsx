@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Bell, Bot, ChevronLeft, ChevronRight, ExternalLink, Info, KeyRound, X, LoaderCircle, LogOut, MessageSquare, Palette, PencilLine, Server, ShieldCheck, UserRound, Wifi } from 'lucide-react';
+import { ArcadeIcon } from './ArcadeEntry';
 import { api, absoluteUrl, formatSize } from './api';
 import { mobileClient } from './mobile/session';
 import { FormattedText } from './markdown';
@@ -45,7 +46,7 @@ function PushSettings({ settings, notify }) {
     <Switch label="手机推送" checked={enabled} disabled={busy} onChange={change} /></SettingRow>;
 }
 
-export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onBots, onChanged, appearance, onAppearance, skin, onSkin, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
+export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onBots, onArcade, onChanged, appearance, onAppearance, skin, onSkin, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -125,7 +126,9 @@ export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, them
   return <Modal title="设置" wide className="settings-dialog" onClose={onClose}>
     <div className={`settings-layout ${paneOpen ? 'pane-open' : ''}`}>
       <nav className="settings-nav" aria-label="设置分类">{SECTIONS.map(([id, label, Icon]) => <button type="button" key={id} aria-current={id === current[0] ? 'page' : undefined} onClick={() => open(id)}>
-        <Icon size={16} /><span>{label}</span><ChevronRight className="settings-nav-arrow" size={14} /></button>)}</nav>
+        <Icon size={16} /><span>{label}</span><ChevronRight className="settings-nav-arrow" size={14} /></button>)}
+        {onArcade && <button type="button" onClick={onArcade}><ArcadeIcon size={19} /><span>游戏厅</span><ChevronRight className="settings-nav-arrow" size={14} /></button>}
+      </nav>
       <section className="settings-pane" aria-label={current[1]}>
         <button type="button" className="text-button settings-back" onClick={() => setPaneOpen(false)}><ChevronLeft size={15} />设置</button>
         <h3>{current[1]}</h3>{panes[current[0]]}

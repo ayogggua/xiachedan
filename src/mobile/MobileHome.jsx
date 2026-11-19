@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { MessageCircle, Users, UserRound, Search, ChevronRight, Settings2, Bookmark, UserPlus, ShieldCheck, Server, LogOut } from 'lucide-react';
+import { ArcadeIcon } from '../ArcadeEntry';
 import { Avatar, BotTag, botStatusText } from '../components';
 import { mobileClient, chooseServer } from './session';
 import useUserSearch from '../useUserSearch';
@@ -36,6 +37,7 @@ export function MobileHome({ tab, me, users, connected, onDirect, onAction, isAd
     ['saved', '我的收藏', Bookmark], ['connection', '设置', Settings2], ['invite', '邀请同事', UserPlus],
     ...(isAdmin ? [['admin', '用户管理', ShieldCheck]] : []),
     ...(mobileClient ? [['server', '连接服务器', Server]] : []),
+    ['arcade', '游戏厅', ArcadeIcon],
   ];
   return <section className="mobile-home mobile-me"><header><h1>我</h1></header>
     <button className="mobile-profile" onClick={() => onAction('profile')}><Avatar user={me} size={68} /><span><b>{me.name}</b><small>{me.department || me.email || me.phone || '编辑个人资料'}</small></span><ChevronRight size={20} /></button>

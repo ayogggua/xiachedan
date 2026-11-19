@@ -4,7 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { mobileOrigins } from './mobile.js';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync, realpathSync, linkSync, copyFileSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, readFileSync, closeSync, statSync, realpathSync, linkSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openStore, serializeMessage as baseMessage } from './store.js';
@@ -13,11 +13,13 @@ import { createAuth } from './auth.js';
 import { fetchPreview } from './linkPreview.js';
 import { createVapidKeys, sendPush, validEndpoint, validKeys, vapidPublicKey } from './webpush.js';
 import { createBots } from './bots.js';
+import { createPoker } from './poker.js';
 import { URL_PATTERN, attachmentLabel, cutMasked, looseText, maskSpoilers, plainText, previewText, quotable } from '../shared/preview.js';
 import { isPresetAvatar } from '../shared/avatars.js';
 import { SELECT_LIMIT } from '../shared/limits.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const VERSION = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
 const MAX_FILE = 100 * 1024 * 1024;
 // 表情回应的默认常用项（客户端在本机按使用次数排序），随会话状态下发；回应本身可以用任意单个表情。
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '🙏', '✅', '👀'];
@@ -430,7 +432,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       changed: () => { broadcast({ type: 'users', users: users() }); broadcast({ type: 'rooms' }); },
     }); } catch (error) { db.close(); throw error; }
   }
-  app.get('/api/health', (_req, res) => { stmt('SELECT 1').get(); res.json({ app: 'linliao', version: '1.4.1', mode, ok: true, mobile: cloud, release: process.env.CHAT_RELEASE || 'development' }); });
+  app.get('/api/health', (_req, res) => { stmt('SELECT 1').get(); res.json({ app: 'linliao', version: VERSION, mode, ok: true, mobile: cloud, release: process.env.CHAT_RELEASE || 'development' }); });
   app.get('/api/bootstrap', (req, res) => {
     sweepBurns();
     const ws = workspace();
@@ -565,6 +567,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       for (const socket of sockets) if (socket.sessionHash === tokenHash) socket.close(4001, 'session-revoked');
     }
     res.json({ revoked: targets.length });
+  });
+  const poker = createPoker({ changed: event => broadcast(event), onlineIds });
+  app.get('/api/arcade/state', (req, res) => {
+    rateLimit(req, 'arcade-state', 360);
+    res.json(poker.state(req.user, req.query.id));
+  });
+  for (const action of ['create', 'join', 'leave', 'ready', 'rebuy', 'start', 'action']) app.post(`/api/arcade/${action}`, (req, res) => {
+    rateLimit(req, 'arcade-action', 120);
+    if (action === 'create') rateLimit(req, 'arcade-create', 6);
+    res.status(action === 'create' ? 201 : 200).json(poker[action](req.user, req.body || {}));
   });
   app.get('/api/state', (req, res) => res.json({ ...stateFor(req.user), ...(cloud ? auth.mobileAccess(req) : {}) }));
   // 查找聊天对象与是否加入大厅无关；账号仅支持完整匹配，响应不返回手机号或邮箱。
@@ -2228,10 +2240,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       ws.on('close', () => {
         sockets.delete(ws);
         if (!closing && ![...sockets].some(socket => socket.userId === ws.userId)) stmt('INSERT INTO user_profiles (user_id,last_seen) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen').run(ws.userId, Date.now());
-        if (!closing) broadcast({ type: 'users', users: users() });
+        if (!closing) { broadcast({ type: 'users', users: users() }); poker.presence(); }
       });
       ws.send(JSON.stringify({ type: 'ready' }));
       broadcast({ type: 'users', users: users() });
+      poker.presence();
     });
   });
   // 启动时：停机期间到点的阅后即焚消息马上销毁，还在倒计时的重新计时。
@@ -2255,13 +2268,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   }, 30000);
   heartbeat.unref();
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); }); }
-  catch (error) { clearInterval(heartbeat); clearInterval(scheduler); wss.close(); db.close(); throw error; }
+  catch (error) { poker.close(); clearInterval(heartbeat); clearInterval(scheduler); wss.close(); db.close(); throw error; }
   const address = `http://127.0.0.1:${server.address().port}`;
   return { server, address, setupUrl: `${address}/#setup=${setupKey}`, close: async () => {
     if (closing) return;
     closing = true;
     for (const timer of burnTimers.values()) clearTimeout(timer);
     bots.close();
+    poker.close();
     clearInterval(heartbeat);
     clearInterval(scheduler);
     for (const socket of sockets) socket.terminate();
