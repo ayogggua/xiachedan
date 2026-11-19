@@ -406,7 +406,7 @@
   .raise-controls { gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
   .raise-controls > span { font-size: 10px; }
   .raise-input button { width: 28px; height: 30px; }
-  .raise-input input { width: 51px; }
+  .raise-input input { width: 78px; }
   .raise-presets { margin-left: auto; gap: 4px; }
   .raise-presets button { padding: 3px 8px; }
   .raise-slider { order: 5; flex-basis: 100%; height: 18px; }
