@@ -3,12 +3,14 @@ import { chipLayout, createChipPile, createMovingChip, paintChipPile } from './p
 import { advanceChips, chipLaunchOffsets, createChipParticle } from './chipPhysics';
 
 // 动画读取真实牌桌布局，手机端和换座后仍从荷官发到对应位置。状态始终以服务端为准。
-export default function useTableMotion(table, stage, visible, onImpact) {
+export default function useTableMotion(table, stage, visible, onSound, onStopSound) {
   const cursor = useRef(null);
-  const impact = useRef(onImpact); impact.current = onImpact;
+  const sound = useRef(onSound); sound.current = onSound;
+  const stopSound = useRef(onStopSound); stopSound.current = onStopSound;
   const pending = useRef({ animations: new Set(), timers: new Set(), hidden: new Set(), concealed: new Map(), nodes: new Set(),
-    packets: new Set(), chipViews: new Map(), frame: 0, lastFrame: 0, lastImpact: 0, until: 0, bounds: null });
+    packets: new Set(), chipViews: new Map(), frame: 0, lastFrame: 0, until: 0, bounds: null });
   const clear = () => {
+    stopSound.current?.();
     const state = pending.current;
     cancelAnimationFrame(state.frame); state.frame = 0; state.lastFrame = 0; state.packets.clear(); state.chipViews.clear();
     state.animations.forEach(animation => animation.cancel()); state.animations.clear();
@@ -39,7 +41,7 @@ export default function useTableMotion(table, stage, visible, onImpact) {
     cursor.current = last;
     if (!root || !visible || !before || before.table !== last.table) { clear(); return; }
     if (before.hand !== last.hand) clear();
-    if (document.hidden || matchMedia('(prefers-reduced-motion: reduce)').matches) { clear(); return; }
+    if (document.hidden) { clear(); return; }
     const next = events.filter(event => event.id > before.event);
     if (!next.length) return;
     const layer = root.querySelector('.table-motion-layer');
@@ -63,6 +65,67 @@ export default function useTableMotion(table, stage, visible, onImpact) {
       const timer = setTimeout(() => { state.timers.delete(timer); fn(); }, Math.max(0, delay));
       state.timers.add(timer);
     };
+    const cue = (kind, node, options = {}) => {
+      const position = center(node);
+      const player = node?.closest('.poker-seat');
+      sound.current?.(kind, { pan: position ? Math.max(-.75, Math.min(.75, position.x / base.width * 2 - 1)) : 0, other: Boolean(player && !player.classList.contains('is-me')), ...options });
+    };
+    const amountAt = node => Math.max(0, Number(node?.dataset.chipAmount) || 0);
+    const unitAt = node => Math.max(1, Number(node?.dataset.chipUnit) || table.smallBlind || 1);
+    const ledger = new Map();
+    const valueAt = node => ledger.has(node) ? ledger.get(node) : amountAt(node);
+    const adjust = (node, amount) => { if (node) ledger.set(node, valueAt(node) + amount); };
+    // One update can contain collection and payout; recover the piles before it.
+    for (const event of [...next].reverse()) {
+      if (event.type === 'bet') adjust(bet(event.seat), -event.amount);
+      else if (event.type === 'collect') for (const item of event.bets) { adjust(bet(item.seat), item.amount); adjust(pot, -item.amount); }
+      else if (event.type === 'refund') adjust(bet(event.seat), event.amount);
+      else if (event.type === 'win') for (const item of event.awards) adjust(pot, item.amount);
+    }
+    const betLevel = amount => {
+      const potBefore = Math.max(0, valueAt(pot)) + table.players.reduce((sum, player) => sum + Math.max(0, valueAt(bet(player.seat))), 0);
+      return Math.min(8, Math.floor(amount / (potBefore + Math.max(1, table.bigBlind)) * 4));
+    };
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      let delay = Math.max(0, state.until - performance.now());
+      for (const event of next) {
+        if (event.type === 'deal' || event.type === 'board') {
+          const targets = event.type === 'deal'
+            ? [0, 1].flatMap(round => event.seats.map(id => seat(id)?.querySelector(`[data-card-index="${round}"]`)))
+            : event.indices.map(index => root.querySelector(`[data-board-index="${index}"]`));
+          targets.forEach((target, index) => {
+            later(delay + index * 95, () => cue('deal', target));
+            later(delay + index * 95 + 420, () => cue(event.type === 'board' ? 'board-land' : 'card-land', target,
+              { sequence: event.type === 'board' && event.indices[index] < 3 ? event.indices[index] + 1 : 0 }));
+            if (event.type === 'board') later(delay + index * 95 + 470, () => cue('flip', target));
+          });
+          delay += targets.length * 95 + 420;
+        } else if (event.type === 'bet') {
+          const level = betLevel(event.amount); adjust(bet(event.seat), event.amount);
+          later(delay, () => cue('bet', seat(event.seat), { level })); delay += 180;
+        } else if (event.type === 'collect') {
+          later(delay, () => cue('collect', pot, { count: event.bets.length }));
+          event.bets.forEach((item, index) => {
+            adjust(bet(item.seat), -item.amount); adjust(pot, item.amount);
+            later(delay + 300 + index * 80, () => cue('collect-end', pot, { sequence: index + 1 }));
+          });
+          delay += 300 + event.bets.length * 80;
+        } else if (event.type === 'win') {
+          event.awards.forEach((item, index) => {
+            adjust(pot, -item.amount);
+            later(delay + index * 100, () => cue(seat(item.seat)?.classList.contains('is-me') ? 'payout-self' : 'payout-other', seat(item.seat), { progress: 1 }));
+          });
+          delay += event.awards.length * 100;
+        } else if (event.type === 'refund') {
+          adjust(bet(event.seat), -event.amount);
+          later(delay, () => cue('land', seat(event.seat), { strength: .65 })); delay += 80;
+        } else if (event.type === 'fold' || event.type === 'check') {
+          later(delay, () => cue(event.type, seat(event.seat))); delay += 80;
+        }
+      }
+      state.until = performance.now() + delay;
+      return;
+    }
     const animate = (node, frames, options, done) => {
       const animation = node.animate(frames, options); state.animations.add(animation);
       animation.onfinish = () => { state.animations.delete(animation); done?.(); animation.cancel(); };
@@ -80,15 +143,20 @@ export default function useTableMotion(table, stage, visible, onImpact) {
       const at = (p, rotate, scale = 1) => `translate3d(${p.x - end.w / 2}px,${p.y - end.h / 2}px,0) rotate(${rotate}deg) scale(${scale})`;
       later(delay, () => {
         card.style.visibility = '';
+        cue('deal', target);
         const spin = (end.x < origin.x ? -1 : 1) * (25 + index % 3 * 7);
         animate(card, [
           { transform: at(origin, spin, .55), opacity: .4 },
           { transform: at({ x: origin.x + (end.x - origin.x) * .62, y: origin.y + (end.y - origin.y) * .62 - 28 }, spin * -.35, 1.04), opacity: 1, offset: .58 },
           { transform: at({ x: end.x + 2, y: end.y + 3 }, 2), opacity: 1, offset: .88 },
           { transform: at(end, 0), opacity: 1 },
-        ], { duration: 440, easing: 'cubic-bezier(.18,.72,.3,1)', fill: 'forwards' }, () => {
+        ], { duration: 420, easing: 'cubic-bezier(.18,.72,.3,1)', fill: 'forwards' }, () => {
           target.style.visibility = ''; state.hidden.delete(target); remove(card);
           const back = target.classList.contains('back');
+          const boardCard = target.hasAttribute('data-board-index');
+          const boardIndex = Number(target.dataset.boardIndex);
+          cue(boardCard ? 'board-land' : 'card-land', target, { sequence: boardCard && boardIndex < 3 ? boardIndex + 1 : 0 });
+          if (boardCard) later(50, () => cue('flip', target));
           animate(target.querySelector('.poker-card-face'), back ? [{ transform: 'translateY(2px)' }, { transform: 'translateY(0)' }] : [{ transform: 'rotateY(-85deg)' }, { transform: 'rotateY(0deg)' }], { duration: back ? 100 : 180, easing: 'ease-out' });
         });
       });
@@ -102,19 +170,6 @@ export default function useTableMotion(table, stage, visible, onImpact) {
         else { state.concealed.delete(node); node.style.visibility = ''; }
       };
     };
-    const amountAt = node => Math.max(0, Number(node?.dataset.chipAmount) || 0);
-    const unitAt = node => Math.max(1, Number(node?.dataset.chipUnit) || table.smallBlind || 1);
-    const ledger = new Map();
-    const valueAt = node => ledger.has(node) ? ledger.get(node) : amountAt(node);
-    const adjust = (node, amount) => { if (node) ledger.set(node, valueAt(node) + amount); };
-    // A single server update can already contain collection and payout. Rebuild the
-    // preceding visible piles instead of reading their now-empty DOM canvases.
-    for (const event of [...next].reverse()) {
-      if (event.type === 'bet') adjust(bet(event.seat), -event.amount);
-      else if (event.type === 'collect') for (const item of event.bets) { adjust(bet(item.seat), item.amount); adjust(pot, -item.amount); }
-      else if (event.type === 'refund') adjust(bet(event.seat), event.amount);
-      else if (event.type === 'win') for (const item of event.awards) adjust(pot, item.amount);
-    }
     const ensureView = (node, amount, unit) => {
       if (state.chipViews.has(node)) return state.chipViews.get(node);
       const box = node.getBoundingClientRect(), canvas = createChipPile(Math.max(0, amount), document, unit);
@@ -182,6 +237,8 @@ export default function useTableMotion(table, stage, visible, onImpact) {
         dependencies: [...state.packets].filter(other => other.target === source), particles: [], nodes: [],
         begin(time) {
           packet.started = true; sourceView.amount = Math.max(0, sourceView.amount - amount); paintView(sourceView);
+          if (kind === 'bet') cue('bet', target, { level: packet.betLevel });
+          packet.onBegin?.();
           for (const [i, path] of paths.entries()) {
             const particle = createChipParticle(path.from, path.target, time + offsets[i]);
             const node = createMovingChip(document, path.chip.kind, path.chip.variant);
@@ -193,18 +250,32 @@ export default function useTableMotion(table, stage, visible, onImpact) {
           }
         },
         step(delta, time) {
+          const previousStates = packet.particles.map(particle => particle.state);
           const finished = advanceChips(packet.particles, delta, time);
           packet.particles.forEach((particle, i) => drawParticle(particle, packet.nodes[i], scale));
-          const strength = Math.min(1, Math.max(...packet.particles.map(particle => particle.impact || 0)) / 350);
-          if (strength > .08 && time * 1000 - state.lastImpact >= 40) { state.lastImpact = time * 1000; impact.current?.(strength); }
+          for (const kind of ['bounce', 'land', 'collision']) {
+            const strength = Math.max(...packet.particles.map(particle => particle[kind] || 0));
+            if (strength >= .04) cue(kind, target, { strength });
+          }
+          const height = Math.max(...packet.particles.map(particle => particle.stackImpact || 0));
+          if (height > 0) cue('stack', target, { height });
+          if (kind === 'win') {
+            const arrived = packet.particles.filter((particle, i) => particle.state === 3 && previousStates[i] !== 3).length;
+            if (arrived) {
+              packet.arrived = (packet.arrived || 0) + arrived;
+              cue(target.closest('.is-me') ? 'payout-self' : 'payout-other', target, { progress: packet.arrived / packet.particles.length });
+            }
+          }
           return finished;
         },
         finish() {
           packet.nodes.forEach(remove); targetView.amount += amount; paintView(targetView);
+          packet.onFinish?.();
         },
       };
       state.packets.add(packet);
       if (!state.frame) { state.lastFrame = performance.now(); state.frame = requestAnimationFrame(runFrame); }
+      return packet;
     };
     let delay = Math.max(0, state.until - performance.now());
     for (const event of next) {
@@ -215,15 +286,25 @@ export default function useTableMotion(table, stage, visible, onImpact) {
         delay += event.seats.length * 2 * 95 + 500;
         later(delay, () => machine?.removeAttribute('data-dealing'));
       } else if (event.type === 'bet') {
+        const level = betLevel(event.amount);
         const target = bet(event.seat), before = Math.max(0, valueAt(target)); adjust(target, event.amount);
-        chips(stack(event.seat), target, event.amount, delay, 'bet', event.amount, before, before + event.amount); delay += 180;
+        const packet = chips(stack(event.seat), target, event.amount, delay, 'bet', event.amount, before, before + event.amount);
+        if (packet) packet.betLevel = level;
+        delay += 180;
       }
       else if (event.type === 'collect') {
+        const group = [];
         event.bets.forEach((item, i) => {
           const source = bet(item.seat), before = Math.max(0, valueAt(pot)), sourceAmount = Math.max(item.amount, valueAt(source));
           adjust(source, -item.amount); adjust(pot, item.amount);
-          chips(source, pot, item.amount, delay + i * 80, 'collect', sourceAmount, before, before + item.amount);
+          const packet = chips(source, pot, item.amount, delay + i * 80, 'collect', sourceAmount, before, before + item.amount);
+          if (packet) group.push(packet);
         });
+        let started = false, completed = 0;
+        for (const packet of group) {
+          packet.onBegin = () => { if (!started) { started = true; cue('collect', pot, { count: group.length }); } };
+          packet.onFinish = () => cue('collect-end', pot, { sequence: ++completed });
+        }
         delay += 650 + Math.max(0, event.bets.length - 1) * 80; pulse(root.querySelector('.poker-pot'), delay);
       }
       else if (event.type === 'refund') {
@@ -238,7 +319,9 @@ export default function useTableMotion(table, stage, visible, onImpact) {
           pulse(seat(item.seat)?.querySelector('.seat-identity'), delay + i * 100 + 600);
         }); delay += 350;
       }
+      else if (event.type === 'check') later(delay, () => cue('check', seat(event.seat)));
       else if (event.type === 'fold') {
+        later(delay, () => cue('fold', seat(event.seat)));
         seat(event.seat)?.querySelectorAll('.seat-cards .poker-card').forEach((target, i) => {
           const from = center(target), card = deck.cloneNode(true);
           card.classList.add('flying-card'); card.style.animation = 'none'; card.style.visibility = 'hidden';

@@ -41,6 +41,14 @@ export function settleChip(chip) {
   Object.assign(chip, chip.target, { vx: 0, vy: 0, vz: 0, spin: 0, angle: 0, state: 3 });
 }
 
+function noteStackArrival(chip) {
+  if (chip.stackNoted || !chip.state || !chip.target.z) return;
+  if (chip.state === 3 || (Math.hypot(chip.target.x - chip.x, chip.target.y - chip.y) < 7.8 && Math.abs(chip.target.z - chip.z) < 2.21)) {
+    chip.stackNoted = true;
+    chip.stackImpact = Math.round(chip.target.z / 4.42);
+  }
+}
+
 function stepChip(chip, dt, time) {
   if (chip.state === 3) return;
   if (chip.state === 0) { if (time >= chip.startAt) chip.state = 1; return; }
@@ -54,12 +62,15 @@ function stepChip(chip, dt, time) {
       chip.vx *= fraction; chip.vy *= fraction; chip.x += chip.vx * dt; chip.y += chip.vy * dt;
       if (remaining < 70) chip.state = 2;
     } else {
+      const incoming = Math.max(0, -chip.vz);
       chip.z += chip.vz * dt; chip.vz -= GRAVITY * dt;
       chip.x += chip.vx * dt; chip.y += chip.vy * dt;
       if (chip.z <= 0) {
         chip.impact = Math.max(chip.impact || 0, Math.abs(chip.vz));
         chip.z = 0; chip.vz *= -BOUNCE; chip.vx *= RETAIN; chip.vy *= RETAIN;
         if (chip.vz < 45) chip.vz = 0;
+        const kind = chip.vz > 0 ? 'bounce' : 'land';
+        chip[kind] = Math.max(chip[kind] || 0, Math.min(1, incoming / 138));
       }
     }
     return;
@@ -87,6 +98,7 @@ export function collideChips(chips, random = Math.random) {
       if (relative >= 0) continue;
       const impulse = -1.6 * relative / 2, tangent = (random() - .5) * 2 * .35 * impulse;
       a.impact = Math.max(a.impact || 0, impulse); b.impact = Math.max(b.impact || 0, impulse);
+      a.collision = Math.max(a.collision || 0, Math.min(1, impulse / 260));
       const ix = nx * impulse - ny * tangent, iy = (ny * impulse + nx * tangent) * PROJECTION;
       a.vx += ix; a.vy += iy; b.vx -= ix; b.vy -= iy;
     }
@@ -96,11 +108,11 @@ export function collideChips(chips, random = Math.random) {
 export function advanceChips(chips, delta, time, random = Math.random) {
   // A suspended tab is restored by the caller; never run an unbounded catch-up loop.
   const duration = Math.max(0, Math.min(.05, delta));
-  for (const chip of chips) chip.impact = 0;
+  for (const chip of chips) { chip.impact = 0; chip.bounce = 0; chip.land = 0; chip.collision = 0; chip.stackImpact = 0; }
   const steps = Math.max(1, Math.ceil(duration / CHIP_STEP)), dt = duration / steps;
   for (let i = 0; i < steps; i++) {
     const at = time - duration + (i + 1) * dt;
-    for (const chip of chips) stepChip(chip, dt, at);
+    for (const chip of chips) { stepChip(chip, dt, at); noteStackArrival(chip); }
     collideChips(chips, random);
   }
   return chips.every(chip => chip.state === 3);

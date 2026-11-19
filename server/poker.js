@@ -254,7 +254,7 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
     const maximum = player.bet + player.stack;
     let label;
     if (action === 'fold') { player.folded = true; label = '弃牌'; motion(table, 'fold', { seat: player.seat }); }
-    else if (action === 'check') { if (owed) throw fail('需要跟注后才能继续'); label = '过牌'; }
+    else if (action === 'check') { if (owed) throw fail('需要跟注后才能继续'); label = '过牌'; motion(table, 'check', { seat: player.seat }); }
     else if (action === 'call') { if (!owed) throw fail('当前无需跟注，请过牌'); const paid = pay(table, player, owed); label = `${player.allIn ? '全下跟注' : '跟注'} ${paid}`; }
     else if (action === 'raise' || action === 'all-in') {
       const total = action === 'all-in' ? maximum : amount;

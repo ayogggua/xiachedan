@@ -1,14 +1,17 @@
 import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleHelp, Coins, History, LogOut, Minus, Plus, RefreshCw, Send, Trophy, UserPlus, Users, Volume2, VolumeX, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CircleHelp, Coins, History, LogOut, Minus, Plus, RefreshCw, Send, Trophy, UserPlus, Volume2, VolumeX, X } from 'lucide-react';
 import { ArcadeIcon } from '../ArcadeEntry';
 import { Avatar } from '../components';
 import useArcade from './useArcade';
 import useTableMotion from './useTableMotion';
+import usePokerAudio from './usePokerAudio';
+import ArcadeLobby from './ArcadeLobby';
 import { paintChipPile } from './pokerChips';
 import { InvitePanel, Leaderboard, StakesPanel, WalletPanel } from './ArcadePanels';
 import { DealerArm as DealerDrawing, TableEngraving as TableDrawing, CardOrnament as BackDrawing } from './ArcadeDecor';
 import './arcade.css';
 import './poker-motion.css';
+import './arcade-lobby.css';
 
 const PHASE = { waiting: '等待入座', preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌', showdown: '本手结算' };
 const SUITS = { s: '黑桃', h: '红桃', d: '方块', c: '梅花' };
@@ -145,93 +148,48 @@ function TableChat({ table, own, busy, onCommand }) {
   </div>;
 }
 
-export default function Arcade({ me, connected, onClose }) {
+export default function Arcade({ me, connected, onClose, enterTable = false }) {
   const game = useArcade();
   const dialog = useRef(null);
   const stage = useRef(null);
   const [panel, setPanel] = useState('');
   const [wagerPreview, setWagerPreview] = useState(null);
-  const [browsing, setBrowsing] = useState(false);
-  const [roomName, setRoomName] = useState('');
-  const [smallBlind, setSmallBlind] = useState('10');
-  const [handLimit, setHandLimit] = useState('0');
-  const hands = Number(handLimit);
-  const validHands = handLimit !== '' && Number.isSafeInteger(hands) && hands >= 0 && hands <= 1000;
-  const base = Number(smallBlind);
-  const validBase = Number.isSafeInteger(base) && base >= 1 && base <= 1000000;
-  const openingBuyIn = Math.min(base * 200, game.wallet?.total || 0);
+  const [browsing, setBrowsing] = useState(!enterTable);
+  const [selectedGame, setSelectedGame] = useState(null);
+  useEffect(() => { if (enterTable) setBrowsing(false); }, [enterTable]);
   const [rules, setRules] = useState(false);
   const [history, setHistory] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const [sound, setSound] = useState(false);
-  const audio = useRef(null);
-  const chipNoise = useRef(null);
-  const previous = useRef('');
   const offset = useRef(0);
   useEffect(() => { if (game.serverTime) offset.current = game.serverTime - Date.now(); }, [game.serverTime]);
   useEffect(() => {
     const old = document.activeElement;
     dialog.current.showModal();
     const timer = setInterval(() => setNow(Date.now() + offset.current), 250);
-    return () => { clearInterval(timer); old?.focus?.(); audio.current?.close?.(); };
+    return () => { clearInterval(timer); old?.focus?.(); };
   }, []);
   const table = game.table;
   const showTable = table && !browsing;
-  const impact = strength => {
-    const ctx = audio.current;
-    if (!sound || !showTable || document.hidden || ctx?.state !== 'running') return;
-    if (!chipNoise.current) {
-      const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * .035), ctx.sampleRate);
-      const samples = buffer.getChannelData(0);
-      for (let i = 0; i < samples.length; i++) samples[i] = (Math.random() * 2 - 1) * Math.exp(-i / samples.length * 5);
-      chipNoise.current = buffer;
-    }
-    const source = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
-    source.buffer = chipNoise.current; filter.type = 'bandpass'; filter.frequency.value = 2800 + Math.random() * 900; filter.Q.value = 1.6;
-    gain.gain.setValueAtTime(.02 + Math.min(1, strength) * .12, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + .03);
-    source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
-    source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); }; source.start();
-  };
-  useTableMotion(table, stage, Boolean(showTable), impact);
+  const { enabled: sound, toggle: toggleSound, unlock: unlockSound, play: playSound, stop: stopSound } = usePokerAudio(Boolean(showTable), table?.id);
+  useTableMotion(table, stage, Boolean(showTable), playSound, stopSound);
   const own = table?.players.find(player => player.id === me.id);
   useEffect(() => {
     const joined = () => { setBrowsing(false); setPanel(''); };
     window.addEventListener('linliao:arcade-joined', joined);
     return () => window.removeEventListener('linliao:arcade-joined', joined);
   }, []);
-  const toggleSound = () => {
-    if (!sound) { try { audio.current ||= new (window.AudioContext || window.webkitAudioContext)(); audio.current.resume().catch(() => {}); } catch {} }
-    setSound(value => !value);
-  };
-  useEffect(() => {
-    const state = table ? `${table.handId}:${table.phase}` : '';
-    if (previous.current && state !== previous.current && sound && showTable && audio.current?.state === 'running') {
-      const ctx = audio.current, oscillator = ctx.createOscillator(), gain = ctx.createGain();
-      oscillator.type = 'triangle'; oscillator.frequency.setValueAtTime(table?.phase === 'showdown' ? 640 : 300, ctx.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(110, ctx.currentTime + .12); gain.gain.setValueAtTime(.045, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + .14);
-      oscillator.connect(gain); gain.connect(ctx.destination); oscillator.start(); oscillator.stop(ctx.currentTime + .15);
-    }
-    previous.current = state;
-  }, [table?.handId, table?.phase, sound, showTable]);
   const command = async (action, body) => { const ok = await game.command(action, body); if (ok && ['create', 'join'].includes(action)) setBrowsing(false); if (ok && action === 'leave') { setConfirmLeave(false); setBrowsing(!game.table?.players.some(player => player.id === me.id && player.inHand)); } return ok; };
   const view = async id => { await game.inspect(id); setBrowsing(false); };
   const mySeat = own?.seat ?? 0;
   const winners = table?.result?.winners || [];
-  return <dialog ref={dialog} className="arcade-dialog" aria-labelledby="arcade-title" onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose(); }}>
-    <div className="arcade-app"><header className="arcade-header"><button className="arcade-back" onClick={showTable ? () => setBrowsing(true) : onClose} aria-label={showTable ? '返回游戏厅' : '返回聊天'}><ArrowLeft size={19} /></button><div className="arcade-wordmark"><ArcadeIcon size={25} /><h1 id="arcade-title">游戏厅</h1><span>/</span><b>{showTable ? table.name : '虾扯蛋'}</b></div><span className={`arcade-network ${connected ? '' : 'offline'}`}><i />{connected ? '在线' : '重连中'}</span><button className="arcade-close" onClick={onClose}><span>返回聊天</span><X size={18} /></button></header>
+  const back = () => { if (showTable) { setBrowsing(true); setSelectedGame('poker'); } else if (selectedGame) setSelectedGame(null); else onClose(); };
+  const nativeMac = window.desktop?.platform === 'macos';
+  return <dialog ref={dialog} className={`arcade-dialog ${nativeMac ? 'is-mac' : ''}`} aria-labelledby="arcade-title" onPointerDownCapture={unlockSound} onKeyDownCapture={unlockSound} onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose(); }}>
+    <div className="arcade-app">{nativeMac && <div className="arcade-window-chrome" data-drag-region aria-hidden="true" />}<header className="arcade-header"><button className="arcade-back" onClick={back} aria-label={showTable ? '返回德州大厅' : selectedGame ? '返回游戏列表' : '返回聊天'}><ArrowLeft size={19} /></button><div className="arcade-wordmark"><ArcadeIcon size={25} /><h1 id="arcade-title">游戏厅</h1><span>/</span><b>{showTable ? table.name : selectedGame ? '德州扑克' : '全部游戏'}</b></div><span className={`arcade-network ${connected ? '' : 'offline'}`}><i />{connected ? '在线' : '重连中'}</span><button className="arcade-close" onClick={onClose}><span>返回聊天</span><X size={18} /></button></header>
       {game.error && <div className="arcade-error" role="alert"><span>{game.error}</span><button onClick={game.refresh} aria-label="重新连接游戏厅"><RefreshCw size={16} /></button></div>}
       {!connected && <div className="arcade-disconnected" role="status">正在重新连接，行动暂不可用；恢复后自动同步牌局。</div>}
-      {game.loading && !game.tables ? <div className="arcade-loading" role="status"><RefreshCw size={25} className="spin" /><p>正在连接游戏厅…</p></div> : !showTable ? <main className="arcade-lobby">
-        <div className="arcade-lobby-heading"><div><span className="arcade-eyebrow">一起玩一局</span><h2>游戏厅</h2></div><div className="arcade-lobby-tools"><button onClick={() => setPanel('rank')}><Trophy size={17} />排行榜</button><button className="arcade-balance-button" onClick={() => setPanel('wallet')}><Coins size={18} /><span><small>可用筹码</small><b>{number(game.wallet?.balance)}</b></span></button><Avatar user={me} size={34} /></div></div>
-        <section className="arcade-feature"><div className="feature-copy"><span className="arcade-eyebrow">TEXAS HOLD’EM</span><h2>德州扑克</h2><p>两张底牌，无限可能。</p><div className="feature-meta"><span><Users size={15} />2–6 人</span><span>无限注</span><span>虚拟筹码</span></div><button className="arcade-primary" onClick={() => document.getElementById('arcade-room-name')?.focus()}>开一张新桌<ArrowRight size={17} /></button></div><div className="feature-art" aria-hidden="true"><div className="feature-orbit" /><div className="hero-card card-one"><Card card="As" /></div><div className="hero-card card-two"><Card card="Ah" /></div><div className="hero-chip-stack"><Chips amount={500} /></div><span className="feature-edition">01 / HOLD’EM</span></div></section>
-        <section className="arcade-tables"><div className="tables-heading"><h3>正在开放的牌桌<span>{game.tables?.length || 0}</span></h3><button className="arcade-text" onClick={game.refresh}><RefreshCw size={14} />刷新</button></div>
-          {table && own && <button className="return-table" onClick={() => setBrowsing(false)}><span><i />你已入座「{table.name}」</span><span>返回牌桌<ArrowRight size={15} /></span></button>}
-          <div className="tables-layout"><div className="room-list">{game.tables?.length ? game.tables.map(room => <button className="arcade-room" key={room.id} onClick={() => view(room.id)}><span className="room-suit"><Suit suit="s" /></span><span className="room-info"><strong>{room.name}</strong><small>盲注 {room.smallBlind} / {room.bigBlind} · {PHASE[room.phase]}</small></span><span className="room-seats"><Users size={15} />{room.playerCount} / {room.maxPlayers}</span><ChevronRight size={18} /></button>) : <div className="rooms-empty"><div className="empty-table-icon"><Suit /><Suit suit="h" /></div><h4>第一张牌桌，等你开场</h4><p>创建牌桌，朋友从游戏厅就能加入。</p></div>}</div>
-          <form className="create-table" onSubmit={event => { event.preventDefault(); command('create', { name: roomName.trim() || `${me.name}的牌桌`, smallBlind: base, handLimit: hands }); }}><h3>创建牌桌</h3><label htmlFor="arcade-room-name">牌桌名称</label><input id="arcade-room-name" maxLength={32} value={roomName} placeholder={`${me.name}的牌桌`} onChange={event => setRoomName(event.target.value)} /><label htmlFor="arcade-base">底分（小盲注）</label><input id="arcade-base" type="number" min="1" max="1000000" step="1" required value={smallBlind} onChange={event => setSmallBlind(event.target.value)} /><div className="stake-presets">{[10, 50, 100, 500].map(amount => <button type="button" className={base === amount ? 'selected' : ''} key={amount} onClick={() => setSmallBlind(String(amount))}>{amount}</button>)}</div><label htmlFor="arcade-hands">每场手数（0 为不限）</label><input id="arcade-hands" type="number" min="0" max="1000" step="1" required value={handLimit} onChange={event => setHandLimit(event.target.value)} /><dl><div><dt>牌桌买入</dt><dd>{validBase ? number(openingBuyIn) : '—'}</dd></div><div><dt>小盲 / 大盲</dt><dd>{validBase ? `${number(base)} / ${number(base * 2)}` : '—'}</dd></div></dl><button className="arcade-primary" disabled={game.busy || !connected || (Boolean(own) && activeHand(table)) || !validBase || !validHands || (game.wallet?.total || 0) < base * 2}>创建并入座<Plus size={17} /></button></form></div>
-        </section><footer className="arcade-lobby-footer"><span>筹码仅供娱乐，不可充值或兑换</span><button className="arcade-text" onClick={() => setRules(value => !value)}><CircleHelp size={15} />玩法规则</button></footer>
-      </main> : <main className="poker-room"><div className="poker-room-top"><div><span className="poker-live-dot" /><b>德州扑克</b><span>盲注 {table.smallBlind} / {table.bigBlind}</span><span>第 {table.matchNumber} 场 · {table.matchHandNumber}{table.handLimit ? ` / ${table.handLimit}` : ''} 手{!table.handLimit && ' · 不限'}</span></div><div className="poker-tools"><button onClick={() => setPanel('rank')} aria-label="排行榜"><Trophy size={17} /></button><button onClick={() => setPanel('wallet')} aria-label="我的筹码"><Coins size={17} /></button>{own && <button onClick={() => setPanel('invite')} aria-label="邀请好友进房"><UserPlus size={17} /></button>}<button onClick={toggleSound} aria-label={sound ? '关闭游戏声音' : '开启游戏声音'} aria-pressed={sound}>{sound ? <Volume2 size={17} /> : <VolumeX size={17} />}</button><button onClick={() => setHistory(value => !value)} aria-label="本局记录" aria-pressed={history}><History size={17} /></button><button onClick={() => setRules(value => !value)} aria-label="玩法规则" aria-pressed={rules}><CircleHelp size={17} /></button>{own && <button className="leave-table" disabled={activeHand(table)} title={activeHand(table) ? '本局结束后可以离桌' : '离桌并退回筹码'} onClick={() => setConfirmLeave(true)}><LogOut size={16} /><span>离桌</span></button>}</div></div>
+      {game.loading && !game.tables ? <div className="arcade-loading" role="status"><RefreshCw size={25} className="spin" /><p>正在连接游戏厅…</p></div> : !showTable ? <ArcadeLobby game={game} me={me} connected={connected} table={table} own={own} selectedGame={selectedGame} onSelect={setSelectedGame} onView={view} onReturn={() => setBrowsing(false)} onCommand={command} onPanel={setPanel} onRules={() => setRules(true)} roomIcon={<Suit suit="s" />} art={<><div className="feature-orbit" /><div className="hero-card card-one"><Card card="As" /></div><div className="hero-card card-two"><Card card="Ah" /></div><div className="hero-chip-stack"><Chips amount={500} /></div></>} /> : <main className="poker-room"><div className="poker-room-top"><div><span className="poker-live-dot" /><b>德州扑克</b><span>盲注 {table.smallBlind} / {table.bigBlind}</span><span>第 {table.matchNumber} 场 · {table.matchHandNumber}{table.handLimit ? ` / ${table.handLimit}` : ''} 手{!table.handLimit && ' · 不限'}</span></div><div className="poker-tools"><button onClick={() => setPanel('rank')} aria-label="排行榜"><Trophy size={17} /></button><button onClick={() => setPanel('wallet')} aria-label="我的筹码"><Coins size={17} /></button>{own && <button onClick={() => setPanel('invite')} aria-label="邀请好友进房"><UserPlus size={17} /></button>}<button onClick={toggleSound} aria-label={sound ? '关闭游戏声音' : '开启游戏声音'} aria-pressed={sound}>{sound ? <Volume2 size={17} /> : <VolumeX size={17} />}</button><button onClick={() => setHistory(value => !value)} aria-label="本局记录" aria-pressed={history}><History size={17} /></button><button onClick={() => setRules(value => !value)} aria-label="玩法规则" aria-pressed={rules}><CircleHelp size={17} /></button>{own && <button className="leave-table" disabled={activeHand(table)} title={activeHand(table) ? '本局结束后可以离桌' : '离桌并退回筹码'} onClick={() => setConfirmLeave(true)}><LogOut size={16} /><span>离桌</span></button>}</div></div>
         <div className="poker-layout"><section ref={stage} className={`poker-stage ${table.phase === 'showdown' ? 'settled' : ''}`} aria-label="德州扑克牌桌"><div className="poker-ambient" /><div className="poker-felt"><TableEngraving /><div className="felt-stitch" /><div className="poker-scoreboard"><div><span>盲注 {table.smallBlind} / {table.bigBlind}</span><b>{table.matchComplete ? '本场结束' : PHASE[table.phase]}</b></div><div><span>底池总额</span><Counter value={table.pot} /><i className="street-lights">{[0, 1, 2, 3].map(i => <em key={i} className={['preflop', 'flop', 'turn', 'river', 'showdown'].indexOf(table.phase) >= i ? 'on' : ''} />)}</i></div></div><DealerArm phase={table.phase} handId={table.handId} /><div className="felt-label">虾扯蛋 <span>POKER CLUB</span></div><div className="board-area"><span className="street-label">{PHASE[table.phase]}</span><div className="pot-rack" data-pot-anchor><Chips unit={table.smallBlind} amount={table.phase === 'showdown' ? 0 : Math.max(0, table.pot - table.players.reduce((sum, player) => sum + player.bet, 0))} /></div><div className="poker-pot" key={`${table.handId}-${table.pot}`}><span>底池</span><strong>{number(table.pot)}</strong></div><div className="community-cards">{Array.from({ length: 5 }, (_, i) => table.board[i] ? <Card key={`${table.handId}-${i}`} card={table.board[i]} index={i} boardIndex={i} /> : <div className="card-placeholder" key={`empty-${i}`}><Suit suit={i % 2 ? 'h' : 's'} /></div>)}</div>{table.phase === 'waiting' && <p className="board-hint">入座，准备，开始一局。</p>}{table.phase === 'showdown' && winners.length > 0 && <div className="poker-result" role="status" key={table.handId}><strong>{winners.map(winner => table.players.find(player => player.id === winner.id)?.name || '玩家').join('、')} {winners.length > 1 ? '分享底池' : '赢得底池'}</strong><span>{table.result.reason === 'fold' ? '其他玩家弃牌' : [...new Set(winners.map(winner => winner.hand).filter(Boolean))].join(' · ')}</span></div>}</div></div>
           <div className="poker-deck" data-deal-origin aria-hidden="true"><Card back small /><Card back small /></div>
           {Array.from({ length: 6 }, (_, position) => { const seat = (position + mySeat) % 6; return <Seat key={seat} position={position} player={table.players.find(player => player.seat === seat)} table={table} me={me} busy={game.busy || Boolean(own) || !connected} onJoin={() => command('join', { id: table.id, seat })} now={now} preview={wagerPreview?.handId === table.handId && wagerPreview?.seat === seat && table.actions?.canAct ? wagerPreview.amount : 0} />; })}
