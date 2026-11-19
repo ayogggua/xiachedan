@@ -25,6 +25,22 @@ export function openStore(directory) {
       reviewed_by TEXT, reviewed_at INTEGER, updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS accounts_status ON accounts(status);
+    -- 游戏厅筹码只用于娱乐。balance 为可用余额，牌桌买入单独托管；全部使用整数。
+    CREATE TABLE IF NOT EXISTS arcade_wallets (user_id TEXT PRIMARY KEY, balance INTEGER NOT NULL CHECK(balance >= 0), created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS arcade_escrow (user_id TEXT PRIMARY KEY, table_id TEXT NOT NULL, amount INTEGER NOT NULL CHECK(amount >= 0));
+    -- kind: initial 初始赠送；transfer 玩家转账；mint 总管理员发放；buyin 买入；cashout 离桌；hand 牌局结算；recovery 停机退回。
+    CREATE TABLE IF NOT EXISTS arcade_ledger (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, amount INTEGER NOT NULL, peer_id TEXT, actor_id TEXT, note TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS arcade_ledger_user ON arcade_ledger(user_id, created_at DESC);
+    -- request_id 由客户端生成，防止重复提交造成重复扣款或发放。
+    CREATE TABLE IF NOT EXISTS arcade_transfers (actor_id TEXT NOT NULL, request_id TEXT NOT NULL, kind TEXT NOT NULL, target_id TEXT NOT NULL, amount INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(actor_id, request_id));
+    CREATE TABLE IF NOT EXISTS arcade_hands (id TEXT PRIMARY KEY, table_id TEXT NOT NULL, pot INTEGER NOT NULL, finished_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS arcade_stats (
+      user_id TEXT PRIMARY KEY, hands INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0, splits INTEGER NOT NULL DEFAULT 0,
+      showdowns INTEGER NOT NULL DEFAULT 0, folds INTEGER NOT NULL DEFAULT 0, all_ins INTEGER NOT NULL DEFAULT 0,
+      vpip INTEGER NOT NULL DEFAULT 0, raises INTEGER NOT NULL DEFAULT 0, wagered INTEGER NOT NULL DEFAULT 0,
+      won INTEGER NOT NULL DEFAULT 0, net INTEGER NOT NULL DEFAULT 0, biggest_win INTEGER NOT NULL DEFAULT 0,
+      streak INTEGER NOT NULL DEFAULT 0, best_streak INTEGER NOT NULL DEFAULT 0
+    );
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL,
       created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
