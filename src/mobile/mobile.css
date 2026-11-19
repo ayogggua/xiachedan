@@ -11,12 +11,16 @@
 .mobile-server-input input { min-width: 0; flex: 1; width: 100%; min-height: 48px; background: none; border: 0; font-size: 16px; }
 .mobile-connect-form .primary-button { height: 50px; }
 
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  /* Keep lazy-loaded panels and landscape touch layouts above the focus-zoom threshold. */
+  :root :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(.status-emoji-input), textarea, select) { font-size: max(16px, 1em) !important; }
+}
+
 @media (max-width: 760px) {
   :root { --mobile-safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px)); --mobile-safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)); }
   :root.keyboard-open { --mobile-safe-bottom: 0px; }
   body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
   button, a { touch-action: manipulation; }
-  input, textarea, select { font-size: 16px; }
   input, textarea { scroll-margin: 90px; }
   .app, .onboarding, .startup-state { height: var(--app-height, 100dvh); }
   .app::before { display: none; }
