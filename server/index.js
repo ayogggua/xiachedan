@@ -14,6 +14,7 @@ import { fetchPreview } from './linkPreview.js';
 import { createVapidKeys, sendPush, validEndpoint, validKeys, vapidPublicKey } from './webpush.js';
 import { createBots } from './bots.js';
 import { createPoker } from './poker.js';
+import { createArcadeBank } from './arcadeBank.js';
 import { URL_PATTERN, attachmentLabel, cutMasked, looseText, maskSpoilers, plainText, previewText, quotable } from '../shared/preview.js';
 import { isPresetAvatar } from '../shared/avatars.js';
 import { SELECT_LIMIT } from '../shared/limits.js';
@@ -568,14 +569,41 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     }
     res.json({ revoked: targets.length });
   });
-  const poker = createPoker({ changed: event => broadcast(event), onlineIds });
+  const arcadeUsers = () => users().filter(user => !user.removed && !user.bot && userById(user.id));
+  const arcadeBank = createArcadeBank({ db, userById, listUsers: arcadeUsers,
+    canMint: user => cloud ? user.role === 'super_admin' : user.id === ownerId() });
+  const poker = createPoker({ bank: arcadeBank, getUser: userById, changed: event => broadcast(event), onlineIds,
+    notify: (userId, event) => deliver(event, socket => socket.userId === userId) });
   app.get('/api/arcade/state', (req, res) => {
     rateLimit(req, 'arcade-state', 360);
     res.json(poker.state(req.user, req.query.id));
   });
-  for (const action of ['create', 'join', 'leave', 'ready', 'rebuy', 'start', 'action']) app.post(`/api/arcade/${action}`, (req, res) => {
+  app.get('/api/arcade/invitations', (req, res) => { rateLimit(req, 'arcade-invitations', 120); res.json(poker.invitations(req.user)); });
+  app.get('/api/arcade/leaderboard', (req, res) => { rateLimit(req, 'arcade-rank', 120); res.json({ players: arcadeBank.leaderboard(req.query.sort) }); });
+  app.get('/api/arcade/wallet', (req, res) => {
+    rateLimit(req, 'arcade-wallet', 120);
+    res.json({ wallet: arcadeBank.wallet(req.user.id), history: arcadeBank.history(req.user.id), canMint: arcadeBank.canMint(req.user) });
+  });
+  app.get('/api/arcade/people', (req, res) => {
+    rateLimit(req, 'arcade-people', 120);
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 60).toLowerCase() : '';
+    const peers = new Set(stmt("SELECT members FROM rooms WHERE kind='direct'").all().flatMap(room => {
+      const members = JSON.parse(room.members); return members.includes(req.user.id) ? members : [];
+    }));
+    res.json({ users: arcadeUsers().filter(user => user.id !== req.user.id && (!q || user.name.toLowerCase().includes(q)))
+      .sort((a, b) => Number(peers.has(b.id)) - Number(peers.has(a.id)) || Number(b.online) - Number(a.online))
+      .slice(0, 80).map(({ id, name, avatar, online }) => ({ id, name, avatar, online })) });
+  });
+  for (const kind of ['transfer', 'mint']) app.post(`/api/arcade/${kind}`, (req, res) => {
+    rateLimit(req, 'arcade-transfer', 30);
+    arcadeBank.transfer(req.user, { ...req.body, mint: kind === 'mint' });
+    for (const userId of new Set([req.user.id, req.body.userId])) deliver({ type: 'arcade-changed' }, socket => socket.userId === userId);
+    res.json({ wallet: arcadeBank.wallet(req.user.id), history: arcadeBank.history(req.user.id), canMint: arcadeBank.canMint(req.user) });
+  });
+  for (const action of ['create', 'join', 'leave', 'ready', 'rebuy', 'stakes', 'newMatch', 'start', 'action', 'autoplay', 'say', 'invite', 'respond']) app.post(`/api/arcade/${action}`, (req, res) => {
     rateLimit(req, 'arcade-action', 120);
     if (action === 'create') rateLimit(req, 'arcade-create', 6);
+    if (action === 'invite') rateLimit(req, 'arcade-invite', 20);
     res.status(action === 'create' ? 201 : 200).json(poker[action](req.user, req.body || {}));
   });
   app.get('/api/state', (req, res) => res.json({ ...stateFor(req.user), ...(cloud ? auth.mobileAccess(req) : {}) }));

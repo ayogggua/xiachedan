@@ -38,6 +38,7 @@ import { previewText, readStorage } from './history';
 import { MobileHome, MobileTabs } from './mobile/MobileHome';
 import { mobileClient, chooseServer } from './mobile/session';
 import ArcadeEntry from './ArcadeEntry';
+import ArcadeInvitation from './ArcadeInvitation';
 
 const Arcade = lazy(() => import('./arcade/Arcade'));
 
@@ -1402,6 +1403,7 @@ export default function App() {
       if (recalling.text?.trim() && !recalling.burn) { setRecalledTexts(previous => ({ ...previous, [message.id]: { text: recalling.text } })); setTimeout(() => forgetRecalled(message.id), 10 * 60000); }
     }} />}
     {modal === 'arcade' && !appLock.locked && <Suspense fallback={<Modal title="游戏厅" onClose={() => setModal(null)}><p role="status">正在打开游戏厅…</p></Modal>}><Arcade me={state.me} connected={connected} onClose={() => setModal(null)} /></Suspense>}
+    <ArcadeInvitation userId={state.me.id} hidden={appLock.locked} onOpen={() => setModal('arcade')} />
     {toastElement}
   </div></>;
 }
