@@ -337,21 +337,55 @@
 }
 
 @media (max-width: 760px) {
-  .game-catalog .arcade-lobby-heading { gap: 12px; }
-  .game-catalog .arcade-lobby-heading h2 { font-size: 22px; }
-  .arcade-game-grid { grid-template-columns: 1fr; gap: 18px; }
-  .arcade-game-card .feature-copy { padding: 22px 22px 10px; }
-  .arcade-game-card .feature-copy h2 { font-size: 26px; }
-  .arcade-game-card .feature-art { inset: 22px 10px 64px 48%; }
-  .arcade-game-card .feature-orbit { width: 152px; height: 152px; }
-  .game-card-footer { padding-inline: 22px; }
-  .poker-lobby .tables-heading h3 { font-size: 13.5px; gap: 7px; }
+  .arcade-lobby-heading {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    gap: 10px;
+  }
+  .arcade-lobby-heading > div:first-child { display: none; }
+  .arcade-lobby-tools {
+    width: 100%;
+    gap: 10px;
+  }
+  .arcade-lobby-tools > button {
+    min-height: 48px;
+    padding: 8px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+  }
+  .arcade-balance-button {
+    flex: 1;
+    justify-content: flex-start;
+  }
+  .arcade-balance-button small { font-size: 10.5px; }
+  .arcade-balance-button b { font-size: 16px; }
+  .arcade-game-grid { grid-template-columns: 1fr; gap: 16px; }
+  .arcade-game-card { min-height: 254px; }
+  .arcade-game-card .feature-copy { padding: 20px 20px 10px; max-width: 58%; }
+  .arcade-game-card .feature-copy h2 { font-size: 25px; }
+  .arcade-game-card .feature-meta { flex-wrap: wrap; gap: 6px; }
+  .arcade-game-card .feature-art { inset: 16px 10px 60px 52%; }
+  .arcade-game-card .feature-orbit { width: 138px; height: 138px; }
+  .arcade-game-card .hero-card { top: 20px; }
+  .arcade-game-card .hero-card .poker-card { width: 64px; height: 90px; }
+  .arcade-game-card .hero-chip-stack { top: 118px; transform: scale(0.92); }
+  .game-card-footer { margin-top: 96px; height: 54px; padding-inline: 20px; }
+  .game-card-footer button { font-size: 14px; }
+  .poker-lobby .arcade-tables { margin-top: 8px; }
+  .poker-lobby .tables-heading { margin-bottom: 12px; }
+  .poker-lobby .tables-heading h3 { font-size: 15px; gap: 8px; }
   .poker-lobby-actions { gap: 8px; }
-  .poker-lobby .arcade-room { gap: 10px; padding: 14px 12px; min-height: 74px; }
-  .poker-lobby .room-info strong { font-size: 13px; }
-  .poker-lobby .room-info small { font-size: 10.5px; }
-  .poker-lobby .room-seats { gap: 4px; font-size: 10.5px; padding: 3px 8px; }
-  .create-table-form input { font-size: 16px; }
+  .poker-lobby-actions .arcade-text { min-width: 42px; min-height: 42px; }
+  .poker-lobby-actions .arcade-primary { min-height: 42px; padding: 8px 16px; font-size: 13.5px !important; }
+  .poker-lobby .arcade-room { gap: 12px; padding: 14px; min-height: 78px; border-radius: 13px; }
+  .poker-lobby .room-info strong { font-size: 15px; }
+  .poker-lobby .room-info small { font-size: 12px; }
+  .poker-lobby .room-seats { gap: 5px; font-size: 12px; padding: 5px 10px; }
+  .return-table { min-height: 52px; padding: 12px 14px; border-radius: 12px; font-size: 13.5px !important; }
+  .create-table-form input { font-size: 16px; height: 46px; }
+  .create-table-form .stake-presets button { min-height: 42px; font-size: 12.5px; }
+  .create-hands-presets { margin-top: -8px !important; }
+  .create-table-form > .arcade-primary { min-height: 48px; font-size: 14px !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {

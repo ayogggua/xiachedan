@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Coins, Search, Trophy, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronDown, Coins, Search, Trophy, UserPlus, X } from 'lucide-react';
 import { api, uid } from '../api';
 import { Avatar } from '../components';
+import { useIsMobile } from '../mobile/ui';
 import './arcade-panels.css';
 
 const num = value => Number(value || 0).toLocaleString('zh-CN');
@@ -68,8 +69,9 @@ export function StakesPanel({ table, onCommand, onClose, error }) {
 
 export function Sheet({ title, icon, onClose, children, wide = false }) {
   const root = useRef(null);
-  useEffect(() => { const previous = document.activeElement; root.current?.querySelector('button')?.focus(); return () => previous?.focus?.(); }, []);
-  return <div className="arcade-sheet-backdrop" onKeyDown={event => {
+  const mobile = useIsMobile();
+  useEffect(() => { const previous = document.activeElement; if (!mobile) root.current?.querySelector('button')?.focus(); return () => previous?.focus?.(); }, [mobile]);
+  return <div className="arcade-sheet-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }} onKeyDown={event => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); }
     if (event.key === 'Tab') {
       const controls = [...root.current.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),[tabindex="0"]')].filter(node => node.getClientRects().length);
@@ -77,11 +79,12 @@ export function Sheet({ title, icon, onClose, children, wide = false }) {
       if (target) { event.preventDefault(); target.focus(); }
     }
   }}>
-    <section ref={root} className={`arcade-sheet ${wide ? 'wide' : ''}`} role="region" aria-label={title}><header><span>{icon}<h2>{title}</h2></span><button aria-label={`关闭${title}`} onClick={onClose}><X size={20} /></button></header><div className="arcade-sheet-body">{children}</div></section>
+    <section ref={root} className={`arcade-sheet ${wide ? 'wide' : ''}`} role="region" aria-label={title}><span className="arcade-sheet-grabber" aria-hidden="true" /><header><span>{icon}<h2>{title}</h2></span><button aria-label={`关闭${title}`} onClick={onClose}><X size={20} /></button></header><div className="arcade-sheet-body">{children}</div></section>
   </div>;
 }
 
 export function Leaderboard({ me, onClose }) {
+  const mobile = useIsMobile();
   const [sort, setSort] = useState('net');
   const [rows, setRows] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -99,14 +102,29 @@ export function Leaderboard({ me, onClose }) {
     return () => { alive = false; ++serial.current; window.removeEventListener('linliao:arcade-changed', load); };
   }, [sort]);
   const user = rows?.find(row => row.id === selected);
+  const statsFor = target => [
+    ['累计赢得', num(target.won)], ['累计投入', num(target.wagered)], ['最大单局净赢', signed(target.biggestWin)], ['平分底池', `${target.splits} 局`], ['摊牌', `${target.showdowns} 局`], ['弃牌', `${target.folds} 局`], ['全下', `${target.allIns} 局`], ['主动入池率', `${target.vpip}%`], ['加注局数', target.raises], ['最长连胜', `${target.bestStreak} 局`],
+  ];
   return <Sheet title="牌桌排行榜" icon={<Trophy size={21} />} onClose={onClose} wide>
     <div className="arcade-ranking-heading"><span>每一局，都有记录。</span><select aria-label="排行榜排序" value={sort} onChange={event => setSort(event.target.value)}><option value="net">净赢最多</option><option value="total">总筹码最多</option><option value="winRate">胜率最高</option><option value="hands">牌局最多</option><option value="won">累计赢得最多</option></select></div>
     {error && <p className="arcade-panel-error" role="alert">{error}</p>}
-    {rows ? <div className="arcade-ranking-scroll"><table className="arcade-ranking"><thead><tr><th>排名 / 玩家</th><th>总筹码</th><th>净赢</th><th>胜率</th><th>获胜 / 局数</th></tr></thead><tbody>{rows.map(player => <tr key={player.id} className={player.id === me.id ? 'is-me' : ''}><td><button onClick={() => setSelected(player.id)} aria-label={`查看${player.name}的战绩`}><span className={`rank-number rank-${player.rank}`}>{String(player.rank).padStart(2, '0')}</span><Avatar user={player} size={30} /><b>{player.name}{player.id === me.id && <small>你</small>}</b></button></td><td>{num(player.total)}</td><td className={player.net > 0 ? 'positive' : player.net < 0 ? 'negative' : ''}>{signed(player.net)}</td><td>{player.hands ? `${player.winRate}%` : '—'}</td><td>{player.wins} / {player.hands}</td></tr>)}</tbody></table></div> : <p className="arcade-panel-empty">正在加载战绩…</p>}
+    {rows ? mobile ? <div className="arcade-ranking-cards">{rows.map(player => {
+      const expanded = selected === player.id;
+      return <div key={player.id} className={`arcade-rank-card ${player.id === me.id ? 'is-me' : ''} ${expanded ? 'is-open' : ''}`}>
+        <button type="button" className="arcade-rank-row" aria-expanded={expanded} onClick={() => setSelected(expanded ? null : player.id)}>
+          <span className={`rank-number rank-${player.rank}`}>{String(player.rank).padStart(2, '0')}</span>
+          <Avatar user={player} size={36} />
+          <span className="arcade-rank-main"><b>{player.name}{player.id === me.id && <small>你</small>}</b><small>总筹码 {num(player.total)} · {player.hands ? `胜率 ${player.winRate}% (${player.wins}/${player.hands})` : '暂无对局'}</small></span>
+          <span className="arcade-rank-metric"><strong className={player.net > 0 ? 'positive' : player.net < 0 ? 'negative' : ''}>{signed(player.net)}</strong><small>净赢</small></span>
+          <ChevronDown size={16} className="arcade-rank-chevron" />
+        </button>
+        {expanded && <div className="arcade-stat-card inline"><dl>{statsFor(player).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></div>}
+      </div>;
+    })}</div>
+    : <div className="arcade-ranking-scroll"><table className="arcade-ranking"><thead><tr><th>排名 / 玩家</th><th>总筹码</th><th>净赢</th><th>胜率</th><th>获胜 / 局数</th></tr></thead><tbody>{rows.map(player => <tr key={player.id} className={player.id === me.id ? 'is-me' : ''}><td><button onClick={() => setSelected(player.id)} aria-label={`查看${player.name}的战绩`}><span className={`rank-number rank-${player.rank}`}>{String(player.rank).padStart(2, '0')}</span><Avatar user={player} size={30} /><b>{player.name}{player.id === me.id && <small>你</small>}</b></button></td><td>{num(player.total)}</td><td className={player.net > 0 ? 'positive' : player.net < 0 ? 'negative' : ''}>{signed(player.net)}</td><td>{player.hands ? `${player.winRate}%` : '—'}</td><td>{player.wins} / {player.hands}</td></tr>)}</tbody></table></div>
+    : <p className="arcade-panel-empty">正在加载战绩…</p>}
     <p className="arcade-stat-note">胜率按赢得底池的局数统计，平分计入获胜。总筹码包含账户余额和牌桌筹码；转账与发放不计入净赢。</p>
-    {user && <div className="arcade-stat-card"><header><Avatar user={user} size={36} /><b>{user.name}</b><button onClick={() => setSelected(null)} aria-label="收起战绩"><X size={17} /></button></header><dl>{[
-      ['累计赢得', num(user.won)], ['累计投入', num(user.wagered)], ['最大单局净赢', signed(user.biggestWin)], ['平分底池', `${user.splits} 局`], ['摊牌', `${user.showdowns} 局`], ['弃牌', `${user.folds} 局`], ['全下', `${user.allIns} 局`], ['主动入池率', `${user.vpip}%`], ['加注局数', user.raises], ['最长连胜', `${user.bestStreak} 局`],
-    ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></div>}
+    {!mobile && user && <div className="arcade-stat-card"><header><Avatar user={user} size={36} /><b>{user.name}</b><button onClick={() => setSelected(null)} aria-label="收起战绩"><X size={17} /></button></header><dl>{statsFor(user).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></div>}
   </Sheet>;
 }
 
@@ -153,6 +171,7 @@ export function WalletPanel({ me, onClose, onChanged }) {
       : <form className="arcade-transfer-form" onSubmit={submit}>{review ? <div className="arcade-transfer-review"><Avatar user={selected} size={46} /><b>{selected.name}</b><span>{mode === 'mint' ? '发放' : '转账'}</span><strong>{num(value)}</strong><button type="button" className="arcade-text" disabled={busy} onClick={() => setReview(false)}><ArrowLeft size={14} />返回修改</button></div> : <>
         <People selected={selected} onSelect={setSelected} includeSelf={mode === 'mint' ? me : undefined} />
         <label>筹码数量<input aria-label="筹码数量" type="number" inputMode="numeric" min="1" max={mode === 'mint' ? 1000000000 : data?.wallet.balance || 0} step="1" required value={amount} onChange={event => setAmount(event.target.value)} /></label>
+        <div className="stake-presets">{(mode === 'mint' ? [[10000, '1万'], [50000, '5万'], [100000, '10万'], [200000, '20万']] : [[1000, '1,000'], [5000, '5,000'], [10000, '1万'], ...(data?.wallet.balance > 0 ? [[data.wallet.balance, '全部']] : [])]).map(([preset, label]) => <button type="button" key={label} className={value === preset ? 'selected' : ''} disabled={mode !== 'mint' && preset > (data?.wallet.balance || 0)} onClick={() => setAmount(String(preset))}>{label}</button>)}</div>
         <label>备注<input aria-label="转账备注" maxLength={80} value={note} onChange={event => setNote(event.target.value)} placeholder="选填" /></label>
       </>}<button className="arcade-primary panel-submit" disabled={!valid || busy}>{busy ? '正在处理…' : review ? `确认${mode === 'mint' ? '发放' : '转账'}` : '下一步'}<ArrowRight size={16} /></button></form>}
   </Sheet>;

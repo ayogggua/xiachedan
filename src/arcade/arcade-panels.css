@@ -28,6 +28,9 @@
 .arcade-sheet.wide {
   width: min(920px, 100%);
 }
+.arcade-sheet-grabber {
+  display: none;
+}
 .arcade-sheet > header {
   display: flex;
   align-items: center;
@@ -473,25 +476,178 @@
   color: #f6dc9c;
 }
 
-@media (max-width: 600px) {
+@keyframes arcade-sheet-up {
+  from { opacity: 0; transform: translateY(36px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 760px) {
   .arcade-sheet-backdrop {
-    padding: max(10px, var(--mobile-safe-top, env(safe-area-inset-top, 0px))) 10px max(10px, var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px)));
+    align-items: end;
+    justify-items: stretch;
+    padding: calc(14px + var(--mobile-safe-top, env(safe-area-inset-top, 0px))) 0 0;
+  }
+  .arcade-sheet,
+  .arcade-sheet.wide {
+    width: 100%;
+    max-height: calc(var(--app-height, 100dvh) - var(--mobile-safe-top, env(safe-area-inset-top, 0px)) - 14px);
+    border-radius: 20px 20px 0 0;
+    border-inline: 0;
+    border-bottom: 0;
+    animation: arcade-sheet-up 220ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .arcade-sheet-grabber {
+    display: block;
+    width: 38px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(226, 194, 122, 0.34);
+    margin: 9px auto 2px;
+    flex-shrink: 0;
+  }
+  .arcade-sheet > header {
+    padding: 8px 16px 12px;
+  }
+  .arcade-sheet header > button,
+  .arcade-stat-card header > button {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
   }
   .arcade-sheet-body {
-    padding: 16px;
+    padding: 14px 16px calc(20px + var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px)));
+    overscroll-behavior: contain;
   }
-  .arcade-stat-card dl {
-    grid-template-columns: repeat(2, 1fr);
+  .arcade-search {
+    min-height: 44px;
+    padding: 4px 12px;
   }
-  .arcade-ranking td,
-  .arcade-ranking th {
-    padding: 10px 8px;
+  .arcade-people-list {
+    max-height: 240px;
+    gap: 6px;
   }
-  .arcade-ranking td b {
-    max-width: 92px;
+  .arcade-people-list button {
+    min-height: 48px;
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+  .arcade-panel-tabs button {
+    min-height: 44px;
+    font-size: 13.5px;
+  }
+  .arcade-ranking-heading {
+    margin-bottom: 12px;
   }
   .arcade-ranking-heading > span {
     display: none;
+  }
+  .arcade-ranking-heading select {
+    width: 100%;
+    min-height: 42px;
+  }
+  .arcade-ranking-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .arcade-rank-card {
+    border: 1px solid rgba(241, 246, 243, 0.08);
+    border-radius: 12px;
+    background: #101815;
+    overflow: hidden;
+  }
+  .arcade-rank-card.is-me {
+    border-color: rgba(52, 211, 153, 0.42);
+    background: rgba(21, 71, 52, 0.26);
+  }
+  .arcade-rank-card.is-open {
+    border-color: rgba(202, 168, 96, 0.44);
+  }
+  .arcade-rank-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 62px;
+    padding: 10px 12px;
+    text-align: left;
+  }
+  .arcade-rank-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .arcade-rank-main b {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #f1f5f3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .arcade-rank-main b small {
+    flex-shrink: 0;
+    padding: 0 5px;
+    border-radius: 4px;
+    border: 1px solid rgba(52, 211, 153, 0.42);
+    background: rgba(20, 83, 60, 0.72);
+    color: #bbf7dc;
+    font-size: 9.5px;
+    font-weight: 600;
+  }
+  .arcade-rank-main > small {
+    font-size: 11px;
+    color: #86998f;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+  }
+  .arcade-rank-metric {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+  }
+  .arcade-rank-metric strong {
+    font: 700 14px/1.2 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .arcade-rank-metric small {
+    font-size: 10px;
+    color: #86998f;
+  }
+  .arcade-rank-chevron {
+    flex-shrink: 0;
+    color: #86998f;
+    transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .arcade-rank-card.is-open .arcade-rank-chevron {
+    transform: rotate(180deg);
+    color: #e2c27a;
+  }
+  .arcade-stat-card.inline {
+    margin: 0;
+    border: 0;
+    border-top: 1px solid rgba(202, 168, 96, 0.22);
+    border-radius: 0;
+    padding: 12px 14px 14px;
+    box-shadow: none;
+    animation: none;
+  }
+  .arcade-stat-card.inline dl {
+    margin-top: 0;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px 14px;
+  }
+  .arcade-stat-card.inline dd {
+    font-size: 14px;
   }
   .arcade-wallet-balance {
     padding: 16px;
@@ -501,6 +657,14 @@
   }
   .arcade-wallet-balance > div {
     flex-wrap: wrap;
+  }
+  .arcade-transfer-form > label input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .panel-submit {
+    min-height: 46px;
+    font-size: 14px !important;
   }
 }
 

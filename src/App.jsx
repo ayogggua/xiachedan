@@ -33,6 +33,7 @@ import HistorySearch, { SearchResult, SearchStatus, useMessageSearch } from './H
 import { previewText, readStorage } from './history';
 import { MobileHome, MobileTabs } from './mobile/MobileHome';
 import { mobileClient, chooseServer } from './mobile/session';
+import { isTouchMobile, syncThemeColor, useEdgeSwipeBack, useIsMobile, usePwaBackStack } from './mobile/ui';
 import ArcadeEntry from './ArcadeEntry';
 import ArcadeInvitation from './ArcadeInvitation';
 
@@ -248,6 +249,10 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(() => { const value = readStorage('linliao.sidebarWidth', 300); return value === 76 || (value >= 220 && value <= 440) ? value : 300; });
   const resizing = useRef(null);
   const appRef = useRef(null);
+  const sidebarRef = useRef(null);
+  const chatMainRef = useRef(null);
+  const scrollTouchY = useRef(null);
+  const isMobile = useIsMobile();
   const [readDetail, setReadDetail] = useState(null);
   const [profileCard, setProfileCard] = useState(null);
   const [draftTexts, setDraftTexts] = useState({});
@@ -347,18 +352,29 @@ export default function App() {
     return () => document.removeEventListener('pointerdown', dismiss, true);
   }, [showMembers]);
   useEffect(() => {
+    const lockGuard = event => { if (lockedRef.current) event.preventDefault(); };
     const back = event => {
-      if (lockedRef.current) { event.preventDefault(); return; }
+      if (event.defaultPrevented || lockedRef.current) return;
+      const topClosers = [[contextMenu, () => setContextMenu(null)], [profileCard, () => setProfileCard(null)], [readDetail, () => setReadDetail(null)], [reactingTo, () => setReactingTo(null)]];
+      const topHit = topClosers.find(([open]) => open);
+      if (topHit) { event.preventDefault(); topHit[1](); return; }
       const dialog = [...document.querySelectorAll('dialog[open]')].at(-1);
       if (dialog) { event.preventDefault(); dialog.dispatchEvent(new Event('cancel', { cancelable: true })); return; }
       if (document.querySelector('[role="menu"], .emoji-picker')) { event.preventDefault(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return; }
-      const closers = [[contextMenu, () => setContextMenu(null)], [profileCard, () => setProfileCard(null)], [readDetail, () => setReadDetail(null)], [reactingTo, () => setReactingTo(null)], [selection, () => setSelection(null)], [showMembers, () => setShowMembers(false)], [mobileChat, () => setMobileChat(false)], [mobileTab !== 'chats', () => setMobileTab('chats')]];
+      const closers = [[selection, () => setSelection(null)], [showMembers && panelView !== 'members', () => setPanelView('members')], [showMembers, () => setShowMembers(false)], [mobileChat, () => setMobileChat(false)], [mobileTab !== 'chats', () => setMobileTab('chats')]];
       const current = closers.find(([open]) => open);
       if (current) { event.preventDefault(); current[1](); }
     };
+    window.addEventListener('linliao:back', lockGuard, true);
     window.addEventListener('linliao:back', back);
-    return () => window.removeEventListener('linliao:back', back);
-  }, [contextMenu, profileCard, readDetail, reactingTo, selection, showMembers, mobileChat, mobileTab]);
+    return () => { window.removeEventListener('linliao:back', lockGuard, true); window.removeEventListener('linliao:back', back); };
+  }, [contextMenu, profileCard, readDetail, reactingTo, selection, showMembers, panelView, mobileChat, mobileTab]);
+  useEffect(() => {
+    syncThemeColor({ arcadeOpen: ['arcade', 'arcade-joined'].includes(modal), inChat: mobileChat });
+  }, [modal, mobileChat]);
+  const hasBackTarget = Boolean(modal || preview || removing || recalling || hiding || clearing || removingMessage || sharingCard || quoting || incomingShare || filePreview || mutingUser || openBundle || reminding || scheduleText !== null || chainEntry || forwarding || groupAction || switcher || editingFolder || historyFor || requestingFriend || removingFriend || contextMenu || profileCard || readDetail || reactingTo || selection || showMembers || mobileChat || mobileTab !== 'chats');
+  usePwaBackStack(hasBackTarget, () => { window.dispatchEvent(new Event('linliao:back', { cancelable: true })); });
+  useEdgeSwipeBack({ enabled: isMobile && mobileChat && !popoutRoom && !showMembers && !selection && !contextMenu && !profileCard && !readDetail && !preview && !modal, onBack: () => setMobileChat(false), appRef, chatRef: chatMainRef, sidebarRef });
   const replyFromNotification = useRef(() => {});
   const { privateMode, privacyRef, changePrivacy, windowActive } = useDesktopBridge({ notify, onPendingRoom: openRoom,
     onOpenRoom: roomId => { openRoom(roomId); setModal(null); setSearch(''); }, onReply: (roomId, text, userId) => replyFromNotification.current(roomId, text, userId) });
@@ -432,7 +448,7 @@ export default function App() {
   useEffect(() => {
     const id = state?.me?.id && pendingShareId();
     if (!id) return;
-    history.replaceState(null, '', location.pathname + location.hash);
+    history.replaceState(history.state, '', location.pathname + location.hash);
     takeShare(id).then(share => { if (share && (share.text || share.files.length)) setIncomingShare(share); else if (share) notify('没有可以发送的内容'); }).catch(() => notify('读取分享的内容失败'));
   }, [state?.me?.id]);
   useEffect(() => { if (state?.me?.id) syncPush({ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }).catch(() => {}); }, [state?.me?.id, mutedKey, privateMode]);
@@ -861,7 +877,7 @@ export default function App() {
       setRequestingFriend(user);
       return;
     }
-    try { const result = await api('rooms', { userId: user.id }); await refresh(); openRoom(result.id); setModal(null); setTimeout(() => document.querySelector('.composer textarea')?.focus(), 60); }
+    try { const result = await api('rooms', { userId: user.id }); await refresh(); openRoom(result.id); setModal(null); if (!isTouchMobile()) setTimeout(() => document.querySelector('.composer textarea')?.focus(), 60); }
     catch (error) { notify(error.message); }
   }
   // 资料卡贴着头像弹出：头像在右半边时卡片放在左侧。
@@ -871,7 +887,7 @@ export default function App() {
   }
   // 群聊头像和成员列表：单击看资料卡，可私聊时双击直接发起私聊；单击稍等一下，免得双击时卡片闪一下。键盘回车立即打开。
   // 私聊里已经在和对方说话：单击只看资料卡，不等待双击。
-  const profileClick = (user, disableDouble = room?.kind === 'direct') => disableDouble || !canDirectUser(user) ? { title: '查看资料', onClick: event => openProfile(user, event.currentTarget) } : ({
+  const profileClick = (user, disableDouble = room?.kind === 'direct') => disableDouble || !canDirectUser(user) || isTouchMobile() ? { title: '查看资料', onClick: event => openProfile(user, event.currentTarget) } : ({
     title: user.id === state.me.id ? '查看资料' : '单击查看资料，双击发消息',
     onClick: event => { if (event.detail > 1) return; const element = event.currentTarget; clearTimeout(avatarClick.current);
       avatarClick.current = setTimeout(() => openProfile(user, element), event.detail === 0 || user.id === state.me.id ? 0 : 220); },
@@ -924,14 +940,14 @@ export default function App() {
     if (conversations.find(room => room.id === id)?.markedUnread) conversationAction('mark-read', id, conversationScope);
     setSelected(id); setMobileChat(true); setReadDetail(null); setContextMenu(null); setPanelView('members'); setShowMembers(false);
   }
-  function showContextMenu(event, options, items, label) {
+  function showContextMenu(event, options, items, label, extra = null) {
     event.preventDefault(); event.stopPropagation();
     setContextMenu(null); setReadDetail(null);
     if (!items.length) return;
     if (window.desktop?.contextMenu) {
       window.desktop.contextMenu(options, action => items.find(item => item.id === action)?.action()).catch(error => notify(error.message));
     } else {
-      setContextMenu({ x: event.clientX, y: event.clientY, items, label });
+      setContextMenu({ x: event.clientX, y: event.clientY, items, label, ...(extra || {}) });
     }
   }
   // 标为已读：本机的已读位置推进到最新一条，不替别人发已读回执；标为未读只是给自己留个记号。
@@ -1043,7 +1059,7 @@ export default function App() {
       ...(canRecall ? [{ id: 'recall', label: '撤回消息', action: () => act('recall') }] : []),
       ...(!message.recalledAt ? [{ id: 'hide', label: '删除（仅自己）', action: () => act('hide') }] : []),
       ...(canRemove ? [{ id: 'remove', label: '删除消息（管理员）', action: () => act('remove') }] : []),
-    ], '消息操作');
+    ], '消息操作', canReact ? { quickReactions: { options: state.reactions, chosen: (message.reactions || []).filter(item => item.users.includes(state.me.id)).map(item => item.emoji), onPick: emoji => toggleReaction(message, emoji) } } : null);
   }
   // 阅后即焚消息的菜单只有撤回（自己的、在时限内）、删除（仅自己）和管理员删除：不能回复、引用、回应、转发、多选、复制、
   // 编辑、置顶、收藏、提醒、开话题，也不复制链接。服务端同样逐项拒绝。
@@ -1081,7 +1097,7 @@ export default function App() {
     const fromAddress = () => {
       const target = messageLink(location.href), invite = groupInviteLink(location.href);
       if (!target && !invite) return;
-      history.replaceState(null, '', location.pathname + location.search);
+      history.replaceState(history.state, '', location.pathname + location.search);
       if (target) latest.current?.openMessageLink(target); else latest.current?.joinGroup(invite);
     };
     const open = event => latest.current?.openMessageLink(event.detail);
@@ -1409,10 +1425,10 @@ export default function App() {
       {railButton(Settings2, update?.available ? '设置（有新版本）' : '设置', () => setModal('connection'), { dot: Boolean(update?.available) })}
       {railButton(LogOut, loggingOut ? '正在退出…' : '退出登录', logout, { disabled: loggingOut })}
     </nav>}
-    <aside className="sidebar glass" aria-label="会话列表" data-mobile-tab={mobileTab}>{resizer}
-      <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} friendIds={friendIds} friendRequests={friendRequests} canViewUserList={canViewUserList} notes={state.notes} connected={connected} onDirect={directMessage} onRequestFriend={setRequestingFriend} onRespondFriend={respondFriend} onAction={action => action === 'friendRequests' ? openContacts('requests') : setModal(action)} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
+    <aside ref={sidebarRef} className="sidebar glass" aria-label="会话列表" data-mobile-tab={mobileTab}>{resizer}
+      <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} friendIds={friendIds} friendRequests={friendRequests} canViewUserList={canViewUserList} notes={state.notes} connected={connected} onDirect={directMessage} onRequestFriend={setRequestingFriend} onRespondFriend={respondFriend} onAction={action => action === 'friendRequests' ? openContacts('requests') : action === 'activity' ? (setActivity(null), setModal('activity')) : setModal(action)} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
-      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{canViewUserList ? `${online.length} 人在线` : `${onlineFriendsCount} 位好友在线`}</p></div><span className="space-actions">{anyUnread && <IconButton icon={CheckCheck} label="全部标为已读" onClick={markAllRead} />}<button type="button" title={pendingFriendCount ? `通讯录（${pendingFriendCount} 条好友申请）` : '通讯录'} aria-label={pendingFriendCount ? `通讯录，${pendingFriendCount} 条好友申请` : '通讯录'} className="icon-button contacts-entry" onClick={() => openContacts(pendingFriendCount ? 'requests' : 'friends')}><BookUser size={17} strokeWidth={1.7} />{pendingFriendCount > 0 && <span className="contacts-badge" aria-hidden="true">{pendingFriendCount > 99 ? '99+' : pendingFriendCount}</span>}</button><IconButton icon={AtSign} label="提到我的" onClick={() => { setActivity(null); setModal('activity'); }} /><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /><ArcadeEntry className="arcade-launcher--mobile" onClick={() => setModal('arcade')} /></span></div>
+      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{canViewUserList ? `${online.length} 人在线` : `${onlineFriendsCount} 位好友在线`}</p></div><span className="space-actions">{anyUnread && <IconButton icon={CheckCheck} label="全部标为已读" onClick={markAllRead} />}<button type="button" title={pendingFriendCount ? `通讯录（${pendingFriendCount} 条好友申请）` : '通讯录'} aria-label={pendingFriendCount ? `通讯录，${pendingFriendCount} 条好友申请` : '通讯录'} className="icon-button contacts-entry" onClick={() => openContacts(pendingFriendCount ? 'requests' : 'friends')}><BookUser size={17} strokeWidth={1.7} />{pendingFriendCount > 0 && <span className="contacts-badge" aria-hidden="true">{pendingFriendCount > 99 ? '99+' : pendingFriendCount}</span>}</button><IconButton icon={AtSign} label="提到我的" onClick={() => { setActivity(null); setModal('activity'); }} /><IconButton icon={Bookmark} label="收藏" className="mobile-hide-action" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" className="mobile-hide-action" onClick={() => setModal('invite')} /><ArcadeEntry className="arcade-launcher--mobile" onClick={() => setModal('arcade')} /></span></div>
       {classic ? <div className="classic-search">{searchBox}<IconButton icon={CirclePlus} size={22} label="发起聊天、邀请同事" className="classic-plus" aria-haspopup="menu" onClick={openClassicMenu} /></div> : searchBox}
       {!compact && <div className="folder-bar"><div className="folder-tabs" role="tablist" aria-label="会话分组">{folderTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={tab.id === tabKey} className={tab.id === tabKey ? 'active' : ''} onClick={() => chooseFolderTab(tab.id)}>
         {tab.label}{tab.unread > 0 && <span className="folder-unread">{tab.unread > 99 ? '99+' : tab.unread}</span>}</button>)}</div>
@@ -1446,9 +1462,9 @@ export default function App() {
       {cloud && isAdmin && <button className="admin-entry" onClick={() => setModal('admin')}><ShieldCheck size={16} /><span>用户管理</span><ChevronRight size={14} /></button>}
       <div className="me-card"><button className="me-profile" title="修改昵称和头像" onClick={() => setModal('profile')}><Avatar user={state.me} size={30} /><span><b>{state.me.name}</b><small className={connected ? '' : 'warning'}>{connected ? cloud ? '已连接' : '局域网已连接' : '正在重新连接…'}</small></span></button><ArcadeEntry onClick={() => setModal('arcade')} /><IconButton icon={Settings2} label={update?.available ? '设置（有新版本）' : '设置'} className={update?.available ? 'has-update' : ''} onClick={() => setModal('connection')} /></div>
       <button type="button" className="sidebar-logout" disabled={loggingOut} onClick={logout}>{loggingOut ? <LoaderCircle className="spin" size={14} /> : <LogOut size={14} />}<span>{loggingOut ? '正在退出…' : '退出登录'}</span></button>
-      <MobileTabs tab={mobileTab} onChange={tab => { setMobileTab(tab); setMobileChat(false); }} unread={rooms.reduce((count, target) => count + (!target.muted && !target.hidden ? unread[target.id]?.count || 0 : 0), 0)} friendBadge={pendingFriendCount} />
+      <MobileTabs tab={mobileTab} onChange={tab => { setMobileTab(tab); setMobileChat(false); }} unread={unreadCount} friendBadge={pendingFriendCount} />
     </aside>
-    <main className="chat-main">
+    <main ref={chatMainRef} className="chat-main">
       {room ? <>
       <div className="conversation-body"><section className={`chat-column ${showReturn ? 'has-jump-back' : ''}`}>
         <header className="chat-toolbar" data-drag-region>
@@ -1469,7 +1485,17 @@ export default function App() {
           <IconButton icon={X} label="不再显示这条公告" size={14} onClick={() => setDismissedNotices(previous => ({ ...previous, [room.id]: room.announcement.updatedAt }))} />
         </div>}
         {!connected && !loggingOut && <div className="offline-pill glass" role="status"><WifiOff size={14} />正在重新连接，消息会在恢复后自动发送</div>}
-        <div className="message-scroll" ref={messageList} onScroll={onMessageScroll}><div className="message-list" ref={messageContent}>
+        <div className="message-scroll" ref={messageList} onScroll={onMessageScroll}
+          onTouchStart={event => { scrollTouchY.current = event.touches.length === 1 ? event.touches[0].clientY : null; }}
+          onTouchMove={event => {
+            if (scrollTouchY.current === null || event.touches.length !== 1) return;
+            if (Math.abs(event.touches[0].clientY - scrollTouchY.current) > 14) {
+              scrollTouchY.current = null;
+              if (document.activeElement?.closest?.('.composer')) document.activeElement.blur();
+            }
+          }}
+          onTouchEnd={() => { scrollTouchY.current = null; }}
+          onTouchCancel={() => { scrollTouchY.current = null; }}><div className="message-list" ref={messageContent}>
         {hasMore[selected] && <button className="load-older" onClick={loadOlder} disabled={loading}>{loading ? '正在加载…' : '查看更早的消息'}</button>}
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? '来大厅，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && (isOwner || isAdmin) && <button className="secondary-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}</div>}
         {!currentMessages.length && loading && <Skeleton kind="message" rows={6} label="正在加载消息…" />}
@@ -1600,7 +1626,7 @@ export default function App() {
           </div>) : <p className="inline-note">暂无发出的好友申请</p>}
         </section>
       </div> : <>
-        <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus aria-label="搜索用户" placeholder="搜索昵称、完整手机号或邮箱" value={contactQuery} onChange={event => setContactQuery(event.target.value)} />{contactQuery && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setContactQuery('')} />}</label>
+        <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus={!isTouchMobile()} aria-label="搜索用户" placeholder="搜索昵称、完整手机号或邮箱" value={contactQuery} onChange={event => setContactQuery(event.target.value)} />{contactQuery && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setContactQuery('')} />}</label>
         <div className="space-members">{contactQuery.trim()
           ? contactSearch.users.filter(user => user.id !== state.me.id).map(user => renderUserSearchRow(user))
           : contactGroups.map(([department, members]) => <section key={department} aria-label={department}><h4 className="contacts-group">{department}<small>{members.length}</small></h4>{members.map(user => memberRow(user, 32, false, true))}</section>)}
@@ -1677,7 +1703,7 @@ export default function App() {
       </div>}
     </Modal>}
     {modal === 'saved' && <Modal title="收藏" subtitle="只有你自己看得到。点一条可以回到原来的会话。" onClose={() => setModal(null)}>
-      {!saved.length ? <p className="inline-note">还没有收藏。在消息上点右键，选「收藏」。</p> : <div className="history-results saved-list">{saved.map(item => {
+      {!saved.length ? <p className="inline-note">{isTouchMobile() ? '还没有收藏。长按消息，选「收藏」。' : '还没有收藏。在消息上点右键，选「收藏」。'}</p> : <div className="history-results saved-list">{saved.map(item => {
         const target = rooms.find(candidate => candidate.id === item.message.roomId);
         return <div className="saved-row" key={item.message.id}><SearchResult message={item.message} term="" avatar={<Avatar user={userMap[item.message.senderId]} size={24} />}
           title={`${userMap[item.message.senderId]?.name || item.message.bot || '成员'}${target ? ` · ${target.name}` : ''}`} privateMode={privateMode} onJump={message => { setModal(null); jumpToMessage(message); }} />

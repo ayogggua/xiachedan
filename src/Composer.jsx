@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile, Crop, EyeOff, Flame } from 'lucide-react';
+import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile, Crop, EyeOff, Flame, Image as ImageIcon, Camera, MessageSquareText, BarChart3, ListOrdered, Clock, ChevronLeft } from 'lucide-react';
 import { api, upload, uid, formatSize } from './api';
 import { Avatar, IconButton, PrivatePreview, ContextMenu, BotTag, LazyModal, LazySlot } from './components';
 import { lazyModule } from './ErrorBoundary';
@@ -10,6 +10,7 @@ import { isSendKey, modKey } from './chatPrefs';
 import { htmlToMarkdown } from './htmlToMarkdown';
 import { compressImage } from './imageTools';
 import { emojiFor, matchShortcodes } from './emojiShortcodes';
+import { useIsMobile } from './mobile/ui';
 
 const EmojiPicker = lazyModule(() => import('./EmojiPicker'));
 const ImageEditor = lazyModule(() => import('./ImageEditor'));
@@ -18,13 +19,16 @@ const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
 export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onCreateChain, burnAvailable = false, burnMode = 0, onBurn, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft, injectShare, placeholder, phrases = [] }) {
   const typedAt = useRef(0);
+  const mobile = useIsMobile();
   const [attachMenu, setAttachMenu] = useState(null);
+  const [attachTray, setAttachTray] = useState(null);
   const [picker, setPicker] = useState(null);
   const [slash, setSlash] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const lastCaret = useRef(null);
   // 发图默认压缩大图，勾选「原图」时按原文件上传；选择记在本机。
   const [sendOriginal, setSendOriginal] = useState(() => { try { return localStorage.getItem('linliao.sendOriginal') === '1'; } catch { return false; } });
   const [editingImage, setEditingImage] = useState(null);
@@ -238,12 +242,21 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     setText(value.slice(0, start) + mark + value.slice(start, end) + mark + value.slice(end), [start + mark.length, end + mark.length]);
     return true;
   }
-  // 在光标处插入表情，编辑和普通输入都适用。
-  function insertText(value) {
+  // 在光标处插入表情，编辑和普通输入都适用；移动端表情抽屉打开时不抢焦点，避免弹出软键盘盖住面板。
+  function insertText(value, { keepFocus = true } = {}) {
     const node = textarea.current;
     const current = editing ? editText : draft.text;
-    const start = node?.selectionStart ?? current.length, end = node?.selectionEnd ?? current.length;
-    setText(current.slice(0, start) + value + current.slice(end), [start + value.length, start + value.length]);
+    const caret = !keepFocus && lastCaret.current ? lastCaret.current : null;
+    const start = Math.min(current.length, caret ? caret[0] : (node?.selectionStart ?? current.length));
+    const end = Math.min(current.length, caret ? caret[1] : (node?.selectionEnd ?? current.length));
+    const nextPos = start + value.length;
+    if (keepFocus) {
+      setText(current.slice(0, start) + value + current.slice(end), [nextPos, nextPos]);
+    } else {
+      lastCaret.current = [nextPos, nextPos];
+      const next = current.slice(0, start) + value + current.slice(end);
+      if (editing) setEditText(next); else update(room.id, state => ({ ...state, text: next }));
+    }
   }
   async function saveEdit() {
     const text = editText.trim();
@@ -265,7 +278,8 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     // 只保留正文里仍写着「@名字」的提及。
     const nameOf = id => id === '*' ? EVERYONE.name : members.find(user => user.id === id)?.name;
     const mentions = (snapshot.mentions || []).filter(id => nameOf(id) && snapshot.text.includes(`@${nameOf(id)}`));
-    textarea.current?.focus({ preventScroll: true });
+    if (!mobile || (!emojiOpen && !attachTray)) textarea.current?.focus({ preventScroll: true });
+    lastCaret.current = null;
     // 交给发件箱发送，输入框立即清空；失败的消息留在会话底部，可重试或删除。
     const spoilerIds = snapshot.files.filter(file => file.spoiler).map(file => file.attachment.id);
     onQueue({ roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId: uid(), ...(replyTo ? { replyTo, ...(reply.quote ? { replyQuote: reply.quote } : {}) } : {}), ...(mentions.length ? { mentions } : {}), ...(spoilerIds.length ? { spoilerIds } : {}), ...(burnSeconds ? { burn: burnSeconds } : {}) },
@@ -296,7 +310,27 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     setEditText(editing.text);
     requestAnimationFrame(() => { const node = textarea.current; node?.focus({ preventScroll: true }); node?.setSelectionRange(node.value.length, node.value.length); });
   }, [editing?.id]);
-  useEffect(() => { setPicker(null); setSlash(null); setShortcode(null); }, [room.id]);
+  useEffect(() => { setPicker(null); setSlash(null); setShortcode(null); setAttachTray(null); setEmojiOpen(false); lastCaret.current = null; }, [room.id]);
+  useEffect(() => { if (!mobile) setAttachTray(null); }, [mobile]);
+  useEffect(() => {
+    if (!mobile || (!emojiOpen && !attachTray)) return;
+    const back = event => {
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      if (attachTray === 'phrases') setAttachTray('grid');
+      else { setAttachTray(null); setEmojiOpen(false); }
+    };
+    window.addEventListener('linliao:back', back, true);
+    return () => window.removeEventListener('linliao:back', back, true);
+  }, [mobile, emojiOpen, attachTray]);
+  useEffect(() => {
+    if (!mobile || !attachTray) return;
+    const dismiss = event => { if (!event.target.closest?.('.composer-area')) setAttachTray(null); };
+    const key = event => { if (event.key === 'Escape') { event.preventDefault(); setAttachTray(null); } };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key, true); };
+  }, [mobile, attachTray]);
   // 撤回后「重新编辑」：原文放回对应会话的输入框，已有草稿时接在后面。
   useEffect(() => {
     if (!injectDraft) return;
@@ -317,7 +351,19 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   const onDraftRef = useRef(onDraft);
   onDraftRef.current = onDraft;
   useEffect(() => { const id = room.id; return () => onDraftRef.current?.(id, draftsRef.current[id]?.text.trim() || ''); }, [room.id]);
-  return <div className="composer-area">
+  const trayActive = mobile && (emojiOpen || Boolean(attachTray));
+  const runAttachAction = fn => { setAttachTray(null); fn?.(); };
+  const mobileAttachItems = [
+    { id: 'media', label: '相册', icon: ImageIcon, action: () => runAttachAction(() => input.current.click()) },
+    { id: 'camera', label: '拍照', icon: Camera, action: () => runAttachAction(() => cameraInput.current.click()) },
+    { id: 'file', label: '文件', icon: FileText, action: () => runAttachAction(() => fileInput.current.click()) },
+    { id: 'phrases', label: '常用语', icon: MessageSquareText, action: () => setAttachTray('phrases') },
+    ...(onCreatePoll ? [{ id: 'poll', label: '投票', icon: BarChart3, action: () => runAttachAction(onCreatePoll) }] : []),
+    ...(onCreateChain ? [{ id: 'chain', label: '接龙', icon: ListOrdered, action: () => runAttachAction(onCreateChain) }] : []),
+    ...(burnAvailable && !editing ? [{ id: 'burn', label: burnSeconds ? '关闭即焚' : '阅后即焚', icon: Flame, active: Boolean(burnSeconds), action: () => runAttachAction(() => setBurn(burnSeconds ? 0 : 5)) }] : []),
+    ...(onSchedule ? [{ id: 'schedule', label: '定时发送', icon: Clock, action: () => runAttachAction(() => onSchedule(draft.text)) }] : []),
+  ];
+  return <div className={`composer-area ${trayActive ? 'tray-open' : ''}`}>
     {slashOptions.length > 0 && <div className="mention-picker slash-picker" role="listbox" id="slash-picker" aria-label="插入格式">
       {slashOptions.map((item, index) => <button type="button" role="option" id={`slash-option-${index}`} key={item.id} aria-selected={index === slash.index} className={index === slash.index ? 'active' : ''}
         onPointerDown={event => { event.preventDefault(); chooseFormat(item); }}><span>{item.label}</span>{item.sample && <code>{item.sample}</code>}</button>)}
@@ -351,9 +397,17 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     </div>}
     {editingImage && <LazyModal title="编辑图片" onClose={() => setEditingImage(null)}><ImageEditor file={editingImage.file} onClose={() => setEditingImage(null)} onDone={file => { const item = editingImage; setEditingImage(null); sendVersion({ ...item, edited: true }, room.id, file); }} /></LazyModal>}
     <div className="composer-row">
-    {/* 附件统一收进回形针菜单：图片或视频、文件 */}
-    <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
-      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (3 + matchMedia('(pointer: coarse)').matches + Boolean(onCreatePoll) + Boolean(onCreateChain) + Boolean(burnAvailable && !editing) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
+    {/* 附件统一收进回形针菜单：桌面端弹菜单，移动端展开底部工具面板 */}
+    <button type="button" className={`round-button glass attach-button ${attachTray ? 'selected' : ''}`} aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup={mobile ? 'dialog' : 'menu'} aria-expanded={Boolean(attachMenu || attachTray)} disabled={sending || !connected}
+      onClick={event => {
+        if (mobile) {
+          if (textarea.current) lastCaret.current = [textarea.current.selectionStart, textarea.current.selectionEnd];
+          textarea.current?.blur();
+          setEmojiOpen(false);
+          setAttachTray(prev => prev ? null : 'grid');
+          return;
+        }
+        const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (3 + matchMedia('(pointer: coarse)').matches + Boolean(onCreatePoll) + Boolean(onCreateChain) + Boolean(burnAvailable && !editing) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
         { id: 'media', label: '图片或视频', action: () => input.current.click() },
         ...(matchMedia('(pointer: coarse)').matches ? [{ id: 'camera', label: '拍照', action: () => cameraInput.current.click() }] : []),
         { id: 'file', label: '文件（最大 100 MB）', action: () => fileInput.current.click() },
@@ -365,8 +419,8 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
         ...(burnAvailable && !editing ? [{ id: 'burn', label: burnSeconds ? '关闭阅后即焚' : '阅后即焚', action: () => setBurn(burnSeconds ? 0 : 5) }] : []),
         ...(onSchedule ? [{ id: 'schedule', label: '定时发送…', action: () => onSchedule(draft.text) }] : []),
       ] }); }}><Paperclip size={19} strokeWidth={1.7} /></button>
-    {attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
-    {emojiOpen && <LazySlot fallback={<div className="emoji-picker" role="dialog" aria-label="选择表情"><p className="sticker-empty">正在加载表情…</p></div>}
+    {!mobile && attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
+    {!mobile && emojiOpen && <LazySlot fallback={<div className="emoji-picker" role="dialog" aria-label="选择表情"><p className="sticker-empty">正在加载表情…</p></div>}
       errorFallback={retry => <div className="emoji-picker" role="dialog" aria-label="选择表情"><div className="inline-error-row" role="alert"><p className="form-error">表情面板加载失败</p><button type="button" className="secondary-button" onClick={retry}>重试</button><button type="button" className="text-button" onClick={() => setEmojiOpen(false)}>关闭</button></div></div>}>
       <EmojiPicker onPick={insertText} onSticker={editing ? undefined : sendSticker} notify={notify} onClose={() => setEmojiOpen(false)} />
     </LazySlot>}
@@ -375,6 +429,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
       <textarea ref={textarea} aria-label="消息内容" placeholder={burnSeconds ? `发阅后即焚消息给 ${room.name}` : placeholder || `发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
         aria-autocomplete="list" aria-controls={slashOptions.length ? 'slash-picker' : 'mention-picker'} aria-expanded={Boolean(slashOptions.length || (picker && candidates.length))}
         aria-activedescendant={slashOptions.length ? `slash-option-${slash.index}` : picker && candidates.length ? `mention-option-${picker.index}` : undefined}
+        onFocus={() => { if (mobile) { setEmojiOpen(false); setAttachTray(null); } }}
         onChange={event => {
           // 输入完整的「:名字:」直接换成表情。
           const node = event.target, typed = node.value.slice(0, node.selectionStart).match(/(?:^|[^a-z0-9:/]):([a-z0-9_+-]{1,30}):$/i);
@@ -384,12 +439,13 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
             setText(node.value.slice(0, start) + emoji + node.value.slice(node.selectionStart), [start + emoji.length, start + emoji.length]);
             return;
           }
+          lastCaret.current = [event.target.selectionStart, event.target.selectionEnd];
           detectSlash(event.target); detectShortcode(event.target);
           if (editing) { setEditText(event.target.value); return; }
           update(room.id, state => ({ ...state, text: event.target.value })); detectMention(event.target);
           // 有内容时每 3 秒最多告诉别人一次「正在输入」。
           if (event.target.value.trim() && Date.now() - typedAt.current > 3000) { typedAt.current = Date.now(); onTyping?.(room.id); }
-        }} onSelect={event => { detectMention(event.currentTarget); detectSlash(event.currentTarget); detectShortcode(event.currentTarget); }} onBlur={() => { setPicker(null); setSlash(null); setShortcode(null); }}
+        }} onSelect={event => { lastCaret.current = [event.currentTarget.selectionStart, event.currentTarget.selectionEnd]; detectMention(event.currentTarget); detectSlash(event.currentTarget); detectShortcode(event.currentTarget); }} onBlur={event => { lastCaret.current = [event.currentTarget.selectionStart, event.currentTarget.selectionEnd]; setPicker(null); setSlash(null); setShortcode(null); }}
         onPaste={event => {
           if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); return; }
           // 从网页、文档复制的带格式内容转成 Markdown 再粘贴；没有格式时照常粘贴纯文本。
@@ -420,12 +476,36 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
           // Enter 发送模式下，触屏设备和没闭合的 ``` 代码块里回车是换行；⌘Enter 发送模式下回车本来就是换行。
           if (isSendKey(event, sendKey) && !(sendKey === 'enter' && (matchMedia('(pointer: coarse)').matches || insideCodeFence(event.currentTarget.value, event.currentTarget.selectionStart)))) { event.preventDefault(); send(); }
         }} />
-      <IconButton icon={Smile} label="表情" className={`emoji-button ${emojiOpen ? 'selected' : ''}`} aria-expanded={emojiOpen} disabled={sending} onClick={() => setEmojiOpen(value => !value)} />
+      <IconButton icon={Smile} label="表情" className={`emoji-button ${emojiOpen ? 'selected' : ''}`} aria-expanded={emojiOpen} disabled={sending} onClick={() => {
+        if (mobile) {
+          if (textarea.current) lastCaret.current = [textarea.current.selectionStart, textarea.current.selectionEnd];
+          textarea.current?.blur();
+          setAttachTray(null);
+        }
+        setEmojiOpen(value => !value);
+      }} />
     </div>
     <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? `${sendKey === 'enter' ? 'Enter' : `${modKey} Enter`} 保存 · Esc 取消` : `${sendKey === 'enter' ? 'Enter 发送 · Shift + Enter 换行' : `${modKey} Enter 发送 · Enter 换行`} · 输入 / 插入格式，支持 Markdown`}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
     <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     </div>
+    {mobile && emojiOpen && <div className="composer-tray emoji-tray">
+      <LazySlot fallback={<div className="emoji-picker docked" role="dialog" aria-label="选择表情"><p className="sticker-empty">正在加载表情…</p></div>}
+        errorFallback={retry => <div className="emoji-picker docked" role="dialog" aria-label="选择表情"><div className="inline-error-row" role="alert"><p className="form-error">表情面板加载失败</p><button type="button" className="secondary-button" onClick={retry}>重试</button><button type="button" className="text-button" onClick={() => setEmojiOpen(false)}>关闭</button></div></div>}>
+        <EmojiPicker docked onPick={emoji => insertText(emoji, { keepFocus: false })} onSticker={editing ? undefined : sendSticker} notify={notify} onClose={() => setEmojiOpen(false)} />
+      </LazySlot>
+    </div>}
+    {mobile && attachTray && <div className="composer-tray attach-tray" role="dialog" aria-label={attachTray === 'phrases' ? '常用语' : '更多工具'}>
+      {attachTray === 'phrases' ? <div className="attach-phrases">
+        <div className="attach-phrases-head"><button type="button" className="text-button" onClick={() => setAttachTray('grid')}><ChevronLeft size={16} />返回</button><b>常用语</b></div>
+        {phrases.length ? <div className="attach-phrases-list">{phrases.map((text, index) => <button key={index} type="button" onClick={() => { insertText(text, { keepFocus: false }); setAttachTray(null); }}>{text}</button>)}</div>
+          : <p className="sticker-empty">还没有常用语，可在「设置 → 聊天」中添加。</p>}
+      </div> : <div className="attach-grid">
+        {mobileAttachItems.map(item => { const Icon = item.icon; return <button key={item.id} type="button" className={item.active ? 'active' : undefined} onClick={item.action}>
+          <span className="attach-tile-icon"><Icon size={22} strokeWidth={1.7} /></span><span>{item.label}</span>
+        </button>; })}
+      </div>}
+    </div>}
   </div>;
 }

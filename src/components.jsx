@@ -14,6 +14,7 @@ import { attachmentLabel } from '../shared/preview.js';
 import { MediaAccessContext } from './mobile/MediaAccessContext';
 import { previewKind } from './FilePreview';
 import { haptic } from './chatPrefs';
+import { useIsMobile } from './mobile/ui';
 
 export { PRESETS } from '../shared/avatars.js';
 const avatarIcons = { cat: Cat, bird: Bird, rabbit: Rabbit, fish: Fish, coffee: Coffee, mountain: Mountain, planet: Orbit, sprout: Sprout, bot: Bot };
@@ -51,7 +52,7 @@ export function Modal({ title, subtitle, children, onClose, wide = false, classN
     return () => old?.focus?.();
   }, []);
   return <dialog ref={ref} aria-labelledby={titleId} className={`modal ${wide ? 'wide' : ''} ${className}`} onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose(); }} onClick={event => { if (event.target === ref.current) onClose(); }}>
-    <div className="modal-content"><div className="modal-heading"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton icon={X} label="关闭" onClick={onClose} /></div>{children}</div>
+    <div className="modal-content"><span className="sheet-grabber modal-grabber" aria-hidden="true" /><div className="modal-heading"><div><h2 id={titleId}>{title}</h2>{subtitle && <p>{subtitle}</p>}</div><IconButton icon={X} label="关闭" onClick={onClose} /></div>{children}</div>
   </dialog>;
 }
 
@@ -714,9 +715,13 @@ export function OutboxMessage({ item, avatarColumn, onRetry, onDiscard }) {
 
 // 菜单项只认「菜单打开之后、在菜单里按下过」的点击：触屏长按弹出菜单时第一项正好在手指下，松手时浏览器补发的那次点击不能算数。
 // 键盘（回车、空格）和读屏触发的点击 detail 为 0，照常执行；鼠标点菜单项之前必然先在菜单里按下。
+const DANGER_MENU_ID = /^(recall|hide|remove|clear|disable|remove-lobby)$/;
 export function ContextMenu({ menu, onClose }) {
   const ref = useRef();
   const armed = useRef(false);
+  const mobile = useIsMobile();
+  const portal = useTopLayerPortal(mobile);
+  const [reactExpanded, setReactExpanded] = useState(false);
   const smallScreen = matchMedia('(max-width: 760px)').matches;
   const menuWidth = smallScreen ? 220 : 152;
   const viewportHeight = window.visualViewport?.height || innerHeight;
@@ -731,13 +736,63 @@ export function ContextMenu({ menu, onClose }) {
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
       items[next]?.focus();
     };
-    document.addEventListener('pointerdown', dismiss);
+    if (!mobile) document.addEventListener('pointerdown', dismiss);
     document.addEventListener('keydown', key);
-    window.addEventListener('blur', onClose);
-    window.addEventListener('resize', onClose);
-    document.addEventListener('scroll', onClose, true);
-    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); document.removeEventListener('scroll', onClose, true); };
-  }, [onClose]);
+    if (!mobile) {
+      window.addEventListener('blur', onClose);
+      window.addEventListener('resize', onClose);
+      document.addEventListener('scroll', onClose, true);
+    }
+    return () => {
+      if (!mobile) document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', key);
+      if (!mobile) {
+        window.removeEventListener('blur', onClose);
+        window.removeEventListener('resize', onClose);
+        document.removeEventListener('scroll', onClose, true);
+      }
+    };
+  }, [onClose, mobile]);
+  if (mobile) {
+    const qr = menu.quickReactions;
+    const usage = qr ? readStorage('linliao.reactionUse', {}) : {};
+    const frequent = qr ? [...new Set([...Object.keys(usage).sort((a, b) => usage[b] - usage[a]), ...qr.options])].slice(0, 6) : [];
+    const pickReaction = emoji => {
+      if (!qr) return;
+      writeStorage('linliao.reactionUse', JSON.stringify({ ...usage, [emoji]: (usage[emoji] || 0) + 1 }));
+      onClose();
+      qr.onPick(emoji);
+    };
+    const items = qr ? menu.items.filter(item => item.id !== 'react') : menu.items;
+    const normalItems = items.filter(item => !item.danger && !DANGER_MENU_ID.test(item.id));
+    const dangerItems = items.filter(item => item.danger || DANGER_MENU_ID.test(item.id));
+    const renderBtn = (item, isDanger) => <button key={item.id} type="button" role="menuitem" className={isDanger ? 'danger' : undefined}
+      onClick={event => { if (event.detail !== 0 && !armed.current) return; onClose(); item.action(); }}>{item.label}</button>;
+    return createPortal(<div className="action-sheet-backdrop" onPointerDown={() => { armed.current = true; }}
+      onClick={event => { if (event.target === event.currentTarget && (event.detail === 0 || armed.current)) onClose(); }}
+      onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
+      <div ref={ref} role="menu" aria-label={menu.label} className="action-sheet" onPointerDown={() => { armed.current = true; }}>
+        <span className="sheet-grabber" aria-hidden="true" />
+        {qr && <div className="action-sheet-reactions" role="group" aria-label="快捷回应">
+          <div className="action-sheet-reactions-row">
+            {frequent.map(emoji => <button type="button" key={emoji} aria-label={`回应 ${emoji}`} aria-pressed={qr.chosen.includes(emoji)}
+              className={qr.chosen.includes(emoji) ? 'chosen' : ''} onClick={event => { if (event.detail !== 0 && !armed.current) return; pickReaction(emoji); }}>{emoji}</button>)}
+            <button type="button" className={`reaction-more ${reactExpanded ? 'active' : ''}`} aria-label={reactExpanded ? '收起更多表情' : '更多表情'} aria-expanded={reactExpanded}
+              onClick={event => { if (event.detail !== 0 && !armed.current) return; setReactExpanded(value => !value); }}><SmilePlus size={18} /></button>
+          </div>
+          {reactExpanded && <div className="action-sheet-emoji-all">
+            {EMOJI_GROUPS.map(([name, list]) => <React.Fragment key={name}><h4>{name}</h4><div className="reaction-grid">{list.map(emoji => <button type="button" key={emoji} aria-label={`回应 ${emoji}`} aria-pressed={qr.chosen.includes(emoji)}
+              className={qr.chosen.includes(emoji) ? 'chosen' : ''} onClick={() => pickReaction(emoji)}>{emoji}</button>)}</div></React.Fragment>)}
+          </div>}
+        </div>}
+        <div className="action-sheet-list">
+          {normalItems.length > 0 && <div className="action-sheet-group">{normalItems.map(item => renderBtn(item, false))}</div>}
+          {dangerItems.length > 0 && <div className="action-sheet-group action-sheet-danger-group">{dangerItems.map(item => renderBtn(item, true))}</div>}
+        </div>
+        <button type="button" className="action-sheet-cancel" onClick={onClose}>取消</button>
+      </div>
+    </div>, portal);
+  }
   return <div ref={ref} role="menu" aria-label={menu.label} className="message-context-menu" onPointerDown={() => { armed.current = true; }} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }} style={{ left: Math.max(8, Math.min(menu.x, innerWidth - menuWidth - 8)), top: Math.max(8, Math.min(menu.y, viewportHeight - menu.items.length * (smallScreen ? 44 : 36) - 16)), maxHeight: viewportHeight - 16, overflowY: 'auto' }}>{menu.items.map((item, index) => <button key={item.id} autoFocus={index === 0} role="menuitem" onClick={event => { if (event.detail !== 0 && !armed.current) return; onClose(); item.action(); }}>{item.label}</button>)}</div>;
 }
 
@@ -758,6 +813,7 @@ function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu
 }
 
 export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onAddFriend, onAcceptFriend, onCancelFriendRequest, onRemoveFriend, friendRelation, onEdit, onClose, onNudge, onShare, onSetStatus, onSetDepartment, groupActions = [], groupNickname }) {
+  const mobile = useIsMobile();
   const [department, setDepartment] = useState(null);
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
@@ -769,25 +825,26 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     try { await onSaveNote(draftNote); setEditingNote(false); } catch {} finally { setSavingNote(false); }
   };
   const [top, setTop] = useState(anchor.y);
-  useLayoutEffect(() => { const height = ref.current?.offsetHeight || 0; setTop(Math.max(8, Math.min(anchor.y, innerHeight - height - 8))); }, [anchor.y]);
+  useLayoutEffect(() => { if (mobile) return; const height = ref.current?.offsetHeight || 0; setTop(Math.max(8, Math.min(anchor.y, innerHeight - height - 8))); }, [anchor.y, mobile]);
   useEffect(() => {
-    ref.current?.focus();
+    if (!mobile) ref.current?.focus();
     const dismiss = event => { if (!ref.current?.contains(event.target)) onClose(); };
     // 在弹窗里打开时，Esc 只关资料卡，不连带关掉弹窗。
     const key = event => {
       if (event.key !== 'Escape' || (ref.current?.contains(event.target) && event.target.tagName === 'INPUT')) return;
       event.preventDefault(); event.stopPropagation(); onClose();
     };
-    document.addEventListener('pointerdown', dismiss);
+    if (!mobile) document.addEventListener('pointerdown', dismiss);
     document.addEventListener('keydown', key, true);
-    window.addEventListener('resize', onClose);
-    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key, true); window.removeEventListener('resize', onClose); };
-  }, [onClose]);
+    if (!mobile) window.addEventListener('resize', onClose);
+    return () => { if (!mobile) document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key, true); if (!mobile) window.removeEventListener('resize', onClose); };
+  }, [onClose, mobile]);
   const showPresence = !user.removed && !user.bot && (self || friendRelation === 'friend' || Boolean(user.online || user.lastSeen));
   const status = user.bot ? botStatusText(user) : user.removed ? '已离开空间' : showPresence ? (user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线') : '';
   const footerActions = [...groupActions, ...(!self && !user.bot && !user.removed && friendRelation === 'friend' && onRemoveFriend ? [{ label: '删除好友', danger: true, action: onRemoveFriend }] : [])];
-  return <div ref={ref} role="dialog" aria-label={`${user.name}的资料`} tabIndex={-1} className="profile-card"
-    style={{ left: Math.max(8, Math.min(anchor.x, innerWidth - 268)), top }}>
+  const card = <div ref={ref} role="dialog" aria-label={`${user.name}的资料`} tabIndex={-1} className={`profile-card ${mobile ? 'mobile-sheet' : ''}`}
+    style={mobile ? undefined : { left: Math.max(8, Math.min(anchor.x, innerWidth - 268)), top }}>
+    {mobile && <><span className="sheet-grabber" aria-hidden="true" /><IconButton icon={X} label="关闭" className="mobile-sheet-close" onClick={onClose} /></>}
     <Avatar user={user} size={64} online={showPresence ? user.online : undefined} />
     <h3 style={{ color: nameColor(user.id, user) }}>{user.name}{self && <small className="me-tag">我</small>}{user.bot && <BotTag />}</h3>
     {groupNickname && <p className="profile-status">群昵称：{groupNickname}</p>}
@@ -824,26 +881,31 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     {onShare && !user.removed && <button type="button" className="secondary-button" onClick={onShare}><Contact size={15} />推荐给别人</button>}
     {footerActions.length > 0 && <div className="profile-group-actions">{footerActions.map(item => <button type="button" key={item.label} className={`text-button ${item.danger ? 'danger-text' : ''}`} onClick={item.action}>{item.label}</button>)}</div>}
   </div>;
+  return mobile ? <div className="mobile-sheet-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>{card}</div> : card;
 }
 
 export function ReadDetail({ anchor, message, members, onClose, onOpenProfile }) {
   const ref = useRef();
+  const mobile = useIsMobile();
+  const portal = useTopLayerPortal(mobile);
   useEffect(() => {
-    ref.current?.focus();
+    if (!mobile) ref.current?.focus();
     // 点已读状态按钮由按钮自身切换开合，这里不重复关闭。
     const dismiss = event => { if (!ref.current?.contains(event.target) && !event.target.closest?.('.message-read-status')) onClose(); };
     const key = event => { if (event.key === 'Escape') onClose(); };
-    document.addEventListener('pointerdown', dismiss);
+    if (!mobile) document.addEventListener('pointerdown', dismiss);
     document.addEventListener('keydown', key);
-    window.addEventListener('resize', onClose);
-    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('resize', onClose); };
-  }, [onClose]);
+    if (!mobile) window.addEventListener('resize', onClose);
+    return () => { if (!mobile) document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); if (!mobile) window.removeEventListener('resize', onClose); };
+  }, [onClose, mobile]);
   const read = members.filter(user => message.readBy?.includes(user.id));
   const unread = members.filter(user => !message.readBy?.includes(user.id));
-  const list = users => users.map(user => <li key={user.id}><button type="button" title="查看资料" onClick={event => onOpenProfile?.(user, event.currentTarget)}><Avatar user={user} size={20} /><span>{user.name}</span></button></li>);
-  return <div ref={ref} role="dialog" aria-label="已读详情" tabIndex={-1} className="read-detail"
-    style={{ left: Math.max(8, Math.min(anchor.x - 240, innerWidth - 248)), bottom: Math.max(8, innerHeight - anchor.y + 6) }}>
+  const list = users => users.map(user => <li key={user.id}><button type="button" title="查看资料" onClick={event => onOpenProfile?.(user, event.currentTarget)}><Avatar user={user} size={mobile ? 28 : 20} /><span>{user.name}</span></button></li>);
+  const content = <div ref={ref} role="dialog" aria-label="已读详情" tabIndex={-1} className={`read-detail ${mobile ? 'mobile-sheet' : ''}`}
+    style={mobile ? undefined : { left: Math.max(8, Math.min(anchor.x - 240, innerWidth - 248)), bottom: Math.max(8, innerHeight - anchor.y + 6) }}>
+    {mobile && <><span className="sheet-grabber" aria-hidden="true" /><div className="mobile-sheet-header"><h3>已读详情</h3><IconButton icon={X} label="关闭" onClick={onClose} /></div></>}
     <section><h4>已读<small>{read.length}</small></h4>{read.length ? <ul>{list(read)}</ul> : <p>还没有人读</p>}</section>
     <section><h4>未读<small>{unread.length}</small></h4>{unread.length ? <ul>{list(unread)}</ul> : <p>全员已读</p>}</section>
   </div>;
+  return mobile ? createPortal(<div className="mobile-sheet-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>{content}</div>, portal) : content;
 }

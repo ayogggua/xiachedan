@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { MessageCircle, Users, UserRound, Search, ChevronRight, Settings2, Bookmark, UserPlus, UserCheck, ShieldCheck, Server, LogOut } from 'lucide-react';
+import { MessageCircle, Users, UserRound, Search, ChevronRight, Settings2, Bookmark, UserPlus, UserCheck, ShieldCheck, Server, LogOut, AtSign, Smile, X } from 'lucide-react';
 import { ArcadeIcon } from '../ArcadeEntry';
-import { Avatar, BotTag, botStatusText } from '../components';
+import { Avatar, BotTag, botStatusText, activeStatus, IconButton } from '../components';
 import { mobileClient, chooseServer } from './session';
 import useUserSearch from '../useUserSearch';
 
@@ -55,7 +55,7 @@ export function MobileHome({ tab, me, users, friendIds = [], friendRequests = { 
       </div>;
     };
     return <section className="mobile-home mobile-contacts"><header><h1>通讯录</h1><button aria-label="邀请同事" onClick={() => onAction('invite')}><UserPlus size={22} /></button></header>
-      <label className="mobile-contact-search"><Search size={17} /><input type="search" aria-label="搜索成员" placeholder="搜索昵称、完整手机号或邮箱" value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <label className="mobile-contact-search"><Search size={17} /><input type="search" aria-label="搜索成员" placeholder="搜索昵称、完整手机号或邮箱" value={query} onChange={event => setQuery(event.target.value)} />{query && <IconButton icon={X} label="清空搜索" size={16} onClick={() => setQuery('')} />}</label>
       {canViewUserList && !searching && <div className="segmented-control mobile-contact-tabs" role="tablist" aria-label="通讯录视图">
         <button type="button" role="tab" aria-selected={activeView === 'friends'} className={activeView === 'friends' ? 'active' : ''} onClick={() => setView('friends')}>好友</button>
         <button type="button" role="tab" aria-selected={activeView === 'all'} className={activeView === 'all' ? 'active' : ''} onClick={() => setView('all')}>用户列表</button>
@@ -70,7 +70,11 @@ export function MobileHome({ tab, me, users, friendIds = [], friendRequests = { 
         {search.error ? <p className="form-error" role="alert">{search.error}</p> : search.loading ? <p className="compact-empty">正在搜索用户…</p> : !contacts.length && <p className="compact-empty">{searching ? '没有找到相关用户' : activeView === 'all' ? '还没有其他成员' : '还没有好友，输入昵称、完整手机号或邮箱搜索并添加'}</p>}</div>
     </section>;
   }
+  const myStatus = activeStatus(me);
+  const statusLabel = myStatus ? [myStatus.emoji, myStatus.text].filter(Boolean).join(' ') : '设置状态';
   const actions = [
+    ['status', '我的状态', Smile, statusLabel],
+    ['activity', '提到我的', AtSign],
     ['saved', '我的收藏', Bookmark], ['connection', '设置', Settings2], ['invite', '邀请同事', UserPlus],
     ...(isAdmin ? [['admin', '用户管理', ShieldCheck]] : []),
     ...(mobileClient ? [['server', '连接服务器', Server]] : []),
@@ -79,7 +83,7 @@ export function MobileHome({ tab, me, users, friendIds = [], friendRequests = { 
   return <section className="mobile-home mobile-me"><header><h1>我</h1></header>
     <button className="mobile-profile" onClick={() => onAction('profile')}><Avatar user={me} size={68} /><span><b>{me.name}</b><small>{me.department || me.email || me.phone || '编辑个人资料'}</small></span><ChevronRight size={20} /></button>
     <p className="mobile-connection-status"><i className={`status-dot ${connected ? 'online' : ''}`} />{connected ? '已连接聊天空间' : '正在重新连接…'}</p>
-    <div className="mobile-settings-list">{actions.map(([key, label, Icon]) => <button key={key} onClick={() => key === 'server' ? chooseServer() : onAction(key)}><Icon size={21} /><span>{label}</span><ChevronRight size={17} /></button>)}</div>
+    <div className="mobile-settings-list">{actions.map(([key, label, Icon, value]) => <button key={key} onClick={() => key === 'server' ? chooseServer() : onAction(key)}><Icon size={21} /><span>{label}</span>{value && <small className="mobile-setting-value">{value}</small>}<ChevronRight size={17} /></button>)}</div>
     <button className="mobile-signout" onClick={onLogout} disabled={loggingOut}><LogOut size={18} />{loggingOut ? '正在退出…' : '退出登录'}</button>
   </section>;
 }

@@ -14,6 +14,7 @@ import { canVibrate, modKey } from './chatPrefs';
 import { playMessageSound } from './sound';
 import { disablePush, enablePush, needsHomeScreen, pushState, pushSupported } from './push';
 import { appLockSupported, LOCK_TIMEOUTS } from './AppLock';
+import { isTouchMobile, useIsMobile } from './mobile/ui';
 
 // 设置：左侧分类，右侧内容；窄屏时先选分类再进入内容页。
 const SECTIONS = [
@@ -48,8 +49,15 @@ function PushSettings({ settings, notify }) {
 
 export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onBots, onArcade, onChanged, appearance, onAppearance, skin, onSkin, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
   const cloud = workspace.mode === 'cloud';
+  const mobile = useIsMobile();
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
+  useEffect(() => {
+    if (!mobile || !paneOpen) return;
+    const back = event => { if (!event.defaultPrevented) { event.preventDefault(); setPaneOpen(false); } };
+    window.addEventListener('linliao:back', back, true);
+    return () => window.removeEventListener('linliao:back', back, true);
+  }, [mobile, paneOpen]);
   const open = id => { setTab(id); setPaneOpen(true); sessionStorage.setItem('linliao.settingsTab', id); };
   const myStatus = activeStatus(me);
   const panes = {
@@ -102,7 +110,7 @@ export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, them
       {onKeywords && <KeywordSettings keywords={keywords} onChange={onKeywords} notify={notify} />}
     </>,
     privacy: <>
-      <SettingRow title="隐私模式" description="隐藏聊天内容，鼠标停留在消息上才显示并计为已读；也可以按 ⌘⇧P 切换。"><Switch label="隐私模式" checked={privateMode} onChange={onPrivateMode} /></SettingRow>
+      <SettingRow title="隐私模式" description={isTouchMobile() ? '隐藏聊天内容，轻点消息查看内容并计为已读。' : '隐藏聊天内容，鼠标停留在消息上才显示并计为已读；也可以按 ⌘⇧P 切换。'}><Switch label="隐私模式" checked={privateMode} onChange={onPrivateMode} /></SettingRow>
       {appLock && <AppLockSettings appLock={appLock} notify={notify} onClose={onClose} />}
       {cloud && <DeviceSettings notify={notify} />}
     </>,

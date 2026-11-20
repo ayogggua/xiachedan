@@ -703,8 +703,8 @@
   .poker-scoreboard { display: none; }
 
   .poker-stage .poker-deck {
-    left: 14px;
-    top: 10px;
+    left: 12px;
+    top: 8px;
     transform: rotate(6deg);
   }
   .poker-deck .poker-card { width: 20px; height: 29px; }
@@ -712,7 +712,7 @@
   .arcade-app .poker-chips { width: 68px; height: 22px; }
   .pot-rack {
     position: absolute;
-    top: 22px;
+    top: 18px;
     left: calc(50% - 102px);
     width: 48px;
     height: 20px;
@@ -720,10 +720,35 @@
   }
   .pot-rack .poker-chips { width: 48px; height: 20px; }
   .poker-stage .seat-bet .poker-chips { width: 54px; height: 19px; }
-  .seat-stack { left: calc(100% + 6px); top: 54%; }
-  .seat-1 .seat-stack, .seat-2 .seat-stack { left: calc(100% - 10px); }
-  .seat-4 .seat-stack, .seat-5 .seat-stack { right: calc(100% - 10px); left: auto; }
-  .seat-stack > b { font-size: 9px; padding: 1px 6px; }
+  .seat-stack { left: calc(100% + 8px); top: 44%; }
+  .seat-1 .seat-stack, .seat-2 .seat-stack { left: calc(100% - 10px); top: 64%; }
+  .seat-4 .seat-stack, .seat-5 .seat-stack { right: calc(100% - 10px); left: auto; top: 64%; }
+  .seat-stack > b { font-size: 9.5px; padding: 1px 7px; }
+
+  .poker-stage .seat-0.is-me.is-folded .seat-cards {
+    transform: translateX(-50%) translateY(5px) scale(0.92);
+  }
+
+  .raise-slider {
+    height: 38px;
+    padding: 0 2px;
+  }
+  .raise-slider::-webkit-slider-runnable-track {
+    height: 10px;
+  }
+  .raise-slider::-webkit-slider-thumb {
+    width: 28px;
+    height: 28px;
+    margin-top: -10px;
+  }
+  .raise-slider::-moz-range-track,
+  .raise-slider::-moz-range-progress {
+    height: 10px;
+  }
+  .raise-slider::-moz-range-thumb {
+    width: 28px;
+    height: 28px;
+  }
 
   .table-social { gap: 7px; padding: 7px 12px; }
   .table-chat-toggle { font-size: 10.5px; padding: 5px 8px; }
@@ -732,7 +757,10 @@
   .table-social form input { font-size: 16px; }
   .table-chat-history { left: 12px; max-width: calc(100% - 24px); }
 
-  .seat-speech { max-width: 138px; padding: 6px 9px; font-size: 11px; }
+  .seat-speech { max-width: 144px; padding: 6px 9px; font-size: 11px; }
+  .seat-0.is-me.has-cards .seat-speech {
+    bottom: calc(100% + 86px);
+  }
   .seat-3 .seat-speech {
     top: calc(100% + 8px);
     bottom: auto;

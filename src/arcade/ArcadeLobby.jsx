@@ -25,7 +25,8 @@ function CreateTable({ game, me, connected, inHand, onCommand, onClose }) {
         <label htmlFor="arcade-base">底分（小盲注）<input id="arcade-base" type="number" inputMode="numeric" min="1" max="1000000" step="1" required value={base} onChange={event => setBase(event.target.value)} /></label>
         <label htmlFor="arcade-hands">每场手数（0 为不限）<input id="arcade-hands" type="number" inputMode="numeric" min="0" max="1000" step="1" required value={hands} onChange={event => setHands(event.target.value)} /></label>
       </div>
-      <div className="stake-presets">{[10, 50, 100, 500].map(amount => <button type="button" className={smallBlind === amount ? 'selected' : ''} key={amount} onClick={() => setBase(String(amount))}>{amount}</button>)}</div>
+      <div className="stake-presets" aria-label="底分预设">{[10, 50, 100, 500].map(amount => <button type="button" className={smallBlind === amount ? 'selected' : ''} key={amount} onClick={() => setBase(String(amount))}>{amount}</button>)}</div>
+      <div className="stake-presets create-hands-presets" aria-label="手数预设">{[0, 5, 10, 20].map(count => <button type="button" className={handLimit === count ? 'selected' : ''} key={count} onClick={() => setHands(String(count))}>{count ? `${count} 手` : '不限手数'}</button>)}</div>
       <dl className="create-table-summary"><div><dt>牌桌买入</dt><dd>{validBase ? number(buyIn) : '—'}</dd></div><div><dt>小盲 / 大盲</dt><dd>{validBase ? `${number(smallBlind)} / ${number(smallBlind * 2)}` : '—'}</dd></div></dl>
       {game.error && <p className="arcade-panel-error" role="alert">{game.error}</p>}
       <button className="arcade-primary" disabled={disabled}>创建并入座<ArrowRight size={17} /></button>
@@ -33,9 +34,11 @@ function CreateTable({ game, me, connected, inHand, onCommand, onClose }) {
   </Sheet>;
 }
 
-export default function ArcadeLobby({ game, me, connected, table, selectedGame, onSelect, onView, onReturn, onCommand, onPanel, onRules, art, roomIcon }) {
-  const [creating, setCreating] = useState(false);
-  useEffect(() => setCreating(false), [selectedGame]);
+export default function ArcadeLobby({ game, me, connected, table, selectedGame, creating = false, onCreating, onSelect, onView, onReturn, onCommand, onPanel, onRules, art, roomIcon }) {
+  const [localCreating, setLocalCreating] = useState(false);
+  const isCreating = onCreating ? creating : localCreating;
+  const setCreating = onCreating || setLocalCreating;
+  useEffect(() => setCreating(false), [selectedGame, setCreating]);
   const membership = game.membership;
   const seatedId = membership && !membership.leaving ? membership.tableId : null;
   const inHand = Boolean(membership?.inHand);
@@ -59,6 +62,6 @@ export default function ArcadeLobby({ game, me, connected, table, selectedGame, 
       </section>}
       <footer className="arcade-lobby-footer"><span>筹码仅供娱乐，不可充值或兑换</span>{selectedGame && <button className="arcade-text" onClick={onRules}><CircleHelp size={15} />玩法规则</button>}</footer>
     </main>
-    {creating && <CreateTable game={game} me={me} connected={connected} inHand={inHand} onCommand={onCommand} onClose={() => setCreating(false)} />}
+    {isCreating && <CreateTable game={game} me={me} connected={connected} inHand={inHand} onCommand={onCommand} onClose={() => setCreating(false)} />}
   </>;
 }

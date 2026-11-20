@@ -4,6 +4,7 @@ import { api, formatTime } from './api';
 import { Avatar, IconButton, PrivatePreview, Skeleton } from './components';
 import { plainText } from './markdown';
 import { attachmentLabel } from '../shared/preview.js';
+import { isTouchMobile } from './mobile/ui';
 
 // 标成剧透的图片和视频不显示文件名。
 // 接龙和预览一样带「[接龙]」。
@@ -91,7 +92,7 @@ export default function HistorySearch({ room, userMap, members = [], privateMode
   }
   return <>
     <div className="members-panel-heading"><IconButton icon={ChevronLeft} label="返回会话成员" size={16} onClick={onBack} /><h3 className="history-title">聊天记录</h3></div>
-    <label className="sidebar-search history-search"><Search size={14} /><input autoFocus aria-label="搜索聊天记录" placeholder={`搜索「${room.name}」`} value={query} maxLength={100} onChange={event => setQuery(event.target.value)} />{query && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setQuery('')} />}</label>
+    <label className="sidebar-search history-search"><Search size={14} /><input autoFocus={!isTouchMobile()} aria-label="搜索聊天记录" placeholder={`搜索「${room.name}」`} value={query} maxLength={100} onChange={event => setQuery(event.target.value)} />{query && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setQuery('')} />}</label>
     <div className="search-filters">
       <select aria-label="发送人" value={sender} onChange={event => setSender(event.target.value)}><option value="">所有人</option>{members.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}</select>
       <select aria-label="类型" value={type} onChange={event => setType(event.target.value)}>{TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>

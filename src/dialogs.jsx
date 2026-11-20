@@ -7,6 +7,7 @@ import { Modal, LazyModal, Avatar, AvatarPicker, IdentityFields, FileCard, Attac
 import { InvitationShare } from './Invitation';
 import { lazyModule } from './ErrorBoundary';
 import { modKey } from './chatPrefs';
+import { isTouchMobile } from './mobile/ui';
 
 const AvatarCropper = lazyModule(() => import('./AvatarCropper'));
 export { ForwardButtons };
@@ -124,7 +125,7 @@ export function ShareTargetDialog({ share, rooms, icon, onClose, onPick }) {
   const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()));
   const summary = [share.files.length ? `${share.files.length} 个文件` : '', share.text ? `「${share.text.replace(/\s+/g, ' ').slice(0, 30)}${share.text.length > 30 ? '…' : ''}」` : ''].filter(Boolean).join('和');
   return <Modal title="发送到…" subtitle={`选择一个会话，${summary}会放进输入框，确认后再发送。`} onClose={onClose}>
-    <div className="search-input"><Search size={16} /><input autoFocus placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
+    <div className="search-input"><Search size={16} /><input autoFocus={!isTouchMobile()} placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
     <div className="member-picker" role="list" aria-label="发送到">{filtered.map(room => <button type="button" className="member-option" key={room.id} onClick={() => onPick(room)}>{icon(room)}<span>{room.name}</span><ArrowRight size={15} /></button>)}
       {!filtered.length && <div className="compact-empty"><Search size={25} /><p>没有找到这个会话</p></div>}</div>
   </Modal>;
@@ -155,7 +156,7 @@ export function ForwardDialog({ count, initialMerge = false, rooms, icon, onClos
     {count > 1 && <div className="forward-modes" role="radiogroup" aria-label="转发方式">{FORWARD_MODES.map(([value, Icon, label, hint]) => <label key={label} className={`forward-mode-option ${merge === value ? 'active' : ''}`}>
       <input type="radio" name="forward-mode" checked={merge === value} onChange={() => setMerge(value)} /><span className="forward-mode-icon"><Icon size={18} /></span>
       <span className="forward-mode-copy"><b>{label}</b><small>{hint}</small></span><span className={`selection-check ${merge === value ? 'checked' : ''}`} aria-hidden="true">{merge === value && <Check size={13} />}</span></label>)}</div>}
-    <div className="search-input"><Search size={16} /><input autoFocus placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
+    <div className="search-input"><Search size={16} /><input autoFocus={!isTouchMobile()} placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
     <div className="member-picker" role="group" aria-label="转发到">{filtered.map(room => <label className={`member-option ${full && !chosen(room.id) ? 'disabled' : ''}`} key={room.id}>
       <input type="checkbox" checked={chosen(room.id)} disabled={full && !chosen(room.id)} onChange={() => toggle(room)} />{icon(room)}<span>{room.name}</span>
       <span className={`selection-check ${chosen(room.id) ? 'checked' : ''}`}>{chosen(room.id) && <Check size={13} />}</span></label>)}
@@ -221,7 +222,7 @@ export function FolderDialog({ folder, rooms, icon, onSave, onDelete, onClose })
   return <Modal title={folder ? '编辑文件夹' : '新建文件夹'} subtitle="在会话列表上方按文件夹查看会话，会同步到你的其他设备。" onClose={() => !busy && onClose()}>
     <form onSubmit={event => { event.preventDefault(); run(() => onSave(name.trim(), [...chosen])); }}>
       <label className="field-label" htmlFor="folder-name">名称</label>
-      <input id="folder-name" autoFocus maxLength={12} required placeholder="例如：项目、家人" value={name} onChange={event => setName(event.target.value)} />
+      <input id="folder-name" autoFocus={!isTouchMobile()} maxLength={12} required placeholder="例如：项目、家人" value={name} onChange={event => setName(event.target.value)} />
       <label className="field-label">会话 <small>已选 {chosen.size} 个</small></label>
       <div className="search-input"><Search size={16} /><input placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
       <div className="member-picker">{shown.map(room => <label className="member-option" key={room.id}>
@@ -316,8 +317,8 @@ export function GroupEditDialog({ room, field, onClose, onSaved }) {
     catch (failure) { setError(failure.message); setBusy(false); }
   }
   return <Modal title={isName ? '修改群名' : '群公告'} subtitle={isName ? '群里的所有人都会看到新的群名。' : '公告会显示在群聊顶部，留空即撤下公告。'} onClose={() => !busy && onClose()}><form onSubmit={submit}>
-    {isName ? <input autoFocus aria-label="群聊名称" value={value} maxLength={24} required onChange={event => setValue(event.target.value)} />
-      : <><textarea autoFocus className="announcement-input" aria-label="群公告内容" value={value} maxLength={500} rows={5} onChange={event => setValue(event.target.value)} placeholder="例如：周五 18:00 发版，请提前合并代码" /><small className="field-hint">{value.trim().length}/500</small></>}
+    {isName ? <input autoFocus={!isTouchMobile()} aria-label="群聊名称" value={value} maxLength={24} required onChange={event => setValue(event.target.value)} />
+      : <><textarea autoFocus={!isTouchMobile()} className="announcement-input" aria-label="群公告内容" value={value} maxLength={500} rows={5} onChange={event => setValue(event.target.value)} placeholder="例如：周五 18:00 发版，请提前合并代码" /><small className="field-hint">{value.trim().length}/500</small></>}
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || (isName && !value.trim())}>{busy ? '正在保存…' : '保存'}</button></div>
   </form></Modal>;
