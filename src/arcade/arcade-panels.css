@@ -516,7 +516,10 @@
   }
   .arcade-sheet-body {
     padding: 14px 16px calc(20px + var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px)));
+    overflow-x: hidden;
     overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
   }
   .arcade-search {
     min-height: 44px;

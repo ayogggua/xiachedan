@@ -23,10 +23,15 @@
 @media (max-width: 760px) {
   :root { --mobile-safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px)); --mobile-safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)); }
   :root.keyboard-open { --mobile-safe-bottom: 0px; }
-  body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+  html { height: 100%; width: 100%; overflow: hidden; overscroll-behavior: none; }
+  body { position: fixed; inset: 0; width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+  #root { width: 100%; height: 100%; overflow: hidden; }
   button, a { touch-action: manipulation; }
   input, textarea { scroll-margin: 90px; }
-  .app, .onboarding, .startup-state { height: var(--app-height, 100dvh); }
+  .app, .onboarding, .startup-state, .mobile-connect {
+    position: fixed; left: 0; right: 0; top: var(--app-top, 0px); bottom: auto;
+    height: var(--app-height, 100dvh);
+  }
   .app::before { display: none; }
   .icon-button { width: 40px; height: 40px; border-radius: 12px; }
   .primary-button, .secondary-button { min-height: 44px; height: auto; padding: 10px 18px; }
@@ -36,15 +41,13 @@
     inset: 0; width: auto; border-radius: 0; padding: var(--mobile-safe-top) 0 0;
     background: var(--canvas); box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none;
     z-index: 4; visibility: visible; pointer-events: auto;
-    transform: translate3d(0, 0, 0);
+    transform: none;
     transition: transform 240ms var(--ease-out), visibility 0s linear 0s;
-    will-change: transform;
   }
   .chat-main {
     display: flex; padding-left: 0; z-index: 5; background: var(--canvas);
     transform: translate3d(100%, 0, 0); visibility: hidden; pointer-events: none;
     transition: transform 240ms var(--ease-out), visibility 0s linear 240ms;
-    will-change: transform;
   }
   .show-chat .sidebar {
     display: flex; visibility: hidden; pointer-events: none;
@@ -52,16 +55,16 @@
     transition: transform 240ms var(--ease-out), visibility 0s linear 240ms;
   }
   .show-chat .chat-main {
-    display: flex; transform: translate3d(0, 0, 0); visibility: visible; pointer-events: auto;
+    display: flex; transform: none; visibility: visible; pointer-events: auto;
     box-shadow: -8px 0 28px rgba(0, 0, 0, .24);
     transition: transform 240ms var(--ease-out), visibility 0s linear 0s;
   }
-  .app.edge-swiping .sidebar, .app.edge-swiping .chat-main { visibility: visible !important; transition: none !important; }
-  .app.edge-settling .sidebar, .app.edge-settling .chat-main { visibility: visible !important; transition: transform 210ms var(--ease-out) !important; }
+  .app.edge-swiping .sidebar, .app.edge-swiping .chat-main { visibility: visible !important; transition: none !important; will-change: transform; }
+  .app.edge-settling .sidebar, .app.edge-settling .chat-main { visibility: visible !important; transition: transform 210ms var(--ease-out) !important; will-change: transform; }
   .app.popout .chat-main { transform: none; visibility: visible; pointer-events: auto; box-shadow: none; }
 
   .sidebar-drag, .sidebar .me-card, .sidebar .sidebar-logout, .sidebar .admin-entry { display: none; }
-  .space-heading { padding: 16px 14px 10px 18px; min-height: 76px; }
+  .space-heading { padding: 16px 14px 10px 18px; min-height: 76px; touch-action: none; }
   .space-copy h1 { font: 650 26px/32px var(--font-rounded); letter-spacing: -.5px; }
   .space-copy p { margin-top: 4px; font-size: 12px; }
   .space-actions { gap: 2px; flex-shrink: 0; }
@@ -71,8 +74,9 @@
   .sidebar-search .icon-button { width: 32px; height: 32px; }
   .switch-hint { display: none; }
   .folder-bar { margin: 0 12px 6px 16px; }
+  .folder-tabs { touch-action: pan-x; overscroll-behavior-x: contain; }
   .folder-tabs [role="tab"] { height: 32px; padding: 0 12px; border-radius: 16px; font-size: 13px; }
-  .conversation-scroll { padding: 0 10px 16px; overscroll-behavior: contain; }
+  .conversation-scroll { padding: 0 10px 16px; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .section-label { min-height: 36px; padding-left: 10px; }
   .conversation { min-height: 76px; padding: 11px 10px; border-radius: 15px; gap: 12px; }
   .conversation::after { left: 70px; }
@@ -81,7 +85,7 @@
   .conversation-name { font-size: 16px; }
   .conversation-preview { margin-top: 4px; font-size: 13px; line-height: 19px; }
 
-  .mobile-tabs { flex-shrink: 0; display: flex; border-top: 1px solid var(--line); padding: 6px 10px calc(6px + var(--mobile-safe-bottom)); background: var(--canvas); }
+  .mobile-tabs { flex-shrink: 0; display: flex; border-top: 1px solid var(--line); padding: 6px 10px calc(6px + var(--mobile-safe-bottom)); background: var(--canvas); touch-action: none; }
   .mobile-tabs > button { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 52px; color: var(--text-3); font-size: 11px; }
   .mobile-tabs > button.active { color: var(--accent-bright); }
   .mobile-tabs > button:not(.active):hover { color: var(--text-3); }
@@ -89,7 +93,7 @@
   .mobile-tab-badge { position: absolute; top: -5px; left: 16px; min-width: 17px; padding: 1px 4px; border-radius: 9px; background: var(--accent); color: white; font-size: 10px; line-height: 15px; border: 2px solid var(--canvas); }
   .sidebar:not([data-mobile-tab="chats"]) > :not(.mobile-home):not(.mobile-tabs) { display: none !important; }
 
-  .mobile-home { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow-y: auto; padding: 16px 18px 24px; overscroll-behavior: contain; }
+  .mobile-home { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow-y: auto; overflow-x: hidden; padding: 16px 18px 24px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .mobile-home header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
   .mobile-home h1 { font: 650 27px/34px var(--font-rounded); letter-spacing: -.5px; }
   .mobile-home header > button { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; color: var(--accent-bright); }
@@ -125,7 +129,7 @@
   .mobile-signout { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 22px; min-height: 50px; border-radius: 14px; background: var(--fill-1); color: var(--danger-text); font-size: 14px; font-weight: 500; }
 
   /* 聊天顶栏与浮动横条安全区修复 */
-  .chat-toolbar { top: 0; left: 0; right: 0; height: calc(60px + var(--mobile-safe-top)); padding: calc(6px + var(--mobile-safe-top)) 8px 6px; gap: 4px; background: var(--glass-solid); border-bottom: 1px solid var(--edge); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+  .chat-toolbar { top: 0; left: 0; right: 0; height: calc(60px + var(--mobile-safe-top)); padding: calc(6px + var(--mobile-safe-top)) 8px 6px; gap: 4px; background: var(--glass-solid); border-bottom: 1px solid var(--edge); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); touch-action: none; }
   .chat-toolbar .glass { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
   .chat-toolbar .back-button { width: 40px; height: 44px; color: var(--accent-bright); }
   .chat-toolbar .privacy-toggle:not(.enabled) { display: none; }
@@ -144,7 +148,7 @@
   .pinned-bar ~ .announcement-banner { top: calc(118px + var(--mobile-safe-top)); }
   .offline-pill { top: calc(68px + var(--mobile-safe-top)); max-width: calc(100vw - 24px); white-space: normal; text-align: center; }
 
-  .message-scroll { padding-top: calc(72px + var(--mobile-safe-top)); padding-bottom: calc(var(--composer-overlap, calc(56px + var(--mobile-safe-bottom))) + 48px); scroll-padding-bottom: calc(var(--composer-overlap, 56px) + 48px); overscroll-behavior-y: contain; }
+  .message-scroll { padding-top: calc(72px + var(--mobile-safe-top)); padding-bottom: calc(var(--composer-overlap, calc(56px + var(--mobile-safe-bottom))) + 48px); scroll-padding-bottom: calc(var(--composer-overlap, 56px) + 48px); overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .chat-column:has(.pinned-bar) .message-scroll,
   .chat-column:has(.announcement-banner) .message-scroll { padding-top: calc(124px + var(--mobile-safe-top)); }
   .chat-column:has(.pinned-bar):has(.announcement-banner) .message-scroll { padding-top: calc(176px + var(--mobile-safe-top)); }
@@ -168,7 +172,7 @@
   .composer-area.tray-open > .mention-picker { margin-bottom: 6px; }
   .composer-row { gap: 6px; }
   .composer { padding: 4px 6px 4px 10px; min-height: 44px; border-radius: 22px; }
-  .composer textarea { font-size: 16px; line-height: 22px; max-height: min(132px, 28vh); padding: 7px 4px; }
+  .composer textarea { font-size: 16px; line-height: 22px; max-height: min(132px, 28vh); padding: 7px 4px; scroll-margin: 0; }
   .composer .emoji-button { width: 34px; height: 36px; }
   .round-button { width: 42px; height: 42px; }
   .attach-button.selected { color: var(--accent-bright); background: var(--fill-2); }
@@ -186,13 +190,13 @@
   }
   .emoji-tabs {
     flex: none; display: flex; align-items: center; gap: 4px;
-    overflow-x: auto; scrollbar-width: none;
+    overflow-x: auto; scrollbar-width: none; touch-action: pan-x; overscroll-behavior-x: contain;
     padding: 8px 8px 6px; border-bottom: 1px solid var(--edge);
   }
   .emoji-tabs::-webkit-scrollbar { display: none; }
   .emoji-tabs button { flex: none; height: 30px; padding: 0 11px; border-radius: 999px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
   .emoji-tabs button.active { background: var(--accent); color: #fff; font-weight: 600; }
-  .emoji-picker-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 10px 10px; }
+  .emoji-picker-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding: 4px 10px 10px; }
   .emoji-picker.docked .emoji-grid { grid-template-columns: repeat(7, 1fr); gap: 4px; }
   .emoji-picker.docked .emoji-grid button { height: 42px; font-size: 24px; }
   .emoji-picker.docked .sticker-grid { grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -205,7 +209,7 @@
   .attach-grid button.active > span:last-child { color: var(--accent-bright); font-weight: 600; }
   .attach-phrases { display: flex; flex-direction: column; max-height: min(270px, 38dvh); }
   .attach-phrases-head { display: flex; align-items: center; gap: 10px; padding: 4px 2px 10px; border-bottom: 1px solid var(--edge); font-size: 14px; }
-  .attach-phrases-list { overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
+  .attach-phrases-list { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
   .attach-phrases-list button { text-align: left; padding: 11px 12px; border-radius: 12px; background: var(--fill-1); font-size: 14px; line-height: 20px; }
 
   /* 成员 / 历史 / 文件 / 话题面板全屏展示 */
@@ -215,7 +219,7 @@
     -webkit-backdrop-filter: none; backdrop-filter: none;
     padding: calc(8px + var(--mobile-safe-top)) 12px calc(10px + var(--mobile-safe-bottom));
   }
-  .members-panel-heading { padding: 4px 2px 10px 6px; }
+  .members-panel-heading { padding: 4px 2px 10px 6px; touch-action: none; }
   .members-panel-heading h3 { font-size: 16px; }
   .members-panel .history-entry { min-height: 50px; }
   .members-panel .member-row { min-height: 48px; }
@@ -230,7 +234,7 @@
   .sheet-grabber { display: block; width: 36px; height: 4px; border-radius: 999px; background: var(--fill-3); margin: 8px auto 6px; flex: none; }
   .modal-grabber { display: block; margin: -12px auto 12px; }
   .modal {
-    position: fixed; inset: auto 0 0 0; margin: 0;
+    position: fixed; left: 0; right: 0; top: auto; bottom: var(--app-bottom, 0px); margin: 0;
     width: 100vw; max-width: 100vw;
     max-height: calc(var(--app-height, 100dvh) - var(--mobile-safe-top) - 16px);
     border-radius: 22px 22px 0 0;
@@ -238,15 +242,16 @@
   .modal.wide, .modal.contacts-dialog, .modal.bundle-dialog, .modal.hextech-library, .modal.image-editor, .modal.shortcuts-dialog { width: 100vw; max-width: 100vw; }
   .modal.settings-dialog { width: 100vw; max-width: 100vw; height: calc(var(--app-height, 100dvh) - var(--mobile-safe-top) - 14px); }
   .modal[open] { animation: mobile-sheet-up 220ms var(--ease-out); }
-  .modal-content { padding: 20px 18px calc(18px + var(--mobile-safe-bottom)); }
+  .modal-content { padding: 20px 18px calc(18px + var(--mobile-safe-bottom)); overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .modal.settings-dialog .modal-content, .modal.bundle-dialog .modal-content { padding-bottom: 0; }
-  .settings-pane, .settings-nav { padding-bottom: calc(20px + var(--mobile-safe-bottom)); }
+  .settings-pane, .settings-nav { padding-bottom: calc(20px + var(--mobile-safe-bottom)); overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .bundle-list { padding-bottom: calc(16px + var(--mobile-safe-bottom)); }
   .modal input:not([type="checkbox"]):not([type="range"]):not([type="color"]), .modal select { min-height: 44px; font-size: 16px; }
   .modal-heading .icon-button { width: 40px; height: 40px; }
 
   .action-sheet-backdrop, .mobile-sheet-backdrop {
-    position: fixed; inset: 0; z-index: 120;
+    position: fixed; left: 0; right: 0; top: var(--app-top, 0px); bottom: auto;
+    height: var(--app-height, 100dvh); z-index: 120;
     display: flex; align-items: flex-end; justify-content: center;
     background: rgba(0, 0, 0, .48);
     animation: backdrop-fade 160ms var(--ease-out);
@@ -267,11 +272,11 @@
     display: inline-flex; align-items: center; justify-content: center; font-size: 22px; color: var(--text-2);
   }
   .action-sheet-reactions-row button.chosen, .action-sheet-reactions-row button.active { background: var(--fill-3); color: var(--accent-bright); box-shadow: inset 0 0 0 1.5px var(--accent-bright); }
-  .action-sheet-emoji-all { max-height: 30dvh; overflow-y: auto; overscroll-behavior: contain; margin-top: 8px; padding: 6px; border-radius: 14px; background: var(--fill-1); }
+  .action-sheet-emoji-all { max-height: 30dvh; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; margin-top: 8px; padding: 6px; border-radius: 14px; background: var(--fill-1); }
   .action-sheet-emoji-all h4 { margin: 6px 4px 4px; font-size: 11px; color: var(--text-2); }
   .action-sheet-emoji-all .reaction-grid { grid-template-columns: repeat(7, 1fr); }
   .action-sheet-emoji-all .reaction-grid button { height: 40px; font-size: 22px; border-radius: 10px; }
-  .action-sheet-list { overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .action-sheet-list { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
   .action-sheet-group { display: flex; flex-direction: column; border-radius: 14px; background: var(--fill-1); overflow: hidden; }
   .action-sheet-group button {
     display: flex; align-items: center; justify-content: center; width: 100%;
@@ -288,7 +293,7 @@
   .profile-card.mobile-sheet, .read-detail.mobile-sheet {
     position: relative; left: auto; top: auto; bottom: auto;
     width: 100%; max-width: 100%; max-height: calc(var(--app-height, 100dvh) - var(--mobile-safe-top) - 24px);
-    overflow-y: auto; overscroll-behavior: contain;
+    overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y;
     border-radius: 22px 22px 0 0;
     padding: 4px 18px calc(18px + var(--mobile-safe-bottom));
     background: var(--canvas);
@@ -300,7 +305,7 @@
   .read-detail.mobile-sheet li button { min-height: 44px; padding: 6px 8px; font-size: 14px; }
 
   /* 看图安全区修复与手势查看态 */
-  .image-viewer { height: var(--app-height, 100dvh); }
+  .image-viewer { position: fixed; left: 0; right: 0; top: var(--app-top, 0px); bottom: auto; height: var(--app-height, 100dvh); }
   .viewer-bar {
     top: calc(10px + var(--mobile-safe-top));
     padding: 4px 6px 4px 12px;
@@ -323,7 +328,7 @@
   .image-viewer.chrome-hidden .viewer-bar { opacity: 0; pointer-events: none; transform: translate(-50%, -12px); }
   .image-viewer.chrome-hidden .viewer-counter { opacity: 0; pointer-events: none; }
 
-  .toast { bottom: calc(86px + var(--mobile-safe-bottom)); max-width: calc(100vw - 32px); }
+  .toast { bottom: calc(86px + var(--mobile-safe-bottom) + var(--app-bottom, 0px)); max-width: calc(100vw - 32px); }
   .onboarding { gap: 30px; padding: calc(36px + var(--mobile-safe-top)) 24px calc(24px + var(--mobile-safe-bottom)); background: var(--canvas); }
   .welcome-brand { gap: 12px; }
   .welcome-story h1 { margin-top: 30px; font-size: 34px; line-height: 1.3; letter-spacing: -1px; }
