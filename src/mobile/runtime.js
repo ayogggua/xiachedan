@@ -36,36 +36,155 @@ export async function saveDownload(address, name = '附件') {
 }
 
 export function setupViewport() {
-  let lastOffsetTop = 0;
+  let rafId = 0;
+  let wasKeyboardOpen = false;
+  let touchStart = null;
+  const settleTimers = new Set();
+
+  const isNarrow = () => !window.desktop && (innerWidth <= 760 || mobileClient);
+  const clearSettleTimers = () => {
+    for (const id of settleTimers) clearTimeout(id);
+    settleTimers.clear();
+  };
+
   const update = () => {
+    const root = document.documentElement;
     const vv = window.visualViewport;
-    if (vv?.scale && vv.scale !== 1) return;
-    const narrow = innerWidth <= 760 || mobileClient;
-    if (narrow) {
-      document.documentElement.style.setProperty('--app-height', `${vv?.height || innerHeight}px`);
-      if (!nativeMobile && vv) {
-        const keyboardOpen = innerHeight - vv.height > 120;
-        document.documentElement.classList.toggle('keyboard-open', keyboardOpen);
-        if (keyboardOpen && vv.offsetTop > 0) {
-          if (vv.offsetTop !== lastOffsetTop) { lastOffsetTop = vv.offsetTop; window.scrollTo(0, 0); }
-        } else {
-          lastOffsetTop = 0;
-        }
+    if (!isNarrow()) {
+      wasKeyboardOpen = false;
+      root.style.removeProperty('--app-height');
+      root.style.removeProperty('--app-top');
+      root.style.removeProperty('--app-bottom');
+      if (!nativeMobile) root.classList.remove('keyboard-open');
+      return;
+    }
+    if (vv?.scale && Math.abs(vv.scale - 1) > 0.02) return;
+    const layoutHeight = root.clientHeight || innerHeight;
+    const height = Math.round(vv?.height || innerHeight);
+    const top = Math.max(0, Math.round(vv?.offsetTop || 0));
+    const bottom = Math.max(0, Math.round(layoutHeight - height - top));
+    root.style.setProperty('--app-height', `${height}px`);
+    root.style.setProperty('--app-top', `${top}px`);
+    root.style.setProperty('--app-bottom', `${bottom}px`);
+    if (!nativeMobile && vv) {
+      const keyboardOpen = layoutHeight - height > 120;
+      root.classList.toggle('keyboard-open', keyboardOpen);
+      if (!keyboardOpen && (wasKeyboardOpen || window.scrollY !== 0 || window.scrollX !== 0 || top > 0)) {
+        window.scrollTo(0, 0);
+        if (top > 0) schedule(60);
       }
-    } else {
-      lastOffsetTop = 0;
-      document.documentElement.style.removeProperty('--app-height');
-      if (!nativeMobile) document.documentElement.classList.remove('keyboard-open');
+      wasKeyboardOpen = keyboardOpen;
     }
   };
+
+  const schedule = (delay = 0) => {
+    if (delay > 0) {
+      const id = setTimeout(() => { settleTimers.delete(id); update(); }, delay);
+      settleTimers.add(id);
+      return;
+    }
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => { rafId = 0; update(); });
+  };
+
+  const onFocusChange = event => {
+    if (!isNarrow() || nativeMobile) return;
+    const target = event.target;
+    if (!(target instanceof Element) || !target.matches('input, textarea, select, [contenteditable="true"]')) return;
+    schedule();
+    schedule(90);
+    schedule(240);
+    schedule(400);
+  };
+
+  const isScrollableY = el => {
+    const style = getComputedStyle(el);
+    return /(auto|scroll|overlay)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1;
+  };
+  const isScrollableX = el => {
+    const style = getComputedStyle(el);
+    return /(auto|scroll|overlay)/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1;
+  };
+  const findScrollable = (target, check) => {
+    for (let node = target; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+      if (check(node)) return node;
+    }
+    return null;
+  };
+
+  const isIOSBrowser = () => !nativeMobile && !window.desktop && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
+  const onTouchStart = event => {
+    if (nativeMobile || !isNarrow() || event.touches.length !== 1) { touchStart = null; return; }
+    const touch = event.touches[0];
+    touchStart = { x: touch.clientX, y: touch.clientY, lastX: touch.clientX, lastY: touch.clientY, target: event.target };
+    // iOS Safari 在浏览器有历史记录时，屏幕极左/极右边缘会触发整页左右滑切页；非交互元素边缘触碰时阻止系统手势接管。
+    if (isIOSBrowser() && event.cancelable && (touch.clientX <= 16 || touch.clientX >= innerWidth - 16)) {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target && !target.closest('button, a, input, textarea, select, label, [role="button"], [role="tab"], .image-viewer, .image-editor-stage, .cropper-stage')) {
+        event.preventDefault();
+      }
+    }
+  };
+
+  const onTouchMove = event => {
+    if (!touchStart || nativeMobile || !isNarrow() || event.touches.length !== 1 || !event.cancelable) return;
+    const vv = window.visualViewport;
+    if (vv?.scale && Math.abs(vv.scale - 1) > 0.02) return;
+    const target = touchStart.target instanceof Element ? touchStart.target : null;
+    if (!target) return;
+    if (target.closest('input[type="range"], .image-viewer, .image-editor-stage, .cropper-stage')) return;
+    const touch = event.touches[0];
+    const stepX = touch.clientX - touchStart.lastX;
+    const stepY = touch.clientY - touchStart.lastY;
+    const totalX = Math.abs(touch.clientX - touchStart.x);
+    const totalY = Math.abs(touch.clientY - touchStart.y);
+    touchStart.lastX = touch.clientX;
+    touchStart.lastY = touch.clientY;
+    if (stepX === 0 && stepY === 0) return;
+    if (totalX > totalY) {
+      if (target.closest('input, textarea, [contenteditable="true"]')) return;
+      const scrollerX = findScrollable(target, isScrollableX);
+      if (!scrollerX) { event.preventDefault(); return; }
+      const atLeft = scrollerX.scrollLeft <= 0;
+      const atRight = scrollerX.scrollLeft + scrollerX.clientWidth >= scrollerX.scrollWidth - 1;
+      if ((stepX > 0 && atLeft) || (stepX < 0 && atRight)) event.preventDefault();
+      return;
+    }
+    const scrollerY = findScrollable(target, isScrollableY);
+    if (!scrollerY) { event.preventDefault(); return; }
+    const atTop = scrollerY.scrollTop <= 0;
+    const atBottom = scrollerY.scrollTop + scrollerY.clientHeight >= scrollerY.scrollHeight - 1;
+    if ((stepY > 0 && atTop) || (stepY < 0 && atBottom)) event.preventDefault();
+  };
+
+  const onTouchEnd = () => { touchStart = null; };
+  const onOrientation = () => { schedule(120); schedule(320); };
+
   update();
   window.addEventListener('resize', update);
+  window.addEventListener('orientationchange', onOrientation);
   window.visualViewport?.addEventListener('resize', update);
   window.visualViewport?.addEventListener('scroll', update);
+  document.addEventListener('focusin', onFocusChange);
+  document.addEventListener('focusout', onFocusChange);
+  document.addEventListener('touchstart', onTouchStart, { passive: false });
+  document.addEventListener('touchmove', onTouchMove, { passive: false });
+  document.addEventListener('touchend', onTouchEnd, { passive: true });
+  document.addEventListener('touchcancel', onTouchEnd, { passive: true });
   return () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    clearSettleTimers();
     window.removeEventListener('resize', update);
+    window.removeEventListener('orientationchange', onOrientation);
     window.visualViewport?.removeEventListener('resize', update);
     window.visualViewport?.removeEventListener('scroll', update);
+    document.removeEventListener('focusin', onFocusChange);
+    document.removeEventListener('focusout', onFocusChange);
+    document.removeEventListener('touchstart', onTouchStart);
+    document.removeEventListener('touchmove', onTouchMove);
+    document.removeEventListener('touchend', onTouchEnd);
+    document.removeEventListener('touchcancel', onTouchEnd);
     if (!nativeMobile) document.documentElement.classList.remove('keyboard-open');
   };
 }

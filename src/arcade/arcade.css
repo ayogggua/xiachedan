@@ -2175,7 +2175,11 @@
 
 @media (max-width: 760px) {
   .arcade-dialog {
-    inset: 0;
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--app-top, 0px);
+    bottom: auto;
     margin: 0;
     width: 100vw;
     height: var(--app-height, 100dvh);
@@ -2192,6 +2196,7 @@
     padding: max(8px, var(--mobile-safe-top, env(safe-area-inset-top, 0px))) 12px 8px;
     min-height: 52px;
     gap: 8px;
+    touch-action: none;
   }
   .arcade-back,
   .arcade-close {
@@ -2217,6 +2222,7 @@
     border-bottom: 1px solid var(--club-brass-line-soft);
     background: var(--club-surface);
     box-shadow: inset 0 1px 0 rgba(255, 245, 218, 0.06);
+    touch-action: none;
   }
   .mobile-poker-title {
     flex: 1;
@@ -2301,6 +2307,9 @@
 
   .arcade-lobby {
     padding: 16px 14px max(20px, var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px)));
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
   .arcade-lobby-heading { margin-bottom: 16px; }
   .arcade-lobby-heading h2 { font-size: 22px; }
@@ -2320,6 +2329,7 @@
   .poker-stage {
     flex: 1;
     min-height: 0;
+    touch-action: none;
   }
   .poker-felt {
     inset: 10.5% 6.5% 21% 6.5%;
@@ -2482,15 +2492,23 @@
   .poker-waiting {
     padding: 10px 12px max(12px, var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px)));
   }
+  .poker-waiting {
+    touch-action: none;
+  }
   .poker-action-panel.mobile-cockpit {
     position: relative;
     z-index: 20;
   }
   .poker-raise-backdrop {
     position: fixed;
-    inset: 0;
+    left: 0;
+    right: 0;
+    top: var(--app-top, 0px);
+    bottom: auto;
+    height: var(--app-height, 100dvh);
     z-index: 1;
     background: rgba(5, 11, 9, 0.52);
+    touch-action: none;
   }
   .poker-raise-drawer {
     position: absolute;
@@ -2666,18 +2684,23 @@
   /* 移动端牌桌记录底部抽屉 */
   .poker-ledger-backdrop {
     position: fixed;
-    inset: 0;
+    left: 0;
+    right: 0;
+    top: var(--app-top, 0px);
+    bottom: auto;
+    height: var(--app-height, 100dvh);
     z-index: 25;
     background: rgba(6, 12, 10, 0.68);
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
+    touch-action: none;
   }
   .poker-ledger.show-ledger {
     position: fixed;
     left: 0;
     right: 0;
     top: auto;
-    bottom: 0;
+    bottom: var(--app-bottom, 0px);
     width: 100%;
     max-height: 68dvh;
     z-index: 26;
@@ -2698,6 +2721,10 @@
   }
   .poker-ledger ol {
     max-height: 40dvh;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
   }
 
   /* 移动端规则、菜单与聊天底部抽屉 */
@@ -2772,6 +2799,10 @@
     padding: 0;
     max-height: 38dvh;
     overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -2816,6 +2847,8 @@
     overflow-x: auto;
     padding-bottom: 2px;
     scrollbar-width: none;
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
   }
   .poker-quick-phrases::-webkit-scrollbar {
     display: none;
@@ -2850,6 +2883,7 @@
     background: var(--club-input);
     color: var(--club-text);
     font-size: 16px;
+    scroll-margin: 0;
   }
   .mobile-poker-chat-form button {
     display: grid;

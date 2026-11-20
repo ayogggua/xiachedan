@@ -8,6 +8,7 @@ const BACK_KEY = '__linliaoBack';
 export const isMobileViewport = () => typeof window !== 'undefined' && !window.desktop && window.matchMedia(MOBILE_QUERY).matches;
 export const isCoarsePointer = () => typeof window !== 'undefined' && !window.desktop && window.matchMedia(COARSE_QUERY).matches;
 export const isTouchMobile = () => isMobileViewport() || isCoarsePointer();
+export const isIOS = () => typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
 export function useIsMobile() {
   const [mobile, setMobile] = useState(isMobileViewport);
@@ -47,10 +48,11 @@ if (typeof window !== 'undefined') {
   window.matchMedia(MOBILE_QUERY).addEventListener('change', () => syncThemeColor());
 }
 
-// 仅移动端非原生浏览器（含 PWA）启用虚拟返回栈：单哨兵条目，逐级关闭弹窗/面板/聊天/游戏厅，避免系统返回直接退出应用。
+// 仅 Android 等非 iOS 移动端浏览器（含 PWA）启用虚拟返回栈：单哨兵条目，逐级关闭弹窗/面板/聊天/游戏厅，避免系统返回直接退出应用。
+// iOS Safari / iOS PWA 调用 history.pushState 会激活系统边缘右滑整页切换手势，因此 iOS 禁用虚拟返回栈，改由应用内返回按钮与左缘手势处理。
 export function usePwaBackStack(hasBackTarget, onBack) {
   const mobile = useIsMobile();
-  const enabled = mobile && !nativeMobile && !window.desktop;
+  const enabled = mobile && !nativeMobile && !window.desktop && !isIOS();
   const activeRef = useRef(hasBackTarget);
   const onBackRef = useRef(onBack);
   const ignoringPop = useRef(false);
@@ -105,7 +107,7 @@ export function usePwaBackStack(hasBackTarget, onBack) {
 
 // 移动端左边缘右滑返回会话列表：仅在聊天主视图生效，避开代码块/表格等可横向滚动内容。
 const EDGE_ZONE = 28;
-const EDGE_SKIP = 'input, textarea, select, [contenteditable="true"], .code-block, .table-scroll, video, audio';
+const EDGE_SKIP = 'input, textarea, select, [contenteditable="true"], .code-block, .table-scroll, video, audio, .poker-stage, .arcade-dialog, .modal, .action-sheet, .members-panel';
 
 export function useEdgeSwipeBack({ enabled, onBack, appRef, chatRef, sidebarRef }) {
   const onBackRef = useRef(onBack);
@@ -139,6 +141,9 @@ export function useEdgeSwipeBack({ enabled, onBack, appRef, chatRef, sidebarRef 
         if (dx <= 0 || Math.abs(dy) * 1.2 >= dx) { gesture = null; return; }
         gesture.state = 'drag';
         clearTimeout(settleTimer);
+        if (document.activeElement instanceof HTMLElement && document.activeElement.matches('input, textarea, [contenteditable="true"]')) {
+          document.activeElement.blur();
+        }
         appRef.current?.classList.remove('edge-settling');
         appRef.current?.classList.add('edge-swiping');
         try { chat.setPointerCapture(event.pointerId); } catch {}
@@ -153,14 +158,19 @@ export function useEdgeSwipeBack({ enabled, onBack, appRef, chatRef, sidebarRef 
       if (sidebarRef.current) sidebarRef.current.style.transform = `translate3d(${(-22 * (1 - progress)).toFixed(2)}%, 0, 0)`;
     };
 
+    const onTouchMove = event => {
+      if (gesture?.state === 'drag' && event.cancelable) event.preventDefault();
+    };
+
     const finish = (event, cancelled) => {
       if (!gesture || gesture.id !== event.pointerId) return;
       const current = gesture;
       gesture = null;
       try { if (chat.hasPointerCapture?.(event.pointerId)) chat.releasePointerCapture(event.pointerId); } catch {}
       if (current.state !== 'drag') return;
+      if (cancelled) { clearStyles(); return; }
       const dx = Math.max(0, event.clientX - current.startX);
-      const trigger = !cancelled && (dx > Math.min(110, window.innerWidth * 0.28) || current.velocity > 0.45);
+      const trigger = dx > Math.min(110, window.innerWidth * 0.28) || current.velocity > 0.45;
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (reduced) {
         clearStyles();
@@ -187,6 +197,7 @@ export function useEdgeSwipeBack({ enabled, onBack, appRef, chatRef, sidebarRef 
     const onCancel = event => finish(event, true);
     chat.addEventListener('pointerdown', onPointerDown);
     chat.addEventListener('pointermove', onPointerMove);
+    chat.addEventListener('touchmove', onTouchMove, { passive: false });
     chat.addEventListener('pointerup', onUp);
     chat.addEventListener('pointercancel', onCancel);
     return () => {
@@ -194,6 +205,7 @@ export function useEdgeSwipeBack({ enabled, onBack, appRef, chatRef, sidebarRef 
       clearStyles();
       chat.removeEventListener('pointerdown', onPointerDown);
       chat.removeEventListener('pointermove', onPointerMove);
+      chat.removeEventListener('touchmove', onTouchMove);
       chat.removeEventListener('pointerup', onUp);
       chat.removeEventListener('pointercancel', onCancel);
     };
