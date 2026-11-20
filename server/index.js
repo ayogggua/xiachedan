@@ -366,7 +366,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays(), recallWindow: recallWindow() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), phrases: phrasesFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS };
+    return { me: { ...user, status: statusOf(user.id), ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays(), recallWindow: recallWindow() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), phrases: phrasesFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);

@@ -448,7 +448,12 @@ function MessageText({ text, mentions = [], nameOf, viewerId, meta = null, menti
 // 群聊里按成员给昵称着色：同一个人颜色固定。
 // 自己选了颜色就用选的，否则按身份固定分配。
 // 自定义状态：过期的不显示（成员列表要等下一次推送才更新，这里再判断一次）。
-export const activeStatus = user => user?.status && (!user.status.until || user.status.until > Date.now()) ? user.status : null;
+export const activeStatus = user => {
+  const status = user?.status;
+  if (!status || typeof status !== 'object') return null;
+  if (status.until && status.until <= Date.now()) return null;
+  return status.emoji || status.text ? status : null;
+};
 const StatusEmoji = ({ user }) => { const status = activeStatus(user); return status?.emoji ? <span className="status-emoji" title={status.text || undefined}>{status.emoji}</span> : null; };
 export { StatusEmoji };
 export const nameColor = (id, user) => `var(--name-${Number.isInteger(user?.nameColor) ? user.nameColor : [...(id || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 7})`;

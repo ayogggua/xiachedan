@@ -33,10 +33,12 @@ function CreateTable({ game, me, connected, inHand, onCommand, onClose }) {
   </Sheet>;
 }
 
-export default function ArcadeLobby({ game, me, connected, table, own, selectedGame, onSelect, onView, onReturn, onCommand, onPanel, onRules, art, roomIcon }) {
+export default function ArcadeLobby({ game, me, connected, table, selectedGame, onSelect, onView, onReturn, onCommand, onPanel, onRules, art, roomIcon }) {
   const [creating, setCreating] = useState(false);
   useEffect(() => setCreating(false), [selectedGame]);
-  const inHand = Boolean(own) && !['waiting', 'showdown'].includes(table?.phase);
+  const membership = game.membership;
+  const seatedId = membership && !membership.leaving ? membership.tableId : null;
+  const inHand = Boolean(membership?.inHand);
   const rooms = game.tables || [];
   return <>
     <main className={`arcade-lobby ${selectedGame ? 'poker-lobby' : 'game-catalog'}`}>
@@ -46,13 +48,13 @@ export default function ArcadeLobby({ game, me, connected, table, own, selectedG
       {!selectedGame ? <div className="arcade-game-grid">{games.map(item => <article key={item.id} className="arcade-feature arcade-game-card">
         <div className="feature-copy"><span className="arcade-eyebrow">{item.caption}</span><h2>{item.name}</h2><div className="feature-meta"><span><Users size={15} />{item.players}</span><span>无限注</span></div></div>
         <div className="feature-art" aria-hidden="true">{item.id === 'poker' && art}</div>
-        <div className="game-card-footer"><span>{own ? <><i />已入座</> : `${rooms.length} 张牌桌`}</span><button onClick={() => onSelect(item.id)} aria-label={`进入${item.name}`}>进入游戏<ArrowRight size={18} /></button></div>
+        <div className="game-card-footer"><span>{seatedId ? <><i />已入座</> : membership?.leaving ? <><i />本手结算中</> : `${rooms.length} 张牌桌`}</span><button onClick={() => onSelect(item.id)} aria-label={`进入${item.name}`}>进入游戏<ArrowRight size={18} /></button></div>
       </article>)}</div> : <section className="arcade-tables">
         <div className="tables-heading"><h3>正在开放的牌桌<span>{rooms.length}</span></h3><div className="poker-lobby-actions"><button className="arcade-text" onClick={game.refresh} aria-label="刷新牌桌"><RefreshCw size={16} /></button><button className="arcade-primary" disabled={game.busy || !connected || inHand} onClick={() => setCreating(true)}><Plus size={16} />开桌</button></div></div>
-        {table && own && !rooms.some(room => room.id === table.id) && <button className="return-table" onClick={onReturn}><span className="return-room-name"><i /><b>{table.name}</b></span><span>返回牌桌<ArrowRight size={15} /></span></button>}
+        {seatedId && !rooms.some(room => room.id === seatedId) && <button className="return-table" onClick={() => table?.id === seatedId ? onReturn() : onView(seatedId)}><span className="return-room-name"><i /><b>{membership.tableName}</b></span><span>返回牌桌<ArrowRight size={15} /></span></button>}
         <div className="room-list">{rooms.length ? rooms.map(room => {
-          const seated = own && table?.id === room.id;
-          return <button className={`arcade-room ${seated ? 'is-seated' : ''}`} key={room.id} onClick={() => seated ? onReturn() : onView(room.id)}><span className="room-suit">{roomIcon}</span><span className="room-info"><strong title={room.name}>{room.name}</strong><small>盲注 {room.smallBlind} / {room.bigBlind} · {room.matchComplete ? '本场结束' : phases[room.phase]}{seated && ' · 已入座'}</small></span><span className="room-seats"><Users size={15} />{room.playerCount} / {room.maxPlayers}</span><ChevronRight size={18} /></button>;
+          const seated = seatedId === room.id;
+          return <button className={`arcade-room ${seated ? 'is-seated' : ''}`} key={room.id} onClick={() => seated && table?.id === room.id ? onReturn() : onView(room.id)}><span className="room-suit">{roomIcon}</span><span className="room-info"><strong title={room.name}>{room.name}</strong><small>盲注 {room.smallBlind} / {room.bigBlind} · {room.matchComplete ? '本场结束' : phases[room.phase]}{seated && ' · 已入座'}</small></span><span className="room-seats"><Users size={15} />{room.playerCount} / {room.maxPlayers}</span><ChevronRight size={18} /></button>;
         }) : <div className="rooms-empty"><span className="empty-table-icon">{roomIcon}</span><h4>还没有牌桌</h4><p>点击开桌，邀请好友一起玩。</p></div>}</div>
       </section>}
       <footer className="arcade-lobby-footer"><span>筹码仅供娱乐，不可充值或兑换</span>{selectedGame && <button className="arcade-text" onClick={onRules}><CircleHelp size={15} />玩法规则</button>}</footer>

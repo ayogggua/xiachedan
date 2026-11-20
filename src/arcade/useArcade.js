@@ -17,6 +17,13 @@ export default function useArcade() {
       if (live.current && ticket === serial.current) { setData(next); setError(''); }
     } catch (error) {
       if (live.current && ticket === serial.current) {
+        if (error.status === 404 && selected.current) {
+          selected.current = '';
+          try {
+            const fallback = await api('arcade/state');
+            if (live.current && ticket === serial.current) { setData(fallback); setError(''); return; }
+          } catch {}
+        }
         setError(error.message);
         if (error.status === 404) { selected.current = ''; setData(previous => previous && { ...previous, table: null }); }
       }
@@ -38,19 +45,24 @@ export default function useArcade() {
     return () => { live.current = false; ++serial.current; clearTimeout(debounce); clearInterval(poll); window.removeEventListener('linliao:arcade-changed', sync); window.removeEventListener('linliao:arcade-joined', joined); window.removeEventListener('linliao:resume', wake); window.removeEventListener('online', wake); document.removeEventListener('visibilitychange', wake); };
   }, [refresh]);
   const command = async (action, body = {}) => {
-    if (mutating.current) return false;
+    if (mutating.current) return null;
     mutating.current = true; setBusy(true); setError(''); ++serial.current;
     try {
       const next = await api(`arcade/${action}`, { requestId: uid(), ...body });
       ++serial.current;
       if (live.current) { selected.current = next.table?.id || ''; setData(next); }
-      return true;
+      return next;
     } catch (error) {
       await refresh();
       if (live.current) setError(error.message);
-      return false;
+      return null;
     } finally { mutating.current = false; if (live.current) setBusy(false); }
   };
   const inspect = async id => { selected.current = id || ''; setLoading(true); await refresh(); };
-  return { ...data, loading, busy, error, refresh, command, inspect };
+  const clearSelection = useCallback(() => {
+    if (!selected.current) return;
+    selected.current = '';
+    refresh();
+  }, [refresh]);
+  return { ...data, loading, busy, error, refresh, command, inspect, clearSelection };
 }

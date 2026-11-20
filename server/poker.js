@@ -100,7 +100,7 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
   };
   const stopTimer = table => { clearTimeout(table.timer); table.timer = null; table.deadline = null; };
   const stopNextHand = table => { clearTimeout(table.nextHandTimer); table.nextHandTimer = null; table.nextHandAt = null; };
-  const readyPlayers = table => table.players.filter(player => player.ready && player.stack > 0 && !player.leaving);
+  const readyPlayers = table => table.players.filter(player => player.ready && player.stack > 0 && !player.leaving && !player.leaveAfterHand);
   const scheduleNextHand = table => {
     if (closed || !tables.has(table.id) || !table.autoContinue || table.phase !== 'showdown' || matchComplete(table) || readyPlayers(table).length < 2) {
       stopNextHand(table); return;
@@ -122,7 +122,9 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
   const cleanupLeavers = table => {
     // 当前手参与者即使已离桌也必须保留到结算，避免后来加入的旁观玩家离开时带走其底池记录。
     table.players = table.players.filter(player => {
-      if (!player.leaving || (playing(table) && player.inHand)) return true;
+      const exiting = player.leaving || (!playing(table) && player.leaveAfterHand);
+      if (!exiting || (playing(table) && player.inHand)) return true;
+      if (player.leaveAfterHand && !player.leaving) log(table, `${player.name} 离开牌桌`);
       bank.cashout(player.id); return false;
     });
     transferHost(table);
@@ -189,15 +191,20 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
         previous = level;
       }
     }
-    const winners = [...amounts].map(([id, amount]) => ({ id, amount, hand: ranks.get(id)?.name || '其他玩家弃牌' }));
+    const winners = [...amounts].map(([id, amount]) => ({ id, name: table.players.find(player => player.id === id)?.name || '玩家', amount, hand: ranks.get(id)?.name || '其他玩家弃牌' }));
     const result = { reason, winners, pots, totalPot };
     bank.settle(table, table.players.filter(player => player.inHand), result);
     collect(table);
     motion(table, 'win', { awards: winners.map(winner => ({ seat: table.players.find(player => player.id === winner.id).seat, amount: winner.amount })) });
     for (const player of table.players) {
       player.winAmount = amounts.get(player.id) || 0; player.stack += player.winAmount; player.bet = 0;
-      // 本场首次准备即持续参赛；新入座旁观者和筹码归零者仍须主动准备。
-      player.ready = player.inHand && player.stack > 0 && !player.leaving;
+      const pausedByAutoplay = Boolean(player.autoplay && !player.leaving && !player.leaveAfterHand);
+      if (pausedByAutoplay) {
+        player.autoplay = false;
+        log(table, `${player.name} 托管已暂停下局`);
+      }
+      // 连续场保留准备状态：中途入座者可自动进入下一手，筹码归零、离桌或托管触发者暂停参与。
+      player.ready = Boolean(player.ready && player.stack > 0 && !player.leaving && !player.leaveAfterHand && !pausedByAutoplay);
     }
     table.result = result;
     table.phase = 'showdown'; table.turnSeat = null; table.currentBet = 0;
@@ -292,7 +299,7 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       currentBet: table.currentBet, minRaise: table.minRaise, result: table.result, log: [...table.log], actions: legalActions(table, userId),
       players: table.players.map(player => ({ id: player.id, name: player.name, avatar: player.avatar, seat: player.seat, stack: player.stack,
         bet: player.bet, contribution: player.contribution, ready: player.ready, inHand: player.inHand, folded: player.folded, allIn: player.allIn,
-        leaving: player.leaving, autoplay: player.autoplay, online: online.has(player.id), cards: player.id === userId || (table.phase === 'showdown' && table.result?.reason === 'showdown' && player.inHand && !player.folded) ? [...player.cards] : null,
+        leaving: player.leaving, leaveAfterHand: Boolean(player.leaveAfterHand), autoplay: player.autoplay, online: online.has(player.id), cards: player.id === userId || (table.phase === 'showdown' && table.result?.reason === 'showdown' && player.inHand && !player.folded) ? [...player.cards] : null,
         cardCount: player.cards.length, lastAction: player.lastAction, winAmount: player.winAmount })) };
   };
   const state = (user, id) => {
@@ -300,7 +307,14 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
     const self = seated?.players.find(player => player.id === user.id);
     if (self) { self.lastSeen = now(); self.name = user.name; self.avatar = user.avatar; }
     const table = id ? requireTable(id) : self && !self.leaving ? seated : null;
-    return { tables: [...tables.values()].map(summary), table: table ? view(table, user.id) : null,
+    const membership = seated && self ? {
+      tableId: seated.id,
+      tableName: seated.name,
+      inHand: Boolean(playing(seated) && self.inHand),
+      leaving: Boolean(self.leaving),
+      leaveAfterHand: Boolean(self.leaveAfterHand),
+    } : null;
+    return { tables: [...tables.values()].map(summary), table: table ? view(table, user.id) : null, membership,
       wallet: bank.wallet(user.id), canMint: bank.canMint(user), invitations: pendingInvitations(user.id), serverTime: now() };
   };
   const addPlayer = (table, user, requestedSeat) => {
@@ -312,7 +326,9 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
         if (requestedSeat !== undefined && requestedSeat !== player.seat) throw fail('你已经在这张牌桌入座', 409);
         return;
       }
-      if (playing(existing)) throw fail('当前牌局正在进行，结束后才能换桌', 409);
+      if (playing(existing) && player.inHand) {
+        throw fail(player.leaving ? '上一手牌局尚未结算，结束后即可重新入座' : '当前所在牌桌正在牌局中，本手结束后才能换桌', 409);
+      }
     }
     if (requestedSeat !== undefined && table.players.some(player => player.seat === requestedSeat)) throw fail('这个座位已经有人了', 409);
     if (table.players.length >= MAX_PLAYERS) throw fail('牌桌已满，可以先观战', 409);
@@ -322,12 +338,14 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       existing.players = existing.players.filter(player => player.id !== user.id);
       log(existing, `${user.name} 换桌`); cleanupLeavers(existing); publish(existing);
     }
-    table.players.push({ id: user.id, name: user.name, avatar: user.avatar, seat, stack, bet: 0, contribution: 0, ready: false,
-      inHand: false, folded: false, allIn: false, cards: [], leaving: false, autoplay: false, lastSeen: now(), lastAction: '', winAmount: 0, actedBet: null, reopenSize: table.bigBlind });
+    const autoReady = (playing(table) || table.autoContinue) && !matchComplete(table);
+    table.players.push({ id: user.id, name: user.name, avatar: user.avatar, seat, stack, bet: 0, contribution: 0, ready: autoReady,
+      inHand: false, folded: false, allIn: false, cards: [], leaving: false, leaveAfterHand: false, autoplay: false, lastSeen: now(), lastAction: '', winAmount: 0, actedBet: null, reopenSize: table.bigBlind });
     log(table, `${user.name} 加入牌桌`);
+    if (!playing(table)) scheduleNextHand(table);
   };
   const leavePlayer = (table, player) => {
-    player.leaving = true; player.ready = false;
+    player.leaving = true; player.leaveAfterHand = false; player.ready = false;
     log(table, `${player.name} 离开牌桌`);
     transferHost(table);
     if (!playing(table) || !player.inHand) {
@@ -382,7 +400,11 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
     invitations(user) { return { invitations: pendingInvitations(user.id), serverTime: now() }; },
     create(user, { name, smallBlind = DEFAULT_SMALL_BLIND, handLimit = 0 } = {}) {
       sweep();
-      if (playing(findMembership(user.id) || {})) throw fail('当前牌局正在进行，结束后才能新建牌桌', 409);
+      const existing = findMembership(user.id);
+      const existingPlayer = existing?.players.find(item => item.id === user.id);
+      if (existing && playing(existing) && existingPlayer?.inHand) {
+        throw fail(existingPlayer.leaving ? '上一手牌局尚未结算，结束后即可新建牌桌' : '当前所在牌桌正在牌局中，本手结束后才能新建牌桌', 409);
+      }
       if (tables.size >= 64) throw fail('牌桌数量已满，请加入现有牌桌', 409);
       const limits = stakes(smallBlind, handLimit);
       const table = { ...limits, id: randomUUID(), name: (typeof name === 'string' ? name.trim() : '').slice(0, 32) || `${user.name}的牌桌`.slice(0, 32),
@@ -393,18 +415,40 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       return state(user, table.id);
     },
     join(user, { id, seat } = {}) { const table = requireTable(id); addPlayer(table, user, seat); publish(table); return state(user, id); },
-    leave(user, { id } = {}) {
+    leave(user, { id, mode = 'now' } = {}) {
       const table = requireTable(id), player = requirePlayer(table, user.id);
-      if (playing(table)) throw fail('牌局正在进行，结束后才能离桌', 409);
+      if (!['now', 'after', 'cancel'].includes(mode)) throw fail('离桌方式无效');
+      if (mode === 'cancel') {
+        if (player.leaveAfterHand) {
+          player.leaveAfterHand = false;
+          if ((playing(table) || table.autoContinue) && !matchComplete(table) && (player.stack > 0 || (playing(table) && player.inHand))) player.ready = true;
+          log(table, `${player.name} 取消了本局后离桌`);
+          scheduleNextHand(table);
+          publish(table);
+        }
+        return state(user, id);
+      }
+      if (mode === 'after' && playing(table) && player.inHand) {
+        if (!player.leaveAfterHand) {
+          player.leaveAfterHand = true; player.ready = false;
+          log(table, `${player.name} 将在本局结束后离桌`);
+          publish(table);
+        }
+        return state(user, id);
+      }
       leavePlayer(table, player); publish(table); return { ...state(user), table: null };
     },
     ready(user, { id, ready } = {}) {
       const table = requireTable(id), player = requirePlayer(table, user.id);
-      if (playing(table)) throw fail('这手牌结束后再准备', 409);
       if (matchComplete(table)) throw fail('本场已结束，等待桌主开启下一场', 409);
       if (typeof ready !== 'boolean') throw fail('准备状态无效');
-      if (player.stack <= 0) throw fail('筹码不足，请先补充筹码');
-      player.ready = ready; scheduleNextHand(table); publish(table); return state(user, id);
+      if (ready && player.stack <= 0 && !(playing(table) && player.inHand)) throw fail('筹码不足，请先补充筹码');
+      player.ready = ready;
+      if (ready) {
+        player.leaveAfterHand = false;
+        if (!playing(table) || !player.inHand) player.autoplay = false;
+      }
+      scheduleNextHand(table); publish(table); return state(user, id);
     },
     stakes(user, { id, smallBlind, handLimit } = {}) {
       const table = requireTable(id); requirePlayer(table, user.id);
@@ -429,14 +473,19 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       table.matchNumber++; table.matchHandNumber = 0; table.phase = 'waiting'; table.handId = null;
       table.result = null; table.board = []; table.events = []; table.currentBet = 0; table.minRaise = table.bigBlind;
       table.smallBlindSeat = null; table.bigBlindSeat = null;
-      for (const player of table.players) Object.assign(player, { ready: false, inHand: false, cards: [], bet: 0, contribution: 0, folded: false, allIn: false, winAmount: 0, lastAction: '' });
+      for (const player of table.players) Object.assign(player, { ready: false, inHand: false, cards: [], bet: 0, contribution: 0, folded: false, allIn: false, leaveAfterHand: false, autoplay: false, winAmount: 0, lastAction: '' });
       log(table, `第 ${table.matchNumber} 场开始，请准备`); publish(table); return state(user, id);
     },
     rebuy(user, { id, amount } = {}) {
       const table = requireTable(id), player = requirePlayer(table, user.id);
-      if (playing(table)) throw fail('本局结束后才能补充筹码', 409);
+      if (playing(table) && player.inHand) throw fail('本手结束后才能补充筹码', 409);
       amount ??= table.buyIn;
+      const wasBusted = player.stack === 0;
       player.stack += bank.topup(user.id, table.id, amount); player.winAmount = 0;
+      if (wasBusted && (playing(table) || table.autoContinue) && !matchComplete(table) && !player.leaving && !player.leaveAfterHand) {
+        player.ready = true;
+        player.autoplay = false;
+      }
       log(table, `${player.name} 买入 ${amount} 筹码`); scheduleNextHand(table); publish(table); return state(user, id);
     },
     start(user, { id } = {}) {
