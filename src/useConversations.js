@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 
 function readPreferences(key) {
   const saved = key ? readStorage(key, {}) : {};
@@ -24,8 +25,7 @@ export default function useConversations({ state, spaceId, selected, onSelect, n
   const save = useCallback(preferences => {
     const context = current.current;
     if (!context.key) return false;
-    try { localStorage.setItem(context.key, JSON.stringify(preferences)); }
-    catch { context.notify('无法保存会话设置，请检查本机存储空间'); return false; }
+    if (!writeStorage(context.key, JSON.stringify(preferences))) { context.notify('无法保存会话设置，请检查本机存储空间'); return false; }
     current.current = { ...context, preferences };
     setSaved({ key: context.key, preferences });
     return true;

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, Coins, Search, Trophy, UserPlus, X } from 'lucide-react';
-import { api } from '../api';
+import { api, uid } from '../api';
 import { Avatar } from '../components';
 import './arcade-panels.css';
 
@@ -86,11 +86,17 @@ export function Leaderboard({ me, onClose }) {
   const [rows, setRows] = useState(null);
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState('');
+  const serial = useRef(0);
   useEffect(() => {
     let alive = true;
-    const load = () => api(`arcade/leaderboard?sort=${sort}`).then(data => { if (alive) { setRows(data.players); setError(''); } }).catch(error => { if (alive) setError(error.message); });
+    const load = () => {
+      const ticket = ++serial.current;
+      api(`arcade/leaderboard?sort=${sort}`)
+        .then(data => { if (alive && ticket === serial.current) { setRows(data.players); setError(''); } })
+        .catch(error => { if (alive && ticket === serial.current) setError(error.message); });
+    };
     load(); window.addEventListener('linliao:arcade-changed', load);
-    return () => { alive = false; window.removeEventListener('linliao:arcade-changed', load); };
+    return () => { alive = false; ++serial.current; window.removeEventListener('linliao:arcade-changed', load); };
   }, [sort]);
   const user = rows?.find(row => row.id === selected);
   return <Sheet title="牌桌排行榜" icon={<Trophy size={21} />} onClose={onClose} wide>
@@ -129,9 +135,9 @@ export function WalletPanel({ me, onClose, onChanged }) {
     if (!valid || busy) return;
     if (!review) { setReview(true); return; }
     setBusy(true); setError(''); ++serial.current;
-    const key = `${mode}:${selected.id}:${value}:${note}`;
-    if (submission.current?.key !== key) submission.current = { key, requestId: crypto.randomUUID() };
     try {
+      const key = `${mode}:${selected.id}:${value}:${note}`;
+      if (submission.current?.key !== key) submission.current = { key, requestId: uid() };
       const next = await api(`arcade/${mode}`, { userId: selected.id, amount: value, note, requestId: submission.current.requestId });
       ++serial.current;
       setData(next); setSuccess(`已${mode === 'mint' ? '发放' : '转给'} ${selected.name} ${num(value)} 筹码`); setMode('history'); setAmount(''); setSelected(null); setNote(''); setReview(false); submission.current = null; onChanged();

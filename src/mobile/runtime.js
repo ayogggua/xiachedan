@@ -36,13 +36,38 @@ export async function saveDownload(address, name = '附件') {
 }
 
 export function setupViewport() {
+  let lastOffsetTop = 0;
   const update = () => {
-    if (window.visualViewport?.scale && window.visualViewport.scale !== 1) return;
-    if (innerWidth <= 760 || mobileClient) document.documentElement.style.setProperty('--app-height', `${window.visualViewport?.height || innerHeight}px`);
-    else document.documentElement.style.removeProperty('--app-height');
+    const vv = window.visualViewport;
+    if (vv?.scale && vv.scale !== 1) return;
+    const narrow = innerWidth <= 760 || mobileClient;
+    if (narrow) {
+      document.documentElement.style.setProperty('--app-height', `${vv?.height || innerHeight}px`);
+      if (!nativeMobile && vv) {
+        const keyboardOpen = innerHeight - vv.height > 120;
+        document.documentElement.classList.toggle('keyboard-open', keyboardOpen);
+        if (keyboardOpen && vv.offsetTop > 0) {
+          if (vv.offsetTop !== lastOffsetTop) { lastOffsetTop = vv.offsetTop; window.scrollTo(0, 0); }
+        } else {
+          lastOffsetTop = 0;
+        }
+      }
+    } else {
+      lastOffsetTop = 0;
+      document.documentElement.style.removeProperty('--app-height');
+      if (!nativeMobile) document.documentElement.classList.remove('keyboard-open');
+    }
   };
-  update(); window.addEventListener('resize', update); window.visualViewport?.addEventListener('resize', update);
-  return () => { window.removeEventListener('resize', update); window.visualViewport?.removeEventListener('resize', update); };
+  update();
+  window.addEventListener('resize', update);
+  window.visualViewport?.addEventListener('resize', update);
+  window.visualViewport?.addEventListener('scroll', update);
+  return () => {
+    window.removeEventListener('resize', update);
+    window.visualViewport?.removeEventListener('resize', update);
+    window.visualViewport?.removeEventListener('scroll', update);
+    if (!nativeMobile) document.documentElement.classList.remove('keyboard-open');
+  };
 }
 
 export async function initializeNative() {

@@ -1,57 +1,515 @@
-.arcade-sheet-backdrop { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; padding: 24px; background: #443c2f66; backdrop-filter: blur(6px); }
-.arcade-sheet { width: min(460px,100%); max-height: 100%; display: flex; flex-direction: column; background: #f8f5ed; border: 1px solid #c5bca9; border-radius: 13px; box-shadow: inset 0 0 0 3px #fffdf7, 0 20px 70px #33281d55; overflow: hidden; }
-.arcade-sheet.wide { width: min(920px,100%); }
-.arcade-sheet > header { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid #d5cbb8; }
-.arcade-sheet > header > span { display: flex; align-items: center; gap: 10px; color: #9b793d; }
-.arcade-sheet h2 { font-size: 18px; color: #514533; }
-.arcade-sheet header > button, .arcade-stat-card header > button { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 5px; }
-.arcade-sheet header > button:hover { background: #e8dfce; }
-.arcade-sheet-body { padding: 22px; overflow-y: auto; min-height: 0; }
-.arcade-sheet-subtitle { color: #8d7c5e; font-size: 12px; margin-bottom: 18px; }
-.arcade-search { display: flex; align-items: center; gap: 8px; background: #fffcf6; border: 1px solid #d0c4ad; padding: 8px 12px; border-radius: 6px; }
-.arcade-search input { background: none; border: 0; width: 100%; color: #504532; font-size: 12px; outline: none; box-shadow: none; }
-.arcade-people-list { max-height: 220px; overflow-y: auto; margin: 10px 0; display: grid; gap: 4px; }
-.arcade-people-list button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px; border: 1px solid transparent; border-radius: 6px; text-align: left; font-size: 12px; }
-.arcade-people-list button.selected { background: #ece0c6; border-color: #c6a865; }
-.arcade-people-list button span { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.arcade-people-list button:hover { background: #eee6d8; }
-.panel-submit { width: 100%; margin-top: 14px; }
-.arcade-panel-empty, .arcade-panel-error, .arcade-panel-success { font-size: 12px; padding: 12px 0; }
-.arcade-panel-empty { color: #988a74; }.arcade-panel-error { color: #ad4538; }.arcade-panel-success { color: #527d51; }
-.arcade-ranking-heading { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 20px; color: #8e7d60; font-size: 12px; }
-.arcade-ranking-heading select { padding: 7px 10px; border: 1px solid #cec2ac; background: #fffaf1; color: #6c593c; border-radius: 5px; font: inherit; }
-.arcade-ranking-scroll { overflow-x: auto; }
-.arcade-ranking { border-collapse: collapse; width: 100%; font-size: 12px; white-space: nowrap; }
-.arcade-ranking th { text-align: right; color: #8d7b5c; background: #ece6d9; font-weight: 500; font-size: 11px; padding: 10px 14px; }
-.arcade-ranking th:first-child { text-align: left; }
-.arcade-ranking td { border-bottom: 1px solid #e0d8c9; text-align: right; padding: 13px 14px; font-family: var(--font-mono); }
-.arcade-ranking tr.is-me { background: #cbb07814; }
-.arcade-ranking td:first-child { padding-left: 0; }
-.arcade-ranking td button { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; font-family: var(--font); }
-.arcade-ranking td b { max-width: 160px; overflow: hidden; text-overflow: ellipsis; font-weight: 550; }
-.arcade-ranking td small { margin-left: 5px; color: #ac8846; font-size: 9px; }
-.rank-number { font: 12px var(--font-mono); width: 30px; text-align: center; color: #92826c; }
-.rank-1, .rank-2, .rank-3 { font-weight: 750; color: #a47c2e; }
-.arcade-app .positive { color: #4d8058; }.arcade-app .negative { color: #b45c50; }
-.arcade-stat-note { margin-top: 18px; color: #99886c; font-size: 10px; line-height: 1.8; }
-.arcade-stat-card { border: 1px solid #cbbd9f; border-radius: 8px; padding: 18px; margin-top: 22px; background: #f1ebdd; }
-.arcade-stat-card header { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-.arcade-stat-card header button { margin-left: auto; }
-.arcade-stat-card dl { display: grid; grid-template-columns: repeat(5,1fr); gap: 18px; margin-top: 22px; }
-.arcade-stat-card dt { color: #968262; font-size: 10px; }.arcade-stat-card dd { font: 650 15px var(--font-mono); color: #57462c; margin-top: 5px; }
-.arcade-wallet-balance { padding: 22px; border: 1px solid #cdbb94; border-radius: 8px; background: radial-gradient(at top right,#e1d2b2,#efeadf); box-shadow: inset 0 0 0 3px #f9f6ec; }
-.arcade-wallet-balance > span { font-size: 11px; color: #94815d; }
-.arcade-wallet-balance > strong { font: 650 36px/1.8 var(--font-mono); display: block; color: #67502b; letter-spacing: 1px; }
-.arcade-wallet-balance > div { display: flex; justify-content: space-between; color: #a18c68; font-size: 10px; gap: 10px; }
-.arcade-wallet-balance b { font-family: var(--font-mono); font-weight: 500; color: #79603b; margin-left: 5px; }
-.arcade-panel-tabs { display: flex; border-bottom: 1px solid #d9ceba; margin: 22px 0 14px; }
-.arcade-panel-tabs button { flex: 1; padding: 9px 8px; font-size: 12px; color: #968364; border-bottom: 2px solid transparent; }
-.arcade-panel-tabs button.active { color: #6a5128; border-color: #b5904b; font-weight: 600; }
-.arcade-transactions { list-style: none; padding: 0; margin: 0; }
-.arcade-transactions li { padding: 13px 0; border-bottom: 1px solid #e2daca; display: flex; justify-content: space-between; align-items: center; gap: 14px; }
-.arcade-transactions li > span { min-width: 0; display: grid; gap: 4px; }.arcade-transactions b { font-size: 11px; font-weight: 500; overflow-wrap: anywhere; }.arcade-transactions small { font-size: 9px; color: #a39273; }
-.arcade-transactions strong { font: 550 13px var(--font-mono); white-space: nowrap; }
-.arcade-transfer-form > label { display: grid; gap: 7px; margin-top: 16px; color: #93805d; font-size: 11px; }
-.arcade-transfer-form > label input { border: 1px solid #cabda3; background: #fffaf2; color: #57462c; border-radius: 5px; padding: 10px; box-shadow: none; font-size: 14px; }
-.arcade-transfer-review { display: grid; justify-items: center; gap: 10px; padding: 16px; }.arcade-transfer-review b { font-size: 14px; }.arcade-transfer-review > span { color: #9b8560; font-size: 12px; }.arcade-transfer-review > strong { font: 600 34px var(--font-mono); color: #81632d; }
-@media(max-width: 600px) { .arcade-sheet-backdrop { padding: 10px; }.arcade-sheet-body { padding: 16px; }.arcade-stat-card dl { grid-template-columns: repeat(2,1fr); }.arcade-ranking td, .arcade-ranking th { padding: 10px 8px; }.arcade-ranking td b { max-width: 90px; }.arcade-ranking-heading > span { display: none; }.arcade-wallet-balance { padding: 16px; }.arcade-wallet-balance > div { flex-wrap: wrap; } }
+/* 俱乐部弹层面板：建房 / 排行榜 / 筹码金库 / 邀请好友 / 底分设置 */
+.arcade-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: max(24px, var(--mobile-safe-top, env(safe-area-inset-top, 0px))) 24px max(24px, var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px)));
+  background: rgba(6, 12, 10, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.arcade-sheet {
+  width: min(468px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: rgba(17, 24, 21, 0.97);
+  border: 1px solid rgba(202, 168, 96, 0.38);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 245, 218, 0.12),
+    0 24px 72px rgba(4, 11, 8, 0.82);
+  overflow: hidden;
+  color: #f1f5f3;
+  animation: surface-pop 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.arcade-sheet.wide {
+  width: min(920px, 100%);
+}
+.arcade-sheet > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid rgba(202, 168, 96, 0.2);
+  background: rgba(13, 20, 17, 0.94);
+}
+.arcade-sheet > header > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #e2c27a;
+}
+.arcade-sheet h2 {
+  font-size: 17px;
+  font-weight: 650;
+  color: #f1f5f3;
+  letter-spacing: 0.02em;
+}
+.arcade-sheet header > button,
+.arcade-stat-card header > button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  color: #a9bab1;
+  transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1), color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.arcade-sheet header > button:hover,
+.arcade-stat-card header > button:hover {
+  background: rgba(202, 168, 96, 0.14);
+  color: #f1f5f3;
+}
+.arcade-sheet-body {
+  padding: 20px 22px 22px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.arcade-sheet-subtitle {
+  color: #a9bab1;
+  font-size: 12.5px;
+  margin-bottom: 16px;
+}
+
+/* ── 好友搜索与选择列表 ── */
+.arcade-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #0f1714;
+  border: 1px solid rgba(241, 246, 243, 0.15);
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: #86998f;
+  box-shadow: inset 0 2px 4px rgba(4, 11, 8, 0.5);
+  transition: border-color 140ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.arcade-app .arcade-search:focus-within {
+  border-color: #e2c27a;
+  box-shadow: 0 0 0 2px rgba(202, 168, 96, 0.24);
+}
+.arcade-search input {
+  background: none;
+  border: 0;
+  width: 100%;
+  color: #f1f5f3;
+  font-size: 12.5px;
+  outline: none;
+  box-shadow: none;
+}
+.arcade-app .arcade-search input:focus {
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+.arcade-people-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 10px 0;
+  display: grid;
+  gap: 4px;
+}
+.arcade-people-list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 12.5px;
+  color: #f1f5f3;
+  transition: background-color 130ms cubic-bezier(0.23, 1, 0.32, 1), border-color 130ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.arcade-people-list button:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.arcade-people-list button.selected {
+  background: rgba(202, 168, 96, 0.16);
+  border-color: rgba(226, 194, 122, 0.55);
+  color: #f6dc9c;
+}
+.arcade-people-list button span:not(.avatar) {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.panel-submit {
+  width: 100%;
+  margin-top: 14px;
+}
+.arcade-panel-empty,
+.arcade-panel-error,
+.arcade-panel-success {
+  font-size: 12px;
+  padding: 10px 0;
+}
+.arcade-panel-empty {
+  color: #86998f;
+}
+.arcade-panel-error {
+  color: #fca5a5;
+}
+.arcade-panel-success {
+  color: #6ee7b7;
+}
+
+/* ── 排行榜表格与个人战绩卡 ── */
+.arcade-ranking-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+  color: #a9bab1;
+  font-size: 12.5px;
+}
+.arcade-ranking-heading select {
+  padding: 7px 12px;
+  border: 1px solid rgba(202, 168, 96, 0.34);
+  background-color: #101916;
+  color: #f1f5f3;
+  color-scheme: dark;
+  border-radius: 7px;
+  font: inherit;
+  cursor: pointer;
+}
+.arcade-ranking-scroll {
+  overflow-x: auto;
+  border: 1px solid rgba(241, 246, 243, 0.08);
+  border-radius: 10px;
+  background: #101815;
+}
+.arcade-ranking {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.arcade-ranking th {
+  text-align: right;
+  color: #a9bab1;
+  background: #16221e;
+  border-bottom: 1px solid rgba(202, 168, 96, 0.2);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 10px 14px;
+}
+.arcade-ranking th:first-child {
+  text-align: left;
+}
+.arcade-ranking td {
+  border-bottom: 1px solid rgba(241, 246, 243, 0.07);
+  text-align: right;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: #e4ede8;
+}
+.arcade-ranking tr:last-child td {
+  border-bottom: 0;
+}
+.arcade-ranking tbody tr {
+  transition: background-color 130ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.arcade-ranking tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.arcade-ranking tr.is-me {
+  background: rgba(21, 71, 52, 0.32);
+}
+.arcade-ranking td:first-child {
+  padding-left: 10px;
+}
+.arcade-ranking td button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  width: 100%;
+  font-family: var(--font);
+  color: #f1f5f3;
+}
+.arcade-ranking td b {
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.arcade-ranking td small {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(52, 211, 153, 0.42);
+  background: rgba(20, 83, 60, 0.72);
+  color: #bbf7dc;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+.rank-number {
+  display: inline-grid;
+  place-items: center;
+  font: 700 11.5px var(--font-mono);
+  width: 28px;
+  height: 24px;
+  border-radius: 6px;
+  text-align: center;
+  color: #86998f;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+}
+.rank-1 {
+  color: #161209;
+  background: linear-gradient(180deg, #f4dc9e 0%, #c89d47 100%);
+  border-color: #fdecc0;
+  box-shadow: 0 2px 8px rgba(202, 168, 96, 0.32);
+}
+.rank-2 {
+  color: #121a17;
+  background: linear-gradient(180deg, #e2ebe7 0%, #a9bab1 100%);
+  border-color: #f1f5f3;
+}
+.rank-3 {
+  color: #1d1007;
+  background: linear-gradient(180deg, #e2ab7e 0%, #b57644 100%);
+  border-color: #f3c8a4;
+}
+.arcade-app .positive {
+  color: #4ade80;
+}
+.arcade-app .negative {
+  color: #f87171;
+}
+.arcade-stat-note {
+  margin-top: 16px;
+  color: #86998f;
+  font-size: 11px;
+  line-height: 1.75;
+}
+.arcade-stat-card {
+  border: 1px solid rgba(202, 168, 96, 0.34);
+  border-radius: 11px;
+  padding: 18px;
+  margin-top: 20px;
+  background: linear-gradient(180deg, #17231e 0%, #111a17 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 245, 218, 0.08);
+  animation: surface-pop 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.arcade-stat-card header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 620;
+  color: #f1f5f3;
+}
+.arcade-stat-card header button {
+  margin-left: auto;
+}
+.arcade-stat-card dl {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  margin: 18px 0 0;
+}
+.arcade-stat-card dt {
+  color: #86998f;
+  font-size: 10.5px;
+}
+.arcade-stat-card dd {
+  margin: 4px 0 0;
+  font: 700 15px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: #f4d898;
+}
+
+/* ── 筹码金库卡 & 流水 & 转账 ── */
+.arcade-wallet-balance {
+  padding: 20px 22px;
+  border: 1px solid rgba(226, 194, 122, 0.44);
+  border-radius: 12px;
+  background:
+    radial-gradient(ellipse 80% 90% at top right, rgba(30, 100, 72, 0.44), rgba(15, 25, 21, 0.96) 72%),
+    #121d19;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 245, 214, 0.08),
+    inset 0 1px 0 rgba(255, 245, 214, 0.16),
+    0 12px 26px rgba(4, 11, 8, 0.5);
+}
+.arcade-wallet-balance > span {
+  font-size: 11.5px;
+  color: #a9bab1;
+  letter-spacing: 0.04em;
+}
+.arcade-wallet-balance > strong {
+  font: 700 34px/1.45 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  display: block;
+  color: #f6dc9c;
+  letter-spacing: 0.02em;
+  margin: 4px 0 10px;
+}
+.arcade-wallet-balance > div {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid rgba(202, 168, 96, 0.22);
+  color: #a9bab1;
+  font-size: 11px;
+  gap: 10px;
+}
+.arcade-wallet-balance b {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #f1f5f3;
+  margin-left: 5px;
+}
+
+.arcade-panel-tabs {
+  display: flex;
+  border-bottom: 1px solid rgba(241, 246, 243, 0.1);
+  margin: 20px 0 14px;
+  gap: 4px;
+}
+.arcade-panel-tabs button {
+  flex: 1;
+  padding: 9px 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #a9bab1;
+  border-bottom: 2px solid transparent;
+  transition: color 140ms cubic-bezier(0.23, 1, 0.32, 1), border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.arcade-panel-tabs button:hover {
+  color: #f1f5f3;
+}
+.arcade-panel-tabs button.active {
+  color: #f6dc9c;
+  border-color: #e2c27a;
+  font-weight: 650;
+}
+
+.arcade-transactions {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.arcade-transactions li {
+  padding: 12px 2px;
+  border-bottom: 1px solid rgba(241, 246, 243, 0.07);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+}
+.arcade-transactions li:last-child {
+  border-bottom: 0;
+}
+.arcade-transactions li > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.arcade-transactions b {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: #f1f5f3;
+  overflow-wrap: anywhere;
+}
+.arcade-transactions small {
+  font-size: 10.5px;
+  color: #86998f;
+}
+.arcade-transactions strong {
+  font: 650 13.5px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.arcade-transfer-form > label {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+  color: #a9bab1;
+  font-size: 12px;
+  font-weight: 500;
+}
+.arcade-transfer-form > label input {
+  border: 1px solid rgba(241, 246, 243, 0.16);
+  background: #0f1714;
+  color: #f1f5f3;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: inset 0 2px 4px rgba(4, 11, 8, 0.5);
+  font-size: 14px;
+}
+.arcade-transfer-review {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 18px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(202, 168, 96, 0.28);
+  background: rgba(13, 21, 18, 0.85);
+}
+.arcade-transfer-review b {
+  font-size: 15px;
+  color: #f1f5f3;
+}
+.arcade-transfer-review > span {
+  color: #a9bab1;
+  font-size: 12px;
+}
+.arcade-transfer-review > strong {
+  font: 700 32px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: #f6dc9c;
+}
+
+@media (max-width: 600px) {
+  .arcade-sheet-backdrop {
+    padding: max(10px, var(--mobile-safe-top, env(safe-area-inset-top, 0px))) 10px max(10px, var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px)));
+  }
+  .arcade-sheet-body {
+    padding: 16px;
+  }
+  .arcade-stat-card dl {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .arcade-ranking td,
+  .arcade-ranking th {
+    padding: 10px 8px;
+  }
+  .arcade-ranking td b {
+    max-width: 92px;
+  }
+  .arcade-ranking-heading > span {
+    display: none;
+  }
+  .arcade-wallet-balance {
+    padding: 16px;
+  }
+  .arcade-wallet-balance > strong {
+    font-size: 28px;
+  }
+  .arcade-wallet-balance > div {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .arcade-sheet {
+    border: 2px solid #f4dc9e;
+  }
+  .arcade-app .arcade-search:focus-within {
+    border-color: #fde68a;
+    box-shadow: 0 0 0 2px #fde68a;
+  }
+}

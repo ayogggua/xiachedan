@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 
 export const THEMES = [['light', '浅色'], ['dark', '深色'], ['system', '跟随系统']];
 const systemLight = window.matchMedia('(prefers-color-scheme: light)');
@@ -21,7 +22,7 @@ export default function useTheme() {
   const [theme, setTheme] = useState(storedTheme);
   useEffect(() => {
     applyTheme(theme);
-    localStorage.setItem('linliao.theme', JSON.stringify(theme));
+    writeStorage('linliao.theme', JSON.stringify(theme));
     if (theme !== 'system') return;
     const follow = () => applyTheme('system');
     systemLight.addEventListener('change', follow);

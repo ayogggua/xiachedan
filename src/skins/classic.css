@@ -66,15 +66,17 @@
 
 /* 没有毛玻璃浮层和背景光晕 */
 :root[data-skin="classic"] * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+:root[data-skin="classic"] .lock-screen { background: var(--canvas); }
 :root[data-skin="classic"] .app { background: var(--classic-window); }
 :root[data-skin="classic"] .app::before { display: none; }
 :root[data-skin="classic"] .glass { box-shadow: var(--glass-edge), 0 4px 16px rgba(0, 0, 0, .08); }
 :root[data-skin="classic"] .chat-toolbar .glass { background: none; box-shadow: none; }
 :root[data-skin="classic"] .conversation-body { background: var(--canvas); }
 
-/* 头像一律圆角方形 */
+/* 头像一律圆角方形；牌桌圆形座位框内保持正圆 */
 :root[data-skin="classic"] :is(.avatar, .avatar > img, .room-avatar) { border-radius: 12%; }
 :root[data-skin="classic"] .avatar-hextech > img { border-radius: 0; }
+:root[data-skin="classic"] .arcade-dialog .seat-avatar :is(.avatar, .avatar:not(.avatar-hextech) > img) { border-radius: 50%; }
 
 /* ── 三栏骨架（宽屏）── */
 @media (min-width: 761px) {
@@ -191,7 +193,8 @@
 
 /* 自己的气泡是浅色底深色字：把原来按「主题色底白字」写的细节改成深色 */
 :root[data-skin="classic"] .mine :is(.bubble-meta, .attachment-caption, .forward-label, .masked-message, .poll-kind, .poll-footer, .contact-card small, .contact-card-label, .bundle-card span, .bundle-card small, .file-copy small, .file-card > svg, .thread-link time, .link-preview small, .link-preview span, .message-quote) { color: var(--out-text-2); }
-:root[data-skin="classic"] .mine :is(.message-quote, .file-card, .link-preview, .poll-option, .contact-card, .thread-link, .file-open-hint, .file-icon, .message-text code) { background: var(--out-fill); }
+:root[data-skin="classic"] .mine :is(.message-quote, .file-card, .link-preview, .poll-option, .contact-card, .thread-link, .file-open-hint, .file-icon, .message-text :not(pre) > code) { background: var(--out-fill); }
+:root[data-skin="classic"] .mine .code-block pre code { background: none; }
 :root[data-skin="classic"] .mine :is(.message-quote b, .poll-footer .text-button, .file-icon, .file-icon small, .thread-link, .file-open-hint) { color: var(--bubble-out-text); }
 :root[data-skin="classic"] .mine .message-quote::before { background: var(--out-line); }
 :root[data-skin="classic"] .mine .link-preview { border-left-color: var(--out-line); }
@@ -236,16 +239,17 @@
 :root[data-skin="classic"] .message-row.selecting.selected { background: color-mix(in srgb, var(--accent-icon) 12%, transparent); }
 :root[data-skin="classic"] .muted-notice { margin: 0; border-radius: 0; box-shadow: inset 0 1px 0 var(--classic-line); }
 
-/* ── 手机（窄屏）：白底列表、居中标题，浅灰聊天背景配白色气泡，输入栏一行（开始打字才出现「发送」）── */
+/* ── 手机（窄屏）：白底列表、左对齐标题配右侧操作，浅灰聊天背景配白色气泡，输入栏一行（开始打字才出现「发送」）── */
 @media (max-width: 760px) {
   :root[data-skin="classic"][data-theme="light"] { --canvas: #ededed; --classic-list: #ffffff; --bubble-in: #ffffff; --classic-bar: #f7f7f7; --classic-search: #f0f0f0; }
   :root[data-skin="classic"] { --classic-bar: #1e1e1e; --classic-list: #111111; --canvas: #111111; }
   :root[data-skin="classic"] .sidebar { background: var(--classic-list); }
-  :root[data-skin="classic"] .space-heading { position: relative; justify-content: center; min-height: 52px; padding: 10px 96px; }
-  :root[data-skin="classic"] .space-copy { text-align: center; }
-  :root[data-skin="classic"] .space-copy h1 { font: 600 17px/24px var(--font); letter-spacing: 0; }
+  :root[data-skin="classic"] .space-heading { justify-content: space-between; gap: 8px; min-height: 52px; padding: 10px 8px 10px 16px; }
+  :root[data-skin="classic"] .space-copy { min-width: 0; flex: 1; text-align: left; }
+  :root[data-skin="classic"] .space-copy h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 17px/24px var(--font); letter-spacing: 0; }
   :root[data-skin="classic"] .space-copy p { display: none; }
-  :root[data-skin="classic"] .space-actions { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+  :root[data-skin="classic"] .space-actions { position: static; transform: none; flex-shrink: 0; align-items: center; }
+  :root[data-skin="classic"] .space-actions .arcade-launcher--mobile { display: none; }
   :root[data-skin="classic"] .classic-search { margin: 4px 12px 8px 16px; }
   :root[data-skin="classic"] .classic-search .sidebar-search { min-height: 38px; border-radius: 8px; }
   :root[data-skin="classic"] .classic-plus { width: 40px; height: 40px; }

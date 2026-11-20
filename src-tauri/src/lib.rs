@@ -875,10 +875,19 @@ pub fn run() {
     .build(tauri::generate_context!())
     .expect("虾扯蛋无法启动")
     .run(|app, event| {
-      if let RunEvent::Exit = event {
-        if let Some(desktop) = app.try_state::<Arc<Desktop>>() {
-          if let Some(mut local) = desktop.local.lock().unwrap().take() { local.stop(); }
+      match event {
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { has_visible_windows, .. } => {
+          if !has_visible_windows || main_window(app).is_some_and(|w| !w.is_visible().unwrap_or(true) || w.is_minimized().unwrap_or(false)) {
+            if let Some(desktop) = app.try_state::<Arc<Desktop>>() { show(app, &desktop, None); }
+          }
         }
+        RunEvent::Exit => {
+          if let Some(desktop) = app.try_state::<Arc<Desktop>>() {
+            if let Some(mut local) = desktop.local.lock().unwrap().take() { local.stop(); }
+          }
+        }
+        _ => {}
       }
     });
 }

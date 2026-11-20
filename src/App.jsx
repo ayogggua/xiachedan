@@ -1,21 +1,18 @@
 import { copyText } from './mobile/runtime';
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, Undo2, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus, Timer, BookUser, MicOff, Link2, UserCheck, IdCard, MoreHorizontal, CirclePlus } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, Undo2, X, Check, CircleAlert, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus, Timer, BookUser, MicOff, Link2, UserCheck, IdCard, MoreHorizontal, CirclePlus } from 'lucide-react';
 import { absoluteUrl, api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, uid } from './api';
-import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, Skeleton, longPressHandlers, consumeLongPress, pressEvent, nameColor, activeStatus, StatusEmoji, coveredMedia, revealedMedia, BotTag, botStatusText } from './components';
-import Onboarding from './Onboarding';
-import Account, { AdminDialog, PasswordForm } from './Account';
+import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, Skeleton, ForwardButtons, LazyModal, LazySlot, useTopLayerPortal, longPressHandlers, consumeLongPress, pressEvent, nameColor, activeStatus, StatusEmoji, coveredMedia, revealedMedia, BotTag, botStatusText } from './components';
+import { lazyModule } from './ErrorBoundary';
+import { writeStorage } from './storage';
 import Composer from './Composer';
-import { ShareTargetDialog, ProfileDialog, RoomAvatarDialog, InviteDialog, GroupDialog, RemoveMemberDialog, RecallDialog, EditHistoryDialog, ForwardDialog, ForwardButtons, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ChainDialog, ChainEntryDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, ShortcutsDialog, FolderDialog, StatusDialog, BundleDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
 import useUserSearch from './useUserSearch';
 import usePinnedDrag from './usePinnedDrag';
 import useOutbox from './useOutbox';
-import { SettingsDialog } from './Settings';
-import { BotsDialog, RoomBotsDialog } from './BotsDialog';
 import { syncPush } from './push';
 import { useAppLock, LockScreen, finishLockReset } from './AppLock';
 import { TextPreviewDialog, openPdf, previewKind } from './FilePreview';
@@ -28,7 +25,6 @@ import useTheme from './useTheme';
 import useSkin from './skin';
 import useAppearance from './appearance';
 import useChatPrefs from './chatPrefs';
-import ImageViewer from './ImageViewer';
 import QuickSwitcher from './QuickSwitcher';
 import RoomFiles from './RoomFiles';
 import ThreadPanel from './ThreadPanel';
@@ -40,7 +36,108 @@ import { mobileClient, chooseServer } from './mobile/session';
 import ArcadeEntry from './ArcadeEntry';
 import ArcadeInvitation from './ArcadeInvitation';
 
-const Arcade = lazy(() => import('./arcade/Arcade'));
+const loadAccount = () => import('./Account');
+const loadBots = () => import('./BotsDialog');
+const loadDialogs = () => import('./dialogs');
+
+const Arcade = lazyModule(() => import('./arcade/Arcade'));
+const Onboarding = lazyModule(() => import('./Onboarding'));
+const Account = lazyModule(loadAccount);
+const AdminDialog = lazyModule(loadAccount, module => module.AdminDialog);
+const PasswordForm = lazyModule(loadAccount, module => module.PasswordForm);
+const SettingsDialog = lazyModule(() => import('./Settings'), module => module.SettingsDialog);
+const BotsDialog = lazyModule(loadBots, module => module.BotsDialog);
+const RoomBotsDialog = lazyModule(loadBots, module => module.RoomBotsDialog);
+const ImageViewer = lazyModule(() => import('./ImageViewer'));
+const ShareTargetDialog = lazyModule(loadDialogs, module => module.ShareTargetDialog);
+const ProfileDialog = lazyModule(loadDialogs, module => module.ProfileDialog);
+const RoomAvatarDialog = lazyModule(loadDialogs, module => module.RoomAvatarDialog);
+const InviteDialog = lazyModule(loadDialogs, module => module.InviteDialog);
+const GroupDialog = lazyModule(loadDialogs, module => module.GroupDialog);
+const RemoveMemberDialog = lazyModule(loadDialogs, module => module.RemoveMemberDialog);
+const RecallDialog = lazyModule(loadDialogs, module => module.RecallDialog);
+const EditHistoryDialog = lazyModule(loadDialogs, module => module.EditHistoryDialog);
+const ForwardDialog = lazyModule(loadDialogs, module => module.ForwardDialog);
+const ConfirmDialog = lazyModule(loadDialogs, module => module.ConfirmDialog);
+const GroupEditDialog = lazyModule(loadDialogs, module => module.GroupEditDialog);
+const WebhooksDialog = lazyModule(loadDialogs, module => module.WebhooksDialog);
+const AuditDialog = lazyModule(loadDialogs, module => module.AuditDialog);
+const PollDialog = lazyModule(loadDialogs, module => module.PollDialog);
+const ChainDialog = lazyModule(loadDialogs, module => module.ChainDialog);
+const ChainEntryDialog = lazyModule(loadDialogs, module => module.ChainEntryDialog);
+const ScheduleDialog = lazyModule(loadDialogs, module => module.ScheduleDialog);
+const ScheduledListDialog = lazyModule(loadDialogs, module => module.ScheduledListDialog);
+const ReminderDialog = lazyModule(loadDialogs, module => module.ReminderDialog);
+const MuteDialog = lazyModule(loadDialogs, module => module.MuteDialog);
+const ShortcutsDialog = lazyModule(loadDialogs, module => module.ShortcutsDialog);
+const FolderDialog = lazyModule(loadDialogs, module => module.FolderDialog);
+const StatusDialog = lazyModule(loadDialogs, module => module.StatusDialog);
+const BundleDialog = lazyModule(loadDialogs, module => module.BundleDialog);
+
+const ERROR_TEXT = /失败|错误|无法|不能|无效|超时|中断|不存在|无权|禁言|超限|超过|空文件|不对|未完成|没有送达|没有发出|没有添加|没有找到|不可用|频繁|不在列表中|已不在/;
+const userProfileKey = user => `${user.id}\0${user.name}\0${user.avatar}\0${user.nameColor ?? ''}\0${user.status?.emoji ?? ''}\0${user.status?.text ?? ''}\0${user.status?.until ?? ''}\0${user.bot?.status ?? ''}\0${user.removed ? 1 : 0}\0${user.department ?? ''}`;
+
+const EMPTY_RECORD = Object.freeze({});
+
+function readScopedInitial(scopedKey, legacyKey, fallback) {
+  if (!scopedKey) return { value: fallback, migrated: false };
+  let hasScoped = false;
+  try { hasScoped = localStorage.getItem(scopedKey) !== null; } catch {}
+  if (hasScoped) {
+    const saved = readStorage(scopedKey, fallback);
+    return { value: saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : fallback, migrated: false };
+  }
+  const legacy = readStorage(legacyKey, null);
+  if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
+    return { value: legacy, migrated: true };
+  }
+  return { value: fallback, migrated: false };
+}
+
+function useScopedStorage(scope, prefix, legacyKey) {
+  const key = scope ? `${prefix}:${scope}` : null;
+  const [saved, setSaved] = useState(() => ({ key, ...readScopedInitial(key, legacyKey, EMPTY_RECORD) }));
+  let state = saved;
+  if (saved.key !== key) {
+    state = { key, ...readScopedInitial(key, legacyKey, EMPTY_RECORD) };
+    setSaved(state);
+  }
+  const current = useRef(state);
+  current.current = state;
+  useEffect(() => {
+    if (!saved.key || !saved.migrated) return;
+    if (writeStorage(saved.key, JSON.stringify(saved.value))) {
+      try { localStorage.removeItem(legacyKey); } catch {}
+    }
+    setSaved(previous => (previous.key === saved.key && previous.migrated ? { ...previous, migrated: false } : previous));
+  }, [saved.key, saved.migrated, saved.value, legacyKey]);
+  const setValue = useCallback(updater => {
+    const ctx = current.current;
+    if (!ctx.key) return;
+    const next = typeof updater === 'function' ? updater(ctx.value) : updater;
+    if (next === ctx.value) return;
+    if (writeStorage(ctx.key, JSON.stringify(next)) && ctx.migrated) {
+      try { localStorage.removeItem(legacyKey); } catch {}
+    }
+    const updated = { key: ctx.key, value: next, migrated: false };
+    current.current = updated;
+    setSaved(updated);
+  }, [legacyKey]);
+  return [state.value, setValue];
+}
+
+function Toast({ toast }) {
+  const portal = useTopLayerPortal(Boolean(toast));
+  if (!toast) return null;
+  const isError = toast.tone === 'error';
+  return createPortal(
+    <div className={`toast ${isError ? 'toast-error' : ''}`} role={isError ? 'alert' : 'status'}>
+      {isError ? <CircleAlert size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}
+      {toast.text}
+    </div>,
+    portal,
+  );
+}
 
 const NO_REACTIONS = [];
 // 按会话自动删除的几档（秒）。
@@ -85,7 +182,6 @@ function classicTime(at) {
 
 export default function App() {
   const [selected, setSelected] = useState(popoutRoom || undefined);
-  const [lastRead, setLastRead] = useState(() => readStorage('linliao.read', {}));
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
@@ -112,12 +208,14 @@ export default function App() {
   const [saved, setSaved] = useState([]);
   // 「提到我的」：@我、回复我、回应我的消息，打开时读取，可以继续往前翻。
   const [activity, setActivity] = useState(null);
+  const [activityError, setActivityError] = useState('');
   async function loadActivity(more = false) {
     const before = more ? activity?.items.at(-1)?.at : undefined;
+    setActivityError('');
     try {
       const result = await api(`activity${before ? `?before=${before}` : ''}`);
       setActivity(previous => ({ items: more && previous ? [...previous.items, ...result.items] : result.items, hasMore: result.hasMore }));
-    } catch (error) { notify(error.message); setActivity(previous => previous || { items: [], hasMore: false }); }
+    } catch (error) { setActivityError(error.message); }
   }
   useEffect(() => { if (modal === 'activity') loadActivity(); }, [modal]);
   // 当前会话里自己还没发出的定时消息、正在设置提醒的消息。
@@ -148,15 +246,15 @@ export default function App() {
   // 侧栏宽度可拖动调整并记住；拖到很窄时收成只显示头像的窄栏。
   const [sidebarWidth, setSidebarWidth] = useState(() => { const value = readStorage('linliao.sidebarWidth', 300); return value === 76 || (value >= 220 && value <= 440) ? value : 300; });
   const resizing = useRef(null);
-  const [dismissedNotices, setDismissedNotices] = useState(() => readStorage('linliao.announcements', {}));
+  const appRef = useRef(null);
   const [readDetail, setReadDetail] = useState(null);
   const [profileCard, setProfileCard] = useState(null);
   const [draftTexts, setDraftTexts] = useState({});
   const [contactQuery, setContactQuery] = useState('');
   // 会话列表上方的分组标签：全部 / 未读 / 群聊 / 私聊 / 自建文件夹；停在哪个标签只记在本机。
-  const [folderTab, setFolderTab] = useState(() => localStorage.getItem('linliao.folderTab') || 'all');
+  const [folderTab, setFolderTab] = useState(() => { try { return localStorage.getItem('linliao.folderTab') || 'all'; } catch { return 'all'; } });
   const [editingFolder, setEditingFolder] = useState(null);
-  const chooseFolderTab = id => { setFolderTab(id); try { localStorage.setItem('linliao.folderTab', id); } catch {} };
+  const chooseFolderTab = id => { setFolderTab(id); writeStorage('linliao.folderTab', id); };
   const [historyFor, setHistoryFor] = useState(null);
   // 撤回后可以「重新编辑」：原文只在本机内存里保留 10 分钟，用过一次就丢弃。
   const [recalledTexts, setRecalledTexts] = useState({});
@@ -171,7 +269,7 @@ export default function App() {
   const [preview, setPreview] = useState(null);
   // 从合并转发的聊天记录里看图时，左右切换的范围是那份记录里的图片。
   const [previewImages, setPreviewImages] = useState(null);
-  const [toast, setToast] = useState('');
+  const [toast, setToast] = useState(null);
   const [scrolledUp, setScrolledUp] = useState(false);
   // 「N 条新消息」的起点，按会话各记一份：离开底部那一刻已加载的最新一条。之后别人发来的（seq 更大的）才算；
   // 回到底部就删掉。只看这个会话自己的消息，不受其他会话、往前翻页的影响；切走再回来也接着算。
@@ -212,7 +310,13 @@ export default function App() {
   // 每次跳转一个编号：跳转要等加载和两帧渲染，期间点了「返回原位置」或又跳了别处，这次跳转就作废，不再滚过去。
   const jumpRun = useRef(0);
   const longPress = useRef({ timer: 0, fired: false });
-  const notify = useCallback(text => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(''), 3500); }, []);
+  const notify = useCallback((text, tone) => {
+    if (!text) return;
+    const resolved = tone || (ERROR_TEXT.test(text) ? 'error' : 'info');
+    setToast({ text, tone: resolved });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  }, []);
   useEffect(() => {
     // 阅后即焚的内容不进文件预览、不在新标签页打开（只能发图片和视频，这里再挡一次）。
     const open = event => { const file = event.detail; if (file?.burnId) return; if (previewKind(file) === 'pdf') openPdf(file, notify); else if (previewKind(file) === 'text') setFilePreview(file); };
@@ -239,6 +343,7 @@ export default function App() {
   }, [showMembers]);
   useEffect(() => {
     const back = event => {
+      if (lockedRef.current) { event.preventDefault(); return; }
       const dialog = [...document.querySelectorAll('dialog[open]')].at(-1);
       if (dialog) { event.preventDefault(); dialog.dispatchEvent(new Event('cancel', { cancelable: true })); return; }
       if (document.querySelector('[role="menu"], .emoji-picker')) { event.preventDefault(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return; }
@@ -256,6 +361,7 @@ export default function App() {
   const appLock = useAppLock();
   const lockedRef = useRef(false);
   lockedRef.current = appLock.locked;
+  useEffect(() => { if (appLock.locked) { clearTimeout(toastTimer.current); setToast(null); } }, [appLock.locked]);
   const noticePrivacy = useMemo(() => ({ get current() { return privacyRef.current || lockedRef.current; } }), [privacyRef]);
   const closeReadDetail = useCallback(() => setReadDetail(null), []);
   const onHistoryChanged = useCallback(({ cleared }) => {
@@ -268,6 +374,8 @@ export default function App() {
     syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, applyChain, threadTick, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally, burnContents, openBurn } = useChatSession({ selected, notify, privacyRef: noticePrivacy, mutedRef: mutedRooms, onHistoryChanged });
   const { rooms: conversations, scope: conversationScope, restore: restoreConversation, act: conversationAction, reorder: reorderPinned } =
     useConversations({ state, spaceId: bootstrap?.spaceId, selected, onSelect: setSelected, notify });
+  const [lastRead, setLastRead] = useScopedStorage(conversationScope, 'linliao.read', 'linliao.read');
+  const [dismissedNotices, setDismissedNotices] = useScopedStorage(conversationScope, 'linliao.announcements', 'linliao.announcements');
   const pinnedDrag = usePinnedDrag(ids => reorderPinned(ids, conversationScope));
   // macOS 通知里直接回复：和输入框发的一样进发件箱（断网时连上后自动重发，失败的留在会话里可重试），不打开窗口。
   // 没发出去不能悄无声息：另弹一条系统通知说明原因，窗口下次出现时再用提示条说一次。
@@ -435,9 +543,7 @@ export default function App() {
   useEffect(() => {
     window.desktop?.activity?.({ currentRoomId: state?.me.id && !loggingOut ? selected : null, unreadRooms: JSON.parse(unreadRooms), unreadCount }).catch(error => notify(error.message));
   }, [unreadRooms, unreadCount, selected, state?.me.id, loggingOut, notify]);
-  useEffect(() => { localStorage.setItem('linliao.read', JSON.stringify(lastRead)); }, [lastRead]);
-  useEffect(() => { localStorage.setItem('linliao.sidebarWidth', JSON.stringify(sidebarWidth)); }, [sidebarWidth]);
-  useEffect(() => { localStorage.setItem('linliao.announcements', JSON.stringify(dismissedNotices)); }, [dismissedNotices]);
+  useEffect(() => { writeStorage('linliao.sidebarWidth', JSON.stringify(sidebarWidth)); }, [sidebarWidth]);
   useEffect(() => { if (privateMode) setPreview(null); }, [privateMode]);
   // 正在看的阅后即焚图片：消息销毁、撤回、到点或内容被清掉后立即关掉看图窗口。
   useEffect(() => {
@@ -550,8 +656,15 @@ export default function App() {
     if (sticky.current && shownRoom.current) { scrollSpots.current.delete(shownRoom.current); awayFrom.current.delete(shownRoom.current); }
   }
   async function loadOlder() {
-    const previousHeight = messageList.current.scrollHeight;
-    if (await fetchOlder()) requestAnimationFrame(() => { if (messageList.current) messageList.current.scrollTop += messageList.current.scrollHeight - previousHeight; });
+    const roomId = selected;
+    const previousHeight = messageList.current?.scrollHeight || 0;
+    if (await fetchOlder() && shownRoom.current === roomId) {
+      requestAnimationFrame(() => {
+        if (messageList.current && shownRoom.current === roomId) {
+          messageList.current.scrollTop += messageList.current.scrollHeight - previousHeight;
+        }
+      });
+    }
   }
   // 桌面端启动后在后台检查一次更新，发现新版本只提示，不打断使用。
   useEffect(() => {
@@ -884,6 +997,9 @@ export default function App() {
   // 长会话里每次更新只重渲染有变化的消息：传给 Message 的回调保持同一引用，调用时再取最新的状态和处理函数。
   const latest = useRef(null);
   const nicknameCache = useRef(new Map());
+  const profileVersionRef = useRef({ key: '', version: 0 });
+  const messageUserCache = useRef(new Map());
+  const webhookUserCache = useRef(new Map());
   const [editingNickname, setEditingNickname] = useState(null);
   // 切换标签或文件夹变化时，把选中的标签滚到可见位置。
   useEffect(() => { document.querySelector('.folder-tabs .active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [folderTab, state?.folders?.length]);
@@ -930,11 +1046,16 @@ export default function App() {
     onShowHistory: setHistoryFor,
     onOpenProfile: (user, element) => latest.current.openProfile(user, element),
   }), []);
-  const toastElement = toast && <div className="toast" role="status"><Check size={15} />{toast}</div>;
+  const toastElement = <Toast toast={toast} />;
   if (startupError) return <div className="startup-state"><Logo /><h2>暂时无法连接</h2><p>{startupError}</p><div className="startup-actions"><button className="primary-button" onClick={start}><RefreshCw size={15} />重新连接</button>{mobileClient && <button className="secondary-button" onClick={chooseServer}>连接服务器</button>}{window.desktop && <button className="secondary-button" onClick={() => window.desktop.home()}>返回本机空间</button>}</div></div>;
   if (!bootstrap) return <div className="startup-state"><Logo /><p>正在连接虾扯蛋…</p><LoaderCircle className="spin" size={18} /></div>;
-  if (!state?.me) return <>{bootstrap.mode === 'cloud' ? <Account bootstrap={bootstrap} onChanged={start} onLogout={logout} loggingOut={loggingOut} /> : <Onboarding bootstrap={bootstrap} onJoined={start} notify={notify} />}{toastElement}</>;
+  if (!state?.me) return <><LazySlot fallback={<div className="startup-state"><Logo /><p>正在加载…</p><LoaderCircle className="spin" size={18} /></div>} errorFallback={retry => <div className="startup-state" role="alert"><Logo /><h2>页面加载失败</h2><p>请检查网络后重试。</p><div className="startup-actions"><button type="button" className="primary-button" onClick={retry}>重试</button><button type="button" className="secondary-button" onClick={() => location.reload()}>刷新页面</button></div></div>}>
+    {bootstrap.mode === 'cloud' ? <Account bootstrap={bootstrap} onChanged={start} onLogout={logout} loggingOut={loggingOut} /> : <Onboarding bootstrap={bootstrap} onJoined={start} notify={notify} />}
+  </LazySlot>{toastElement}</>;
   const userMap = Object.fromEntries(state.users.map(user => [user.id, user]));
+  const profilesKey = state.users.map(userProfileKey).join('\n');
+  if (profileVersionRef.current.key !== profilesKey) profileVersionRef.current = { key: profilesKey, version: profileVersionRef.current.version + 1 };
+  const profileVersion = profileVersionRef.current.version;
   const peerOf = room => userMap[room.members.find(id => id !== state.me.id)];
   const roomName = room => room.kind === 'direct' ? peerOf(room)?.name || '私聊' : room.name;
   const rooms = conversations.map(room => ({ ...room, name: roomName(room) }));
@@ -1045,11 +1166,24 @@ export default function App() {
   const railButton = (Icon, label, onClick, { active = false, badge = 0, dot = false, disabled = false } = {}) => <button type="button" className={`rail-button ${active ? 'active' : ''}`}
     aria-label={badge ? `${label}，${badge} 条未读` : label} title={label} aria-current={active ? 'page' : undefined} disabled={disabled} onClick={onClick}>
     <Icon size={22} strokeWidth={1.8} />{badge > 0 && <span className="rail-badge">{badge > 99 ? '99+' : badge}</span>}{dot && <i className="rail-dot" aria-hidden="true" />}</button>;
+  const finishResize = () => {
+    if (!resizing.current) return;
+    const next = resizing.current.current;
+    resizing.current = null;
+    setSidebarWidth(next);
+  };
   const resizer = <div className="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="调整侧栏宽度" tabIndex={0}
     aria-valuemin={76} aria-valuemax={440} aria-valuenow={sidebarWidth} title="拖动调整宽度，双击恢复默认"
-    onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); resizing.current = { x: event.clientX, width: sidebarWidth }; }}
-    onPointerMove={event => { if (resizing.current) setSidebarWidth(fitSidebar(resizing.current.width + event.clientX - resizing.current.x)); }}
-    onPointerUp={() => { resizing.current = null; }} onPointerCancel={() => { resizing.current = null; }}
+    onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); resizing.current = { x: event.clientX, width: sidebarWidth, current: sidebarWidth }; }}
+    onPointerMove={event => {
+      if (!resizing.current) return;
+      const next = fitSidebar(resizing.current.width + event.clientX - resizing.current.x);
+      if (next === resizing.current.current) return;
+      resizing.current.current = next;
+      appRef.current?.style.setProperty('--sidebar', `${next}px`);
+      appRef.current?.classList.toggle('compact-sidebar', next === 76);
+    }}
+    onPointerUp={finishResize} onPointerCancel={finishResize}
     onDoubleClick={() => setSidebarWidth(300)}
     onKeyDown={event => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -1102,7 +1236,7 @@ export default function App() {
   const canSetAutoDelete = room?.kind === 'direct' || (room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner));
   const canEditRoomAvatar = room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner);
   // 右侧成员面板里单击看资料卡、双击私聊；「空间成员」弹窗里单击直接私聊。
-  const memberRow = (user, size, inGroup = false, panel = false, roomPanel = false) => { const shown = inGroup ? displayUser(user) : user; return <div className="managed-member" key={user.id}><button className="member-row" {...(panel ? profileClick(user) : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.bot ? undefined : user.online} /><span className="member-name" title={shown.realName ? `原名：${shown.realName}` : undefined}>{shown.name}<StatusEmoji user={user} />{user.bot && <BotTag />}{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}{inGroup && groupAdmins.includes(user.id) && <small className="owner-tag admin-tag">管理员</small>}</span><small title={user.bio || undefined} className={user.bot?.receiveAll && user.bot.status === 'enabled' ? 'bot-listening-text' : undefined}>{user.bot ? user.bot.status !== 'enabled' ? '已停用' : user.bot.receiveAll ? '接收全部消息' : '' : user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && !user.bot && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
+  const memberRow = (user, size, inGroup = false, panel = false, roomPanel = false) => { const shown = inGroup ? displayUser(user) : user; return <div className="managed-member" key={user.id}><button type="button" className="member-row" {...(panel ? profileClick(user) : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.bot ? undefined : user.online} /><span className="member-name" title={shown.realName ? `原名：${shown.realName}` : undefined}>{shown.name}<StatusEmoji user={user} />{user.bot && <BotTag />}{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}{inGroup && groupAdmins.includes(user.id) && <small className="owner-tag admin-tag">管理员</small>}</span><small title={user.bio || undefined} className={user.bot?.receiveAll && user.bot.status === 'enabled' ? 'bot-listening-text' : undefined}>{user.bot ? user.bot.status !== 'enabled' ? '已停用' : user.bot.receiveAll ? '接收全部消息' : '' : user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && !user.bot && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button type="button" className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
       const rect = event.currentTarget.getBoundingClientRect();
       setContextMenu({ x: rect.left - 100, y: rect.bottom + 4, label: `管理${user.name}`, items: [
         { id: 'mute', label: user.muted ? '解除禁言' : '禁言…', action: async () => { if (!user.muted) return setMutingUser(user); try { await api('admin/mute', { userId: user.id, muted: false }); notify('已解除禁言'); } catch (error) { notify(error.message); } } },
@@ -1123,7 +1257,24 @@ export default function App() {
   const subtitle = room?.kind === 'direct' ? peer?.bot ? botPeerText(peer) : (peerStatus ? `${peerStatus.emoji} ${peerStatus.text} · `.replace(/^ /, '') : '') + (peer?.online ? '在线' : peer?.lastSeen ? seenText(peer.lastSeen) : '离线 · 上线后送达') : `${groupMembers.length} 位成员 · ${groupMembers.filter(user => user.online).length} 人在线`;
   const sameGroup = (previous, message) => !classic && previous && !previous.recalledAt && !message.recalledAt && !previous.burn?.destroyedAt && !message.burn?.destroyedAt && !previous.nudge && !message.nudge && !previous.notice && !message.notice && previous.senderId === message.senderId &&
     new Date(previous.createdAt).toDateString() === new Date(message.createdAt).toDateString() && message.createdAt - previous.createdAt < 5 * 60000;
-  const userOf = message => displayUser(userMap[message.senderId]) || (message.bot ? { id: message.senderId, name: message.bot, avatar: 'bot' } : undefined);
+  const stableUser = user => {
+    if (!user) return undefined;
+    const nick = nicknames[user.id] || '';
+    const key = `${userProfileKey(user)}\0${nick}`;
+    const cached = messageUserCache.current.get(user.id);
+    if (cached?.key === key) return cached.value;
+    const value = nick ? { ...user, name: nick, realName: user.name } : { ...user };
+    messageUserCache.current.set(user.id, { key, value });
+    return value;
+  };
+  const webhookUser = (id, name) => {
+    const key = `${id || ''}\0${name}`;
+    let cached = webhookUserCache.current.get(key);
+    if (!cached) { cached = { id, name, avatar: 'bot' }; webhookUserCache.current.set(key, cached); }
+    return cached;
+  };
+  const userOf = message => stableUser(userMap[message.senderId]) || (message.bot ? webhookUser(message.senderId, message.bot) : undefined);
+  const canMarkRead = (windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading;
   // 同一个人连续发的消息合成一组：头像放在组的一侧，滚动时贴住可视区底部。
   const messageGroups = [];
   for (const [index, message] of currentMessages.entries()) {
@@ -1133,7 +1284,7 @@ export default function App() {
     // 经典风格：和上一条相隔 5 分钟以上（或跨天）时在中间插一行时间。
     else messageGroups.push({ newDay, messages: [message], timeLabel: classic && (newDay || message.createdAt - previous.createdAt >= 5 * 60000) ? classicTime(message.createdAt) : null });
   }
-  return <>{appLock.locked && <LockScreen appLock={appLock} onLogout={logout} loggingOut={loggingOut} />}<div inert={appLock.locked} className={`app ${popoutRoom ? 'popout' : ''} ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
+  return <><div ref={appRef} inert={appLock.locked} className={`app ${popoutRoom ? 'popout' : ''} ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
     {classic && !popoutRoom && <nav className="classic-rail" aria-label="导航">
       <div className="rail-drag" data-drag-region aria-hidden="true" />
       <button type="button" className="rail-me" aria-label="修改昵称和头像" title={`${state.me.name} · ${state.workspace.name}`} onClick={() => setModal('profile')}><Avatar user={userMap[state.me.id] || state.me} size={36} /></button>
@@ -1148,7 +1299,7 @@ export default function App() {
       {railButton(LogOut, loggingOut ? '正在退出…' : '退出登录', logout, { disabled: loggingOut })}
     </nav>}
     <aside className="sidebar glass" aria-label="会话列表" data-mobile-tab={mobileTab}>{resizer}
-      <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} connected={connected} onDirect={directMessage} onAction={setModal} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
+      <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} notes={state.notes} connected={connected} onDirect={directMessage} onAction={setModal} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
       <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{anyUnread && <IconButton icon={CheckCheck} label="全部标为已读" onClick={markAllRead} />}<IconButton icon={BookUser} label="通讯录" className="contacts-entry" onClick={() => { setContactQuery(''); setModal('members'); }} /><IconButton icon={AtSign} label="提到我的" onClick={() => { setActivity(null); setModal('activity'); }} /><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /><ArcadeEntry className="arcade-launcher--mobile" onClick={() => setModal('arcade')} /></span></div>
       {classic ? <div className="classic-search">{searchBox}<IconButton icon={CirclePlus} size={22} label="发起聊天、邀请同事" className="classic-plus" aria-haspopup="menu" onClick={openClassicMenu} /></div> : searchBox}
@@ -1158,7 +1309,7 @@ export default function App() {
         <IconButton icon={FolderPlus} label="新建文件夹" size={14} onClick={() => setEditingFolder('new')} /></div>}
       <nav className="conversation-scroll" aria-label="会话">
         {searchTerm && <section aria-label="用户搜索结果" aria-live="polite"><div className="section-label"><span>用户</span></div>
-          {userSearch.users.filter(user => user.id !== state.me.id).map(user => <button key={user.id} className="member-row" onClick={() => { setSearch(''); directMessage(user); }}>
+          {userSearch.users.filter(user => user.id !== state.me.id).map(user => <button type="button" key={user.id} className="member-row" onClick={() => { setSearch(''); directMessage(user); }}>
             <Avatar user={user} size={32} online={user.bot ? undefined : user.online} /><span className="member-name">{user.name}{user.bot && <BotTag />}{user.department && <small className="member-department">{user.department}</small>}</span><MessageCircle size={16} /></button>)}
           {userSearch.error ? <p className="sidebar-empty" role="alert">{userSearch.error}</p> : userSearch.loading ? <p className="sidebar-empty">正在搜索用户…</p> : !userSearch.users.some(user => user.id !== state.me.id) && <p className="sidebar-empty">没有找到相关用户</p>}
         </section>}
@@ -1191,7 +1342,7 @@ export default function App() {
       {room ? <>
       <div className="conversation-body"><section className={`chat-column ${showReturn ? 'has-jump-back' : ''}`}>
         <header className="chat-toolbar" data-drag-region>
-          <IconButton icon={ChevronLeft} label="返回会话列表" className="back-button glass" onClick={() => setMobileChat(false)} />
+          {!popoutRoom && <IconButton icon={ChevronLeft} label="返回会话列表" className="back-button glass" onClick={() => setMobileChat(false)} />}
           <div className="toolbar-title glass">{room.kind === 'direct' && peer ? avatarButton(peer, roomIcon(room, 34), 'toolbar-icon avatar-button') : canEditRoomAvatar ? <button type="button" className="toolbar-icon avatar-button" aria-label="设置群头像" title="设置群头像" aria-haspopup="dialog" onClick={() => setModal('roomAvatar')}>{roomIcon(room, 34)}</button> : <span className="toolbar-icon">{roomIcon(room, 34)}</span>}<span className="toolbar-copy"><h2>{room.name}{classic && room.kind !== 'direct' && <span className="title-count">({groupMembers.length})</span>}{room.kind === 'group' && room.allMuted && <span className="auto-delete-tag"><MicOff size={12} />全员禁言</span>}{listeningBots.length > 0 && <span className="auto-delete-tag bot-listening-tag" title={`${listeningBots.map(user => `「${user.name}」`).join('、')}会接收这里的全部消息`}><Bot size={12} aria-hidden="true" />机器人接收全部消息<span className="visually-hidden">：{listeningBots.map(user => user.name).join('、')}</span></span>}{room.kind === 'direct' && peer?.bot && <BotTag />}{classic && room.kind === 'direct' && peer?.bot && peer.bot.status !== 'enabled' && <span className="auto-delete-tag" title={botPeerText(peer)}>{peer.bot.status === 'deleted' ? '已删除' : '已停用'}</span>}{room.autoDelete > 0 && <span className="auto-delete-tag" title={`消息发出 ${autoDeleteLabel(room.autoDelete)} 后自动删除`}><Timer size={12} />{autoDeleteLabel(room.autoDelete)}</span>}</h2><span className={`toolbar-subtitle ${typingLabel(room) ? 'typing-text' : ''}`} aria-live="polite">{typingLabel(room) || subtitle}</span></span></div>
           <div className="toolbar-actions">
             <button className={`toolbar-button glass privacy-toggle ${privateMode ? 'enabled' : ''}`} onClick={() => changePrivacy(value => !value)} role="switch" aria-checked={privateMode} aria-label="隐私模式" title="隐私模式 · ⌘⇧P · 悬停消息查看内容">{privateMode ? <EyeOff size={16} /> : <Eye size={16} />}<kbd>⌘⇧P</kbd></button>
@@ -1213,11 +1364,11 @@ export default function App() {
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? '来大厅，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && (isOwner || isAdmin) && <button className="secondary-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}</div>}
         {!currentMessages.length && loading && <Skeleton kind="message" rows={6} label="正在加载消息…" />}
         {messageGroups.map(group => { const first = group.messages[0]; const mine = first.senderId === state.me.id; const author = userOf(first); const withAvatar = showAvatar(mine) && !first.nudge && !first.notice; const avatar = withAvatar && !first.recalledAt && !first.burn?.destroyedAt && <div className="group-avatar">{avatarButton(first.bot ? null : author, <Avatar user={author} size={classic ? 36 : 32} />)}</div>;
-          return <React.Fragment key={first.id}>{group.timeLabel && <div className="time-divider"><span>{group.timeLabel}</span></div>}{!classic && group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''} ${withAvatar && (classic || chatPrefs.avatarMode === 'top') ? 'avatar-top' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => <Message {...messageHandlers} key={message.id} message={message} users={state.users} nicknames={nicknamesKey} showName={position === 0 && !first.nudge && showNameOf(mine)} reEditable={Boolean(recalledTexts[message.id])} quickReact={chatPrefs.quickReact}
+          return <React.Fragment key={first.id}>{group.timeLabel && <div className="time-divider"><span>{group.timeLabel}</span></div>}{!classic && group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''} ${withAvatar && (classic || chatPrefs.avatarMode === 'top') ? 'avatar-top' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => { const isMine = message.senderId === state.me.id; const needsRead = !isMine && !message.recalledAt && Array.isArray(message.readBy) && !message.readBy.includes(state.me.id); return <Message {...messageHandlers} key={message.id} message={message} profileVersion={profileVersion} nicknames={nicknamesKey} showName={position === 0 && !first.nudge && showNameOf(mine)} reEditable={Boolean(recalledTexts[message.id])} quickReact={chatPrefs.quickReact}
           reactionOptions={state.reactions || NO_REACTIONS} picking={reactingTo === message.id} selecting={Boolean(selection)} selected={Boolean(selection?.includes(message.id))} swipeReply={!selection && !composerBlocked}
-          user={userOf(message)} grouped mine={message.senderId === state.me.id} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} viewerId={state.me.id}
-          readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} recipients={recipientsCache.current} direct={room.kind === 'direct'}
-          chainManager={chainManager} voiceBlocked={voiceBlocked} burnContent={burnContents[message.id]} />)}</div>{mine && avatar}</div></React.Fragment>; })}
+          user={userOf(message)} grouped mine={isMine} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} viewerId={state.me.id}
+          readingEnabled={needsRead && canMarkRead} recipients={recipientsCache.current} direct={room.kind === 'direct'}
+          chainManager={chainManager} voiceBlocked={voiceBlocked} burnContent={burnContents[message.id]} />; })}</div>{mine && avatar}</div></React.Fragment>; })}
         {outbox.items.filter(item => item.roomId === room.id && !item.payload.threadOf).map(item => <OutboxMessage key={item.clientId} item={item} avatarColumn={showAvatar(true)} onRetry={outbox.retry} onDiscard={outbox.discard} />)}
       </div></div>{unreadMentions.length > 0 && <button type="button" className="jump-to-mention glass" aria-label={`跳到提到你的消息，还有 ${unreadMentions.length} 条`} title="跳到提到你的消息" onClick={() => jumpToMessage(unreadMentions[0])}><AtSign size={18} /><span className="mention-count">{unreadMentions.length > 99 ? '99+' : unreadMentions.length}</span></button>}{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; setReturnSpot(null); messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }}><ArrowDown size={14} />{arrivedWhileAway ? `${arrivedWhileAway} 条新消息` : '回到最新消息'}</button>}
       {showReturn && <button type="button" className="jump-back glass" aria-label="返回原位置（跳转前看到的地方）" title="返回跳转前看到的地方" onClick={returnToOrigin}><Undo2 size={14} />返回原位置</button>}
@@ -1282,13 +1433,13 @@ export default function App() {
           {(room.kind === 'group' || (room.kind === 'public' && !isOwner)) && <button className="leave-group" onClick={() => setGroupAction({ type: 'leave' })}><LogOut size={15} />{room.kind === 'public' ? '退出大厅' : '退出群聊'}</button>}</>}</aside>}</div>
       </> : <div className="empty-conversation"><MessageCircle size={32} /><h2>选择一个对话</h2><button className="secondary-button" onClick={() => setModal('members')}>发起私聊</button></div>}
     </main>
-    {modal === 'profile' && <ProfileDialog me={{ ...state.me, ...userMap[state.me.id] }} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
-    {modal === 'roomAvatar' && room && room.kind !== 'direct' && <RoomAvatarDialog key={room.id} room={room} onClose={() => setModal(null)} onSaved={refresh} notify={notify} />}
-    {modal === 'invite' && <InviteDialog cloud={cloud} onClose={() => setModal(null)} notify={notify} />}
-    {modal === 'admin' && cloud && isAdmin && <AdminDialog me={state.me} onClose={() => setModal(null)} onUpdated={refresh} notify={notify} />}
-    {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><PasswordForm onChanged={() => location.reload()} /></Modal>}
-    {['group', 'addMembers'].includes(modal) && <GroupDialog users={state.users.filter(user => !user.removed && !user.bot)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} />}
-    {modal === 'connection' && <SettingsDialog appLock={appLock} pushSettings={{ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }} phrases={state.phrases || []} onPhrases={async list => applyPhrases((await api('phrases', { phrases: list })).phrases)} onSetStatus={() => setModal('status')} keywords={state.keywords || []} onKeywords={async list => applyKeywords((await api('keywords', { keywords: list })).keywords)} onShortcuts={() => setModal('shortcuts')} onArcade={() => setModal('arcade')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} skin={skin} onSkin={setSkin} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} onBots={(cloud ? isAdmin : isOwner) ? () => setModal('bots') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
+    {modal === 'profile' && <LazyModal title="个人资料" onClose={() => setModal(null)}><ProfileDialog me={{ ...state.me, ...userMap[state.me.id] }} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} /></LazyModal>}
+    {modal === 'roomAvatar' && room && room.kind !== 'direct' && <LazyModal title="设置群头像" onClose={() => setModal(null)}><RoomAvatarDialog key={room.id} room={room} onClose={() => setModal(null)} onSaved={refresh} notify={notify} /></LazyModal>}
+    {modal === 'invite' && <LazyModal title="邀请同事" onClose={() => setModal(null)}><InviteDialog cloud={cloud} onClose={() => setModal(null)} notify={notify} /></LazyModal>}
+    {modal === 'admin' && cloud && isAdmin && <LazyModal title="用户管理" onClose={() => setModal(null)}><AdminDialog me={state.me} onClose={() => setModal(null)} onUpdated={refresh} notify={notify} /></LazyModal>}
+    {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><LazySlot fallback={<p className="inline-note" role="status">正在加载…</p>}><PasswordForm onChanged={() => location.reload()} /></LazySlot></Modal>}
+    {['group', 'addMembers'].includes(modal) && <LazyModal title={modal === 'addMembers' ? '邀请成员' : '创建群聊'} onClose={() => setModal(null)}><GroupDialog users={state.users.filter(user => !user.removed && !user.bot)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} /></LazyModal>}
+    {modal === 'connection' && <LazyModal title="设置" onClose={() => setModal(null)}><SettingsDialog appLock={appLock} pushSettings={{ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }} phrases={state.phrases || []} onPhrases={async list => applyPhrases((await api('phrases', { phrases: list })).phrases)} onSetStatus={() => setModal('status')} keywords={state.keywords || []} onKeywords={async list => applyKeywords((await api('keywords', { keywords: list })).keywords)} onShortcuts={() => setModal('shortcuts')} onArcade={() => setModal('arcade')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} skin={skin} onSkin={setSkin} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} onBots={(cloud ? isAdmin : isOwner) ? () => setModal('bots') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} /></LazyModal>}
     {modal === 'members' && <Modal title="通讯录" subtitle={`${state.users.filter(user => !user.removed && !user.bot).length} 位成员，${online.length} 人在线。单击查看资料，双击直接私聊。`} onClose={() => setModal(null)} className="contacts-dialog">
       <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus aria-label="搜索成员" placeholder="搜索昵称、完整手机号或邮箱" value={contactQuery} onChange={event => setContactQuery(event.target.value)} /></label>
       <div className="space-members">{contactGroups.map(([department, members]) => <section key={department} aria-label={department}><h4 className="contacts-group">{department}<small>{members.length}</small></h4>{members.map(user => memberRow(user, 32, false, true))}</section>)}
@@ -1300,9 +1451,9 @@ export default function App() {
       const images = preview.burnId ? [preview] : (previewImages?.some(file => file.id === preview.id) ? previewImages : currentMessages.filter(message => !message.recalledAt && !message.burn).flatMap(message => message.attachments.filter(file => file.mime.startsWith('image/'))))
         .filter(file => file.id === preview.id || !coveredMedia(file));
       const index = Math.max(0, images.findIndex(file => file.id === preview.id));
-      return <ImageViewer images={images.length ? images : [preview]} index={images.length ? index : 0} onIndex={next => setPreview(images[next])} onClose={() => setPreview(null)} notify={notify} />;
+      return <LazyModal title="查看图片" onClose={() => setPreview(null)}><ImageViewer images={images.length ? images : [preview]} index={images.length ? index : 0} onIndex={next => setPreview(images[next])} onClose={() => setPreview(null)} notify={notify} /></LazyModal>;
     })()}
-    {removing && <RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} />}
+    {removing && <LazyModal title="移除成员" onClose={() => setRemoving(null)}><RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} /></LazyModal>}
     {/* 从通讯录等弹窗里打开时，资料卡要挂在弹窗里面，否则会被弹窗挡住 */}
     {profileCard && userMap[profileCard.userId] && createPortal(<ProfileCard key={profileCard.userId} user={userMap[profileCard.userId]} anchor={profileCard} self={profileCard.userId === state.me.id} onClose={closeProfile}
       note={state.notes?.[profileCard.userId] || ''} onSaveNote={note => saveNote(userMap[profileCard.userId], note)}
@@ -1311,37 +1462,38 @@ export default function App() {
       groupActions={room && room.kind !== 'direct' && profileCard.userId !== state.me.id && room.members.includes(profileCard.userId) ? groupActionsFor(userMap[profileCard.userId])
         : canManageRoomBots && (room.bots || []).includes(profileCard.userId) ? [{ label: '移出机器人', danger: true, action: () => { setProfileCard(null); setGroupAction({ type: 'removeBot', user: userMap[profileCard.userId] }); } }] : []}
       onSetDepartment={(cloud ? isAdmin : isOwner) && profileCard.userId !== state.me.id && !userMap[profileCard.userId].bot ? async department => { try { await api('admin/department', { userId: profileCard.userId, department }); notify('部门已更新'); } catch (error) { notify(error.message); throw error; } } : undefined}
-      onNudge={room && !userMap[profileCard.userId].bot && !peer?.bot && room.members.includes(profileCard.userId) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onShare={userMap[profileCard.userId].bot ? undefined : () => { setProfileCard(null); setSharingCard(userMap[profileCard.userId]); }} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, document.querySelector('dialog[open]') || document.body)}
+      onNudge={room && !userMap[profileCard.userId].bot && !peer?.bot && room.members.includes(profileCard.userId) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onShare={userMap[profileCard.userId].bot ? undefined : () => { setProfileCard(null); setSharingCard(userMap[profileCard.userId]); }} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, [...document.querySelectorAll('dialog[open]')].at(-1) || document.body)}
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id && !user.bot)} onClose={closeReadDetail}
       onOpenProfile={(user, element) => { openProfile(user, element); setReadDetail(null); }} />}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}
-    {hiding && <ConfirmDialog title={hiding.length > 1 ? `删除这 ${hiding.length} 条消息？` : '删除这条消息？'} subtitle="只从你这里删除，会话里的其他人仍然能看到。" confirmLabel="删除" busyLabel="正在删除…" danger
-      onConfirm={async () => { const result = await api('messages/hide', { messageIds: hiding }); hideLocally({ messageIds: result.messageIds }); setSelection(null); await refresh(); notify('已删除'); }} onClose={() => setHiding(null)} />}
-    {clearing && <ConfirmDialog title={`清空「${clearing.name}」的聊天记录？`} subtitle="只清空你这里的记录，会话里的其他人不受影响；之后的新消息照常显示。" confirmLabel="清空" busyLabel="正在清空…" danger
-      onConfirm={async () => { const result = await api('room-clear', { roomId: clearing.id }); scrollSpots.current.delete(result.roomId); hideLocally({ cleared: { [result.roomId]: result.throughSeq } }); setLastRead(previous => ({ ...previous, [result.roomId]: Math.max(previous[result.roomId] || 0, result.throughSeq) })); await refresh(); notify('聊天记录已清空'); }} onClose={() => setClearing(null)} />}
-    {removingMessage && <ConfirmDialog title="删除这条消息？" subtitle={`会话里的所有人都会看到「管理员删除了一条消息」，内容无法恢复。这次操作会记入操作日志。`} confirmLabel="删除" busyLabel="正在删除…" danger
-      onConfirm={async () => { const { message } = await api('admin/delete-message', { messageId: removingMessage.id }); syncHistory([message]); applyEdit(message); notify('消息已删除'); }} onClose={() => setRemovingMessage(null)} />}
-    {modal === 'audit' && <AuditDialog onClose={() => setModal(null)} />}
-    {openBundle && <BundleDialog message={openBundle} privateMode={privateMode} userOf={id => userMap[id]} onPreview={(file, images) => { setPreviewImages(images); setPreview(file); }} onClose={() => { setOpenBundle(null); setPreviewImages(null); }} />}
-    {mutingUser && <MuteDialog user={mutingUser} onClose={() => setMutingUser(null)} onDone={() => notify(`已禁言「${mutingUser.name}」`)} />}
-    {scheduleText !== null && room && <ScheduleDialog room={room} initialText={scheduleText} onClose={() => setScheduleText(null)} onScheduled={when => { notify(`将在 ${when} 发送`); loadScheduled(room.id); }} />}
-    {modal === 'scheduled' && <ScheduledListDialog items={scheduled.items} onClose={() => setModal(null)} onCancel={async item => { try { await api('scheduled/cancel', { id: item.id }); await loadScheduled(item.roomId); notify('已取消发送'); } catch (error) { notify(error.message); } }} />}
-    {reminding && <ReminderDialog message={reminding} notify={notify} onClose={() => setReminding(null)} />}
-    {modal === 'poll' && room && <PollDialog room={room} onClose={() => setModal(null)} onCreated={message => { sticky.current = true; setReturnSpot(null); receive(message); }} />}
-    {modal === 'chain' && room && room.kind !== 'direct' && <ChainDialog room={room} onClose={() => setModal(null)} onCreated={message => { sticky.current = true; setReturnSpot(null); receive(message); }} />}
+    {hiding && <LazyModal title="删除消息" onClose={() => setHiding(null)}><ConfirmDialog title={hiding.length > 1 ? `删除这 ${hiding.length} 条消息？` : '删除这条消息？'} subtitle="只从你这里删除，会话里的其他人仍然能看到。" confirmLabel="删除" busyLabel="正在删除…" danger
+      onConfirm={async () => { const result = await api('messages/hide', { messageIds: hiding }); hideLocally({ messageIds: result.messageIds }); setSelection(null); await refresh(); notify('已删除'); }} onClose={() => setHiding(null)} /></LazyModal>}
+    {clearing && <LazyModal title="清空聊天记录" onClose={() => setClearing(null)}><ConfirmDialog title={`清空「${clearing.name}」的聊天记录？`} subtitle="只清空你这里的记录，会话里的其他人不受影响；之后的新消息照常显示。" confirmLabel="清空" busyLabel="正在清空…" danger
+      onConfirm={async () => { const result = await api('room-clear', { roomId: clearing.id }); scrollSpots.current.delete(result.roomId); hideLocally({ cleared: { [result.roomId]: result.throughSeq } }); setLastRead(previous => ({ ...previous, [result.roomId]: Math.max(previous[result.roomId] || 0, result.throughSeq) })); await refresh(); notify('聊天记录已清空'); }} onClose={() => setClearing(null)} /></LazyModal>}
+    {removingMessage && <LazyModal title="删除消息" onClose={() => setRemovingMessage(null)}><ConfirmDialog title="删除这条消息？" subtitle={`会话里的所有人都会看到「管理员删除了一条消息」，内容无法恢复。这次操作会记入操作日志。`} confirmLabel="删除" busyLabel="正在删除…" danger
+      onConfirm={async () => { const { message } = await api('admin/delete-message', { messageId: removingMessage.id }); syncHistory([message]); applyEdit(message); notify('消息已删除'); }} onClose={() => setRemovingMessage(null)} /></LazyModal>}
+    {modal === 'audit' && <LazyModal title="操作日志" onClose={() => setModal(null)}><AuditDialog onClose={() => setModal(null)} /></LazyModal>}
+    {openBundle && <LazyModal title="聊天记录" onClose={() => { setOpenBundle(null); setPreviewImages(null); }}><BundleDialog message={openBundle} privateMode={privateMode} userOf={id => userMap[id]} onPreview={(file, images) => { setPreviewImages(images); setPreview(file); }} onClose={() => { setOpenBundle(null); setPreviewImages(null); }} /></LazyModal>}
+    {mutingUser && <LazyModal title="禁言成员" onClose={() => setMutingUser(null)}><MuteDialog user={mutingUser} onClose={() => setMutingUser(null)} onDone={() => notify(`已禁言「${mutingUser.name}」`)} /></LazyModal>}
+    {scheduleText !== null && room && <LazyModal title="定时发送" onClose={() => setScheduleText(null)}><ScheduleDialog room={room} initialText={scheduleText} onClose={() => setScheduleText(null)} onScheduled={when => { notify(`将在 ${when} 发送`); loadScheduled(room.id); }} /></LazyModal>}
+    {modal === 'scheduled' && <LazyModal title="定时消息" onClose={() => setModal(null)}><ScheduledListDialog items={scheduled.items} onClose={() => setModal(null)} onCancel={async item => { try { await api('scheduled/cancel', { id: item.id }); await loadScheduled(item.roomId); notify('已取消发送'); } catch (error) { notify(error.message); } }} /></LazyModal>}
+    {reminding && <LazyModal title="提醒我" onClose={() => setReminding(null)}><ReminderDialog message={reminding} notify={notify} onClose={() => setReminding(null)} /></LazyModal>}
+    {modal === 'poll' && room && <LazyModal title="发起投票" onClose={() => setModal(null)}><PollDialog room={room} onClose={() => setModal(null)} onCreated={message => { sticky.current = true; setReturnSpot(null); receive(message); }} /></LazyModal>}
+    {modal === 'chain' && room && room.kind !== 'direct' && <LazyModal title="发起接龙" onClose={() => setModal(null)}><ChainDialog room={room} onClose={() => setModal(null)} onCreated={message => { sticky.current = true; setReturnSpot(null); receive(message); }} /></LazyModal>}
     {chainEntry && (() => {
       const target = (messages[chainEntry.roomId] || []).find(message => message.id === chainEntry.id) || threadMessages.current.find(message => message.id === chainEntry.id);
-      return target?.chain && !target.recalledAt ? <ChainEntryDialog message={target} viewerId={state.me.id} onClose={() => setChainEntry(null)} onChanged={result => { applyChain(result); }} /> : null;
+      return target?.chain && !target.recalledAt ? <LazyModal title="接龙" onClose={() => setChainEntry(null)}><ChainEntryDialog message={target} viewerId={state.me.id} onClose={() => setChainEntry(null)} onChanged={result => { applyChain(result); }} /></LazyModal> : null;
     })()}
     {modal === 'activity' && <Modal title="提到我的" subtitle="别人 @你、回复你、回应你的消息。点一条回到原来的位置。" onClose={() => setModal(null)}>
-      {!activity ? <div className="history-results saved-list activity-list"><Skeleton rows={4} /></div> : !activity.items.length ? <p className="inline-note">还没有人提到你。</p> : <div className="history-results saved-list activity-list">
+      {!activity ? (activityError ? <div className="inline-error-row" role="alert"><p className="form-error">{activityError}</p><button type="button" className="secondary-button" onClick={() => loadActivity(false)}>重试</button></div> : <div className="history-results saved-list activity-list"><Skeleton rows={4} /></div>) : !activity.items.length ? <p className="inline-note">还没有人提到你。</p> : <div className="history-results saved-list activity-list">
         {activity.items.map(item => {
           const actor = displayUser(userMap[item.actorId]), target = rooms.find(candidate => candidate.id === item.message.roomId);
           const verb = { mention: '@了你', reply: '回复了你', thread: '在话题里回复了你', reaction: `回应了 ${item.emoji}` }[item.kind];
           return <SearchResult key={`${item.kind}:${item.message.id}:${item.actorId}:${item.emoji || ''}`} message={item.message} term="" at={item.at} prefix={item.kind === 'reaction' ? '你的消息：' : ''}
             avatar={<Avatar user={actor} size={24} />} title={`${actor?.name || '成员'} ${verb}${target ? ` · ${target.name}` : ''}`} privateMode={privateMode} onJump={message => { setModal(null); jumpToMessage(message); }} />;
         })}
-        {activity.hasMore && <button type="button" className="text-button load-more" onClick={() => loadActivity(true)}>加载更多</button>}
+        {activityError ? <div className="inline-error-row" role="alert"><p className="form-error">{activityError}</p><button type="button" className="secondary-button" onClick={() => loadActivity(true)}>重试</button></div>
+          : activity.hasMore && <button type="button" className="text-button load-more" onClick={() => loadActivity(true)}>加载更多</button>}
       </div>}
     </Modal>}
     {modal === 'saved' && <Modal title="收藏" subtitle="只有你自己看得到。点一条可以回到原来的会话。" onClose={() => setModal(null)}>
@@ -1352,19 +1504,19 @@ export default function App() {
           <IconButton icon={X} label="取消收藏" size={14} onClick={() => toggleSaved(item.message, false)} /></div>;
       })}</div>}
     </Modal>}
-    {groupAction?.type === 'webhooks' && room && room.kind !== 'direct' && <WebhooksDialog room={room} notify={notify} onClose={() => setGroupAction(null)} />}
-    {modal === 'bots' && (cloud ? isAdmin : isOwner) && <BotsDialog notify={notify} onChanged={refresh} onClose={() => setModal(null)} />}
-    {modal === 'addBot' && room && canManageRoomBots && <RoomBotsDialog room={room} bots={state.users.filter(user => user.bot)} notify={notify} onAdded={refresh} onClose={() => setModal(null)} />}
-    {groupAction?.type === 'removeBot' && room && <ConfirmDialog title={`把机器人「${groupAction.user.name}」移出${room.kind === 'public' ? '大厅' : `「${room.name}」`}？`} subtitle="移出后它收不到这里的消息，也不能再在这里发言。会话里会留一行提示。" confirmLabel="移出" busyLabel="正在移出…" danger
-      onConfirm={async () => { await api('room-bots', { roomId: room.id, botId: groupAction.user.id, add: false }); await refresh(); notify(`已把「${groupAction.user.name}」移出`); }} onClose={() => setGroupAction(null)} />}
-    {groupAction?.type === 'name' && room?.kind === 'group' && <GroupEditDialog room={room} field="name" onClose={() => setGroupAction(null)} onSaved={refresh} />}
-    {groupAction?.type === 'announcement' && room?.kind === 'group' && <GroupEditDialog room={room} field="announcement" onClose={() => setGroupAction(null)} onSaved={refresh} />}
-    {groupAction?.type === 'remove' && room && <ConfirmDialog title={`把「${groupAction.user.name}」移出「${room.name}」？`} subtitle="移出后对方无法访问这个会话，需要重新邀请才能回来。" confirmLabel="移出" busyLabel="正在移出…" danger
-      onConfirm={async () => { await api('room-remove', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify(`已把「${groupAction.user.name}」移出${room.kind === 'public' ? '大厅' : '群聊'}`); }} onClose={() => setGroupAction(null)} />}
-    {groupAction?.type === 'transfer' && room && <ConfirmDialog title={`把群主转让给「${groupAction.user.name}」？`} subtitle="转让后，你会变成普通成员，不能再设置管理员和转让群主。" confirmLabel="确认转让" busyLabel="正在转让…"
-      onConfirm={async () => { await api('room-owner', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify('群主已转让'); }} onClose={() => setGroupAction(null)} />}
-    {groupAction?.type === 'leave' && room && <ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将无法访问这个会话，需要管理员或群成员重新邀请才能回来。'} confirmLabel={room.kind === 'public' ? '退出大厅' : '退出群聊'} busyLabel="正在退出…" danger
-      onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected(null); setShowMembers(false); await refresh(); notify(room.kind === 'public' ? '已退出大厅' : '已退出群聊'); }} onClose={() => setGroupAction(null)} />}
+    {groupAction?.type === 'webhooks' && room && room.kind !== 'direct' && <LazyModal title="群机器人" onClose={() => setGroupAction(null)}><WebhooksDialog room={room} notify={notify} onClose={() => setGroupAction(null)} /></LazyModal>}
+    {modal === 'bots' && (cloud ? isAdmin : isOwner) && <LazyModal title="机器人" onClose={() => setModal(null)}><BotsDialog notify={notify} onChanged={refresh} onClose={() => setModal(null)} /></LazyModal>}
+    {modal === 'addBot' && room && canManageRoomBots && <LazyModal title="添加机器人" onClose={() => setModal(null)}><RoomBotsDialog room={room} bots={state.users.filter(user => user.bot)} notify={notify} onAdded={refresh} onClose={() => setModal(null)} /></LazyModal>}
+    {groupAction?.type === 'removeBot' && room && <LazyModal title="移出机器人" onClose={() => setGroupAction(null)}><ConfirmDialog title={`把机器人「${groupAction.user.name}」移出${room.kind === 'public' ? '大厅' : `「${room.name}」`}？`} subtitle="移出后它收不到这里的消息，也不能再在这里发言。会话里会留一行提示。" confirmLabel="移出" busyLabel="正在移出…" danger
+      onConfirm={async () => { await api('room-bots', { roomId: room.id, botId: groupAction.user.id, add: false }); await refresh(); notify(`已把「${groupAction.user.name}」移出`); }} onClose={() => setGroupAction(null)} /></LazyModal>}
+    {groupAction?.type === 'name' && room?.kind === 'group' && <LazyModal title="修改群名" onClose={() => setGroupAction(null)}><GroupEditDialog room={room} field="name" onClose={() => setGroupAction(null)} onSaved={refresh} /></LazyModal>}
+    {groupAction?.type === 'announcement' && room?.kind === 'group' && <LazyModal title="群公告" onClose={() => setGroupAction(null)}><GroupEditDialog room={room} field="announcement" onClose={() => setGroupAction(null)} onSaved={refresh} /></LazyModal>}
+    {groupAction?.type === 'remove' && room && <LazyModal title="移出成员" onClose={() => setGroupAction(null)}><ConfirmDialog title={`把「${groupAction.user.name}」移出「${room.name}」？`} subtitle="移出后对方无法访问这个会话，需要重新邀请才能回来。" confirmLabel="移出" busyLabel="正在移出…" danger
+      onConfirm={async () => { await api('room-remove', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify(`已把「${groupAction.user.name}」移出${room.kind === 'public' ? '大厅' : '群聊'}`); }} onClose={() => setGroupAction(null)} /></LazyModal>}
+    {groupAction?.type === 'transfer' && room && <LazyModal title="转让群主" onClose={() => setGroupAction(null)}><ConfirmDialog title={`把群主转让给「${groupAction.user.name}」？`} subtitle="转让后，你会变成普通成员，不能再设置管理员和转让群主。" confirmLabel="确认转让" busyLabel="正在转让…"
+      onConfirm={async () => { await api('room-owner', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify('群主已转让'); }} onClose={() => setGroupAction(null)} /></LazyModal>}
+    {groupAction?.type === 'leave' && room && <LazyModal title={room.kind === 'public' ? '退出大厅' : '退出群聊'} onClose={() => setGroupAction(null)}><ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将无法访问这个会话，需要管理员或群成员重新邀请才能回来。'} confirmLabel={room.kind === 'public' ? '退出大厅' : '退出群聊'} busyLabel="正在退出…" danger
+      onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected(null); setShowMembers(false); await refresh(); notify(room.kind === 'public' ? '已退出大厅' : '已退出群聊'); }} onClose={() => setGroupAction(null)} /></LazyModal>}
     {switcher && <QuickSwitcher rooms={ordered} icon={target => roomIcon(target, 24)} unread={unread} onOpen={id => { setSwitcher(false); openRoom(id); }} onClose={() => setSwitcher(false)} />}
     {quoting && <Modal title="引用部分文字" subtitle="选中要引用的那一段，再点「引用」；不选就引用整条。" onClose={() => setQuoting(null)}>
       <textarea ref={quoteArea} className="quote-select" aria-label="消息内容" readOnly rows={6} value={plainText(quoting.text)} />
@@ -1374,10 +1526,10 @@ export default function App() {
           if (part && !quotable(quoting.text, part.slice(0, 500))) return notify('选中的文字里有剧透，不能引用；换一段，或者不选、引用整条');
           setEditing(null); setReplying({ roomId: quoting.roomId, id: quoting.id, quote: part.slice(0, 500) }); setQuoting(null); }}>引用</button></div>
     </Modal>}
-    {incomingShare && <ShareTargetDialog share={incomingShare} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setIncomingShare(null)}
-      onPick={target => { const share = incomingShare; setIncomingShare(null); openRoom(target.id); setMobileChat(true); setInjectShare({ roomId: target.id, text: share.text, files: share.files, nonce: Date.now() }); }} />}
+    {incomingShare && <LazyModal title="发送到…" onClose={() => setIncomingShare(null)}><ShareTargetDialog share={incomingShare} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setIncomingShare(null)}
+      onPick={target => { const share = incomingShare; setIncomingShare(null); openRoom(target.id); setMobileChat(true); setInjectShare({ roomId: target.id, text: share.text, files: share.files, nonce: Date.now() }); }} /></LazyModal>}
     {filePreview && <TextPreviewDialog file={filePreview} onClose={() => setFilePreview(null)} />}
-    {sharingCard && <ForwardDialog count={1} title={`推荐「${displayUser(sharingCard)?.name || sharingCard.name}」的名片`} subtitle="对方点开名片就能看到资料卡、发起私聊。" rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setSharingCard(null)}
+    {sharingCard && <LazyModal title="推荐名片" onClose={() => setSharingCard(null)}><ForwardDialog count={1} title={`推荐「${displayUser(sharingCard)?.name || sharingCard.name}」的名片`} subtitle="对方点开名片就能看到资料卡、发起私聊。" rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setSharingCard(null)}
       onForward={async (targets, _merge, comment) => {
         const failed = [];
         for (const target of targets) {
@@ -1391,19 +1543,19 @@ export default function App() {
         await refresh();
         if (failed.length === targets.length) throw new Error(failed.join('；'));
         notify(failed.length ? `已推荐到 ${targets.length - failed.length} 个会话；${failed.join('；')}` : '名片已发送');
-      }} />}
-    {forwarding && <ForwardDialog count={forwarding.length} initialMerge={forwardMerge} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} />}
-    {editingFolder && <FolderDialog folder={editingFolder === 'new' ? null : editingFolder} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 28)}
-      onSave={(name, roomIds) => saveFolder(editingFolder === 'new' ? null : editingFolder, name, roomIds)} onDelete={() => deleteFolder(editingFolder)} onClose={() => setEditingFolder(null)} />}
-    {modal === 'status' && <StatusDialog status={activeStatus(userMap[state.me.id])} notify={notify} onClose={() => setModal(null)} />}
-    {modal === 'shortcuts' && <ShortcutsDialog sendKey={chatPrefs.sendKey} onClose={() => setModal(null)} />}
-    {historyFor && <EditHistoryDialog message={historyFor} onClose={() => setHistoryFor(null)} />}
-    {recalling && <RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => {
+      }} /></LazyModal>}
+    {forwarding && <LazyModal title="转发消息" onClose={() => setForwarding(null)}><ForwardDialog count={forwarding.length} initialMerge={forwardMerge} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} /></LazyModal>}
+    {editingFolder && <LazyModal title={editingFolder === 'new' ? '新建文件夹' : '编辑文件夹'} onClose={() => setEditingFolder(null)}><FolderDialog folder={editingFolder === 'new' ? null : editingFolder} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 28)}
+      onSave={(name, roomIds) => saveFolder(editingFolder === 'new' ? null : editingFolder, name, roomIds)} onDelete={() => deleteFolder(editingFolder)} onClose={() => setEditingFolder(null)} /></LazyModal>}
+    {modal === 'status' && <LazyModal title="设置状态" onClose={() => setModal(null)}><StatusDialog status={activeStatus(userMap[state.me.id])} notify={notify} onClose={() => setModal(null)} /></LazyModal>}
+    {modal === 'shortcuts' && <LazyModal title="键盘快捷键" onClose={() => setModal(null)}><ShortcutsDialog sendKey={chatPrefs.sendKey} onClose={() => setModal(null)} /></LazyModal>}
+    {historyFor && <LazyModal title="编辑历史" onClose={() => setHistoryFor(null)}><EditHistoryDialog message={historyFor} onClose={() => setHistoryFor(null)} /></LazyModal>}
+    {recalling && <LazyModal title="撤回消息" onClose={() => setRecalling(null)}><RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => {
       syncHistory([message]); notify('消息已撤回');
       if (recalling.text?.trim() && !recalling.burn) { setRecalledTexts(previous => ({ ...previous, [message.id]: { text: recalling.text } })); setTimeout(() => forgetRecalled(message.id), 10 * 60000); }
-    }} />}
-    {['arcade', 'arcade-joined'].includes(modal) && !appLock.locked && <Suspense fallback={<Modal title="游戏厅" onClose={() => setModal(null)}><p role="status">正在打开游戏厅…</p></Modal>}><Arcade me={state.me} connected={connected} enterTable={modal === 'arcade-joined'} onClose={() => setModal(null)} /></Suspense>}
-    <ArcadeInvitation userId={state.me.id} hidden={appLock.locked} onOpen={() => setModal('arcade-joined')} />
+    }} /></LazyModal>}
+    {['arcade', 'arcade-joined'].includes(modal) && !appLock.locked && <LazyModal title="游戏厅" onClose={() => setModal(null)} fallback={<Modal title="游戏厅" onClose={() => setModal(null)}><p role="status">正在打开游戏厅…</p></Modal>}><Arcade me={state.me} connected={connected} enterTable={modal === 'arcade-joined'} onClose={() => setModal(null)} /></LazyModal>}
+    {!popoutRoom && <ArcadeInvitation userId={state.me.id} hidden={appLock.locked} onOpen={() => setModal('arcade-joined')} />}
     {toastElement}
-  </div></>;
+  </div>{appLock.locked && <LockScreen appLock={appLock} onLogout={logout} loggingOut={loggingOut} />}</>;
 }

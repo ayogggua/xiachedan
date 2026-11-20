@@ -9,6 +9,7 @@ const DURATION = 5800;
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const shouldPlay = () => {
   if (popoutRoom || reducedMotion()) return false;
+  try { if (localStorage.getItem('linliao.appLock')) return false; } catch {}
   try { return !sessionStorage.getItem(SEEN); } catch { return true; }
 };
 const remember = () => { try { sessionStorage.setItem(SEEN, '1'); } catch {} };

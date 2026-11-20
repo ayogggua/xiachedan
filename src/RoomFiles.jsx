@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, Film, FileText, Download } from 'lucide-react';
 import { api, mediaUrl, formatSize } from './api';
 import { IconButton, Skeleton, SpoilerBadge, coveredMedia } from './components';
@@ -8,18 +8,43 @@ export default function RoomFiles({ room, userMap, privateMode, historyVersion, 
   const [kind, setKind] = useState('media');
   const [items, setItems] = useState(null);
   const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
-  const load = (before, append) => api(`room-files?roomId=${encodeURIComponent(room.id)}&kind=${kind}${before ? `&before=${before}` : ''}`)
-    .then(result => { setItems(previous => append ? [...previous, ...result.items] : result.items); setHasMore(result.hasMore); })
-    .catch(failure => setError(failure.message));
-  useEffect(() => { setItems(null); setError(''); load(); }, [room.id, kind, historyVersion]);
+  const serial = useRef(0);
+  const controller = useRef(null);
+  const load = useCallback((before, append = false) => {
+    controller.current?.abort();
+    const nextController = new AbortController();
+    controller.current = nextController;
+    const ticket = ++serial.current;
+    setError('');
+    if (append) setLoadingMore(true); else setItems(null);
+    return api(`room-files?roomId=${encodeURIComponent(room.id)}&kind=${kind}${before ? `&before=${before}` : ''}`, undefined, { signal: nextController.signal })
+      .then(result => {
+        if (ticket !== serial.current) return;
+        setItems(previous => append && previous ? [...previous, ...result.items] : result.items);
+        setHasMore(result.hasMore);
+      })
+      .catch(failure => {
+        if (ticket !== serial.current || nextController.signal.aborted) return;
+        setError(failure.message);
+      })
+      .finally(() => {
+        if (ticket === serial.current) setLoadingMore(false);
+      });
+  }, [room.id, kind]);
+  useEffect(() => {
+    setHasMore(false);
+    load();
+    return () => { ++serial.current; controller.current?.abort(); };
+  }, [load, historyVersion]);
   const day = time => new Date(time).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
   return <>
     <div className="members-panel-heading"><IconButton icon={ChevronLeft} label="返回会话成员" size={16} onClick={onBack} /><h3 className="history-title">图片与文件</h3></div>
     <div className="segmented-control files-tabs" role="group" aria-label="类型">{[['media', '图片和视频'], ['file', '文件']].map(([key, label]) =>
       <button key={key} type="button" className={kind === key ? 'active' : ''} aria-pressed={kind === key} onClick={() => setKind(key)}>{label}</button>)}</div>
     <div className="history-results">
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <div className="inline-error-row" role="alert"><p className="form-error">{error}</p><button type="button" className="secondary-button" onClick={() => load(items?.length ? items.at(-1).seq : undefined, Boolean(items?.length))}>重试</button></div>}
       {!items ? !error && <Skeleton kind={kind} rows={kind === 'media' ? 9 : 5} /> : !items.length ? <p className="history-empty">{kind === 'media' ? '这里还没有发过图片或视频。' : '这里还没有发过文件。'}</p>
         : kind === 'media' ? <div className="media-grid">{items.map(item => { const covered = coveredMedia(item.file); return <button type="button" key={`${item.messageId}-${item.file.id}`} className={`media-tile ${privateMode || covered ? 'masked' : ''}`}
           title={`${userMap[item.senderId]?.name || '成员'} · ${day(item.createdAt)}`} aria-label={covered ? '剧透，跳到这条消息' : item.file.name}
@@ -32,7 +57,7 @@ export default function RoomFiles({ room, userMap, privateMode, historyVersion, 
             <span><b>{item.file.name}</b><small>{formatSize(item.file.size)} · {userMap[item.senderId]?.name || '成员'} · {day(item.createdAt)}</small></span></button>
           <a href={mediaUrl(item.file.id, true)} download={item.file.name} aria-label={`下载 ${item.file.name}`} title="下载"><Download size={15} /></a>
         </li>)}</ul>}
-      {hasMore && <button type="button" className="secondary-button load-more" onClick={() => load(items.at(-1).seq, true)}>加载更多</button>}
+      {hasMore && !error && <button type="button" className="secondary-button load-more" disabled={loadingMore} onClick={() => load(items.at(-1).seq, true)}>{loadingMore ? '正在加载…' : '加载更多'}</button>}
     </div>
   </>;
 }

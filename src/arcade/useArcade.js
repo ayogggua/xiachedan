@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, uid } from '../api';
 
 export default function useArcade() {
   const [data, setData] = useState(null);
@@ -20,7 +20,7 @@ export default function useArcade() {
         setError(error.message);
         if (error.status === 404) { selected.current = ''; setData(previous => previous && { ...previous, table: null }); }
       }
-    } finally { if (live.current) setLoading(false); }
+    } finally { if (live.current && ticket === serial.current) setLoading(false); }
   }, []);
   useEffect(() => {
     live.current = true;
@@ -41,7 +41,7 @@ export default function useArcade() {
     if (mutating.current) return false;
     mutating.current = true; setBusy(true); setError(''); ++serial.current;
     try {
-      const next = await api(`arcade/${action}`, { requestId: crypto.randomUUID(), ...body });
+      const next = await api(`arcade/${action}`, { requestId: uid(), ...body });
       ++serial.current;
       if (live.current) { selected.current = next.table?.id || ''; setData(next); }
       return true;

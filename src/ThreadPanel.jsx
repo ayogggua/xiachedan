@@ -9,14 +9,20 @@ import Composer from './Composer';
 export default function ThreadPanel({ rootId, room, viewerId, privateMode, threadTick, onBack, notify, onLoaded, handlers, userOf, reactionOptions, reactingTo, quickReact,
   composer, blocked, outbox, editing, onCancelEdit, onEdited, onEditLast }) {
   const [thread, setThread] = useState(null);
+  const [error, setError] = useState('');
+  const [retryCount, setRetryCount] = useState(0);
   const list = useRef();
   const stick = useRef(true);
   const tick = threadTick.rootId === rootId || threadTick.rootId === '*' ? threadTick.n : 0;
   useEffect(() => {
     let alive = true;
-    api(`thread?rootId=${encodeURIComponent(rootId)}`).then(result => { if (alive) setThread(result); }).catch(error => notify(error.message));
-    return () => { alive = false; };
-  }, [rootId, tick]);
+    const controller = new AbortController();
+    setError('');
+    api(`thread?rootId=${encodeURIComponent(rootId)}`, undefined, { signal: controller.signal })
+      .then(result => { if (alive) { setThread(result); setError(''); } })
+      .catch(failure => { if (alive && !controller.signal.aborted) setError(failure.message); });
+    return () => { alive = false; controller.abort(); };
+  }, [rootId, tick, retryCount]);
   useEffect(() => { if (thread) onLoaded?.([thread.root, ...thread.replies]); }, [thread]);
   useEffect(() => () => onLoaded?.([]), []);
   const pending = outbox.items.filter(item => item.payload.threadOf === rootId);
@@ -35,7 +41,8 @@ export default function ThreadPanel({ rootId, room, viewerId, privateMode, threa
   return <div className="thread-panel">
     <div className="members-panel-heading"><IconButton icon={ChevronLeft} label="返回" size={16} onClick={onBack} /><h3 className="history-title">话题{thread ? ` · ${count} 条回复` : ''}</h3></div>
     <div className="thread-list" ref={list} onScroll={event => { const node = event.currentTarget; stick.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40; }}>
-      {!thread ? <p className="history-empty"><LoaderCircle className="spin" size={14} />正在加载…</p> : <>
+      {!thread ? (error ? <div className="inline-error-row" role="alert"><p className="form-error">{error}</p><button type="button" className="secondary-button" onClick={() => setRetryCount(c => c + 1)}>重试</button></div> : <p className="history-empty"><LoaderCircle className="spin" size={14} />正在加载…</p>) : <>
+        {error && <div className="inline-error-row" role="alert"><p className="form-error">{error}</p><button type="button" className="secondary-button" onClick={() => setRetryCount(c => c + 1)}>重试</button></div>}
         <div className="thread-root">{row({ ...thread.root, thread: undefined }, 0, [thread.root])}</div>
         <div className="date-divider thread-divider"><span>{count ? `${count} 条回复` : '还没有回复'}</span></div>
         {replies.map((message, index) => row(message, index, replies))}

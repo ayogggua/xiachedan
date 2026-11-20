@@ -13,7 +13,7 @@
 }
 .arcade-launcher > svg { display: block; }
 .arcade-launcher:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
-.arcade-launcher:active { transform: translateY(1px); }
+.arcade-launcher:active:not(:disabled) { transform: translateY(1px); }
 .arcade-launcher--rail { width: 44px; height: 44px; }
 .arcade-launcher--mobile { display: none; }
 @media (hover: hover) and (pointer: fine) {
@@ -23,17 +23,22 @@
   }
 }
 @media (max-width: 760px) {
-  .arcade-launcher--mobile { display: inline-grid; width: 44px; height: 44px; align-self: center; }
+  .arcade-launcher--mobile { display: inline-grid; width: 40px; height: 40px; border-radius: 12px; align-self: center; }
 }
 @media (prefers-reduced-motion: reduce) {
   .arcade-launcher { transition: none; }
 }
-.arcade-invitation { position: fixed; z-index: 2000; right: 22px; top: 22px; max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 12px; padding: 16px; border: 1px solid #c9b58b; border-radius: 12px; background: #fffaf0; color: #463c2a; box-shadow: 0 10px 40px #3c2e2340; font: 12px/1.5 var(--font, sans-serif); }
+.arcade-invitation { position: fixed; z-index: 2000; right: 22px; top: 22px; max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 12px; padding: 16px; border: 1px solid #c9b58b; border-radius: 12px; background: #fffaf0; color: #3d3322; box-shadow: 0 10px 40px #3c2e2340; font: 12px/1.5 var(--font, sans-serif); }
 .arcade-invitation > div { display: grid; gap: 3px; min-width: 0; }
 .arcade-invitation b, .arcade-invitation span { overflow-wrap: anywhere; }
-.arcade-invitation span { color: #8a7a5d; }
-.arcade-invitation small { color: #ae4035; }
+.arcade-invitation span { color: #665842; }
+.arcade-invitation small { color: #9e3328; }
 .arcade-invitation button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-width: 28px; min-height: 32px; cursor: pointer; }
-.arcade-invitation .arcade-invitation-accept { padding: 7px 12px; border-radius: 6px; background: #b99453; color: white; }
+.arcade-invitation .arcade-invitation-accept { padding: 7px 12px; border-radius: 6px; background: #8f6420; color: #fffdf6; }
 .arcade-invitation button:disabled { opacity: .5; }
-@media(max-width: 540px) { .arcade-invitation { inset: max(12px, env(safe-area-inset-top)) 12px auto; gap: 8px; padding: 12px; } .arcade-invitation > svg { display: none; } .arcade-invitation > div { flex: 1; } }
+@media(max-width: 540px) { .arcade-invitation { inset: max(12px, var(--mobile-safe-top, env(safe-area-inset-top, 0px))) 12px auto; gap: 8px; padding: 12px; } .arcade-invitation > svg { display: none; } .arcade-invitation > div { flex: 1; } }
+@media (prefers-contrast: more) {
+  .arcade-invitation { border: 2px solid #5c4b30; background: #fffdf8; color: #1f1a12; }
+  .arcade-invitation span { color: #3f3524; }
+  .arcade-invitation .arcade-invitation-accept { background: #6e4910; color: #fff; }
+}

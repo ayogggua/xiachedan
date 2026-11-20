@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 
 // 隐私模式、窗口激活状态与桌面端事件；网页端没有 window.desktop 时退化为浏览器焦点。
 export default function useDesktopBridge({ notify, onPendingRoom, onOpenRoom, onReply }) {
@@ -48,7 +49,7 @@ export default function useDesktopBridge({ notify, onPendingRoom, onOpenRoom, on
       document.removeEventListener('visibilitychange', updateFocus);
     };
   }, [notify]);
-  useEffect(() => { localStorage.setItem('linliao.privacy', JSON.stringify(privateMode)); }, [privateMode]);
+  useEffect(() => { writeStorage('linliao.privacy', JSON.stringify(privateMode)); }, [privateMode]);
   useEffect(() => {
     const onKey = event => {
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p') { event.preventDefault(); changePrivacy(value => !value); }

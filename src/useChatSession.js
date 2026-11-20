@@ -102,10 +102,25 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     return { ...previous, [roomId]: rest };
   }), []);
   useEffect(() => {
-    if (!Object.values(typing).some(users => Object.keys(users).length)) return;
-    const timer = setInterval(() => setTyping(previous => Object.fromEntries(Object.entries(previous)
-      .map(([roomId, users]) => [roomId, Object.fromEntries(Object.entries(users).filter(([, until]) => until > Date.now()))]))), 1000);
-    return () => clearInterval(timer);
+    const deadlines = Object.values(typing).flatMap(users => Object.values(users));
+    if (!deadlines.length) return;
+    const next = Math.min(...deadlines);
+    const timer = setTimeout(() => setTyping(previous => {
+      const now = Date.now();
+      let changed = false;
+      const updated = {};
+      for (const [roomId, users] of Object.entries(previous)) {
+        const active = {};
+        for (const [userId, until] of Object.entries(users)) {
+          if (until > now) active[userId] = until;
+          else changed = true;
+        }
+        if (Object.keys(active).length) updated[roomId] = active;
+        else if (Object.keys(users).length) changed = true;
+      }
+      return changed ? updated : previous;
+    }), Math.max(0, next - Date.now()) + 30);
+    return () => clearTimeout(timer);
   }, [typing]);
   // 回应、投票、编辑和撤回也可能发生在话题里：通知打开着的话题面板重新读取（rootId 为 * 表示任意话题）。
   const touchThread = () => setThreadTick(tick => ({ rootId: '*', n: tick.n + 1 }));
@@ -392,15 +407,21 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     return () => { cancelled = true; };
   }, [selected, selectedAllowed, state?.me.id, loggingOut, notify]);
   async function loadOlder() {
-    const current = messages[selected] || [];
+    const roomId = selected;
+    const current = messages[roomId] || [];
     if (loading || !current.length) return false;
     setLoading(true);
     try {
-      const result = await api(`messages?roomId=${encodeURIComponent(selected)}&before=${current[0].seq}`);
-      setMessages(previous => ({ ...previous, [selected]: merge(result.messages, previous[selected] || [], historyRef.current) }));
-      setHasMore(previous => ({ ...previous, [selected]: result.hasMore }));
-      return true;
-    } catch (error) { notify(error.message); return false; } finally { setLoading(false); }
+      const result = await api(`messages?roomId=${encodeURIComponent(roomId)}&before=${current[0].seq}`);
+      setMessages(previous => ({ ...previous, [roomId]: merge(result.messages, previous[roomId] || [], historyRef.current) }));
+      setHasMore(previous => ({ ...previous, [roomId]: result.hasMore }));
+      return activeRoom.current === roomId;
+    } catch (error) {
+      if (activeRoom.current === roomId) notify(error.message);
+      return false;
+    } finally {
+      if (activeRoom.current === roomId) setLoading(false);
+    }
   }
   // 向前补齐历史直到包含指定消息，供聊天记录搜索跳转。
   const loadThrough = useCallback(async (roomId, seq) => {

@@ -3,6 +3,7 @@ const BLOCK = new Set(['P', 'DIV', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'H1
 const SKIP = new Set(['SCRIPT', 'STYLE', 'IMG', 'SVG', 'VIDEO', 'AUDIO', 'IFRAME', 'NOSCRIPT', 'TEMPLATE', 'META', 'LINK', 'HEAD', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']);
 
 const wrap = (mark, text) => { const inner = text.trim(); return inner ? `${text.match(/^\s*/)[0]}${mark}${inner}${mark}${text.match(/\s*$/)[0]}` : text; };
+const escapeHref = href => href.trim().replace(/[()\s]/g, ch => ch === '(' ? '%28' : ch === ')' ? '%29' : encodeURIComponent(ch));
 const cellText = cell => inline(cell).replace(/\n+/g, ' ').replace(/\|/g, '\\|').trim();
 
 function inline(node) {
@@ -20,7 +21,11 @@ function inline(node) {
     const strike = tag === 'S' || tag === 'DEL' || tag === 'STRIKE' || /line-through/.test(style);
     if (tag === 'BR') out += '\n';
     else if (tag === 'CODE') out += child.textContent.includes('`') ? text : `\`${child.textContent}\``;
-    else if (tag === 'A') { const href = child.getAttribute('href') || ''; out += /^https?:\/\//i.test(href) && text.trim() ? (text.trim() === href ? href : `[${text.trim()}](${href})`) : text; }
+    else if (tag === 'A') {
+      const raw = (child.getAttribute('href') || '').trim();
+      const href = escapeHref(raw);
+      out += /^https?:\/\//i.test(raw) && text.trim() ? (text.trim() === href ? href : `[${text.trim()}](${href})`) : text;
+    }
     else { let value = text; if (strike) value = wrap('~~', value); if (italic) value = wrap('*', value); if (bold) value = wrap('**', value); out += value; }
   }
   return out;
@@ -68,7 +73,7 @@ function blocks(node) {
   for (const child of node.childNodes) {
     if (child.nodeType === 1 && BLOCK.has(child.tagName) && !SKIP.has(child.tagName)) { flush(); const value = block(child).trim(); if (value) parts.push(value); }
     else if (child.nodeType === 3) run += child.textContent.replace(/\s+/g, ' ');
-    else if (child.nodeType === 1 && !SKIP.has(child.tagName)) { const wrapper = document.createElement('span'); wrapper.append(child.cloneNode(true)); run += inline(wrapper); }
+    else if (child.nodeType === 1 && !SKIP.has(child.tagName)) { const wrapper = child.ownerDocument.createElement('span'); wrapper.append(child.cloneNode(true)); run += inline(wrapper); }
   }
   flush();
   return parts.join('\n\n');
@@ -76,6 +81,7 @@ function blocks(node) {
 
 // 只有 HTML 里确实带格式时才转换；返回 null 表示按纯文本粘贴。
 export function htmlToMarkdown(html) {
+  if (typeof html !== 'string' || !html || html.length > 200000) return null;
   if (!/<(b|strong|i|em|s|del|a|code|pre|h[1-6]|ul|ol|table|blockquote|span[^>]+font-(weight|style))\b/i.test(html)) return null;
   const body = new DOMParser().parseFromString(html, 'text/html').body;
   const markdown = blocks(body).replace(/\n{3,}/g, '\n\n').trim();

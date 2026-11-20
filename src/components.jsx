@@ -1,12 +1,13 @@
-import React, { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Contact, Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand, ListOrdered, Flame } from 'lucide-react';
+import { Contact, Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand, ListOrdered, Flame, Rows3 } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName, seenText } from './api';
-import { burnDeadline, previewText } from './history';
+import { burnDeadline, previewText, readStorage } from './history';
+import { writeStorage } from './storage';
+import ErrorBoundary, { RetryContext, nextAttempt } from './ErrorBoundary';
 import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
-import { GROUPS as EMOJI_GROUPS } from './EmojiPicker';
+import { GROUPS as EMOJI_GROUPS } from './emojiShortcodes';
 import { disintegrate } from './dust';
-import { readStorage } from './history';
 import appIcon from './assets/brand/app-icon.svg';
 import { PRESETS, HEXTECH_AVATARS, HEXTECH_TIERS, getHextechAvatar } from '../shared/avatars.js';
 import { attachmentLabel } from '../shared/preview.js';
@@ -54,6 +55,55 @@ export function Modal({ title, subtitle, children, onClose, wide = false, classN
   </dialog>;
 }
 
+const topDialog = () => [...document.querySelectorAll('dialog[open]')].at(-1) || document.body;
+const touchesDialog = records => records.some(record => record.type === 'attributes' || [...record.addedNodes, ...record.removedNodes].some(node => node instanceof Element && (node.tagName === 'DIALOG' || node.querySelector?.('dialog'))));
+export function useTopLayerPortal(active) {
+  const [portal, setPortal] = useState(() => (active ? topDialog() : document.body));
+  useEffect(() => {
+    if (!active) { setPortal(document.body); return; }
+    const update = () => setPortal(previous => { const next = topDialog(); return previous === next ? previous : next; });
+    const observer = new MutationObserver(records => { if (touchesDialog(records)) update(); });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] });
+    update();
+    return () => observer.disconnect();
+  }, [active]);
+  return portal;
+}
+
+export function LazySlot({ children, fallback = null, errorFallback }) {
+  const [attempt, setAttempt] = useState(nextAttempt);
+  const retry = () => setAttempt(nextAttempt);
+  return <RetryContext.Provider value={attempt}>
+    <ErrorBoundary resetKey={attempt} fallback={({ reset }) => {
+      const onRetry = () => { retry(); reset(); };
+      return errorFallback ? errorFallback(onRetry) : <div className="inline-error-row" role="alert"><p className="form-error">加载失败，请检查网络后重试。</p><button type="button" className="secondary-button" onClick={onRetry}>重试</button></div>;
+    }}>
+      <Suspense fallback={fallback}>{children}</Suspense>
+    </ErrorBoundary>
+  </RetryContext.Provider>;
+}
+
+export function LazyModal({ title = '正在加载', onClose, fallback, children }) {
+  const [attempt, setAttempt] = useState(nextAttempt);
+  return <RetryContext.Provider value={attempt}>
+    <ErrorBoundary resetKey={attempt} fallback={({ reset }) => <Modal title={title} onClose={onClose}>
+      <p className="form-error" role="alert">模块加载失败，请检查网络后重试。</p>
+      <div className="modal-footer">
+        {onClose && <button type="button" className="secondary-button" onClick={onClose}>关闭</button>}
+        <button type="button" className="primary-button" onClick={() => { setAttempt(nextAttempt); reset(); }}>重试</button>
+      </div>
+    </Modal>}>
+      <Suspense fallback={fallback ?? <Modal title={title} onClose={onClose}><p className="inline-note" role="status"><LoaderCircle className="spin" size={14} /> 正在加载…</p></Modal>}>{children}</Suspense>
+    </ErrorBoundary>
+  </RetryContext.Provider>;
+}
+
+const FORWARD_MODES = [[false, Rows3, '逐条转发'], [true, MessagesSquare, '合并转发']];
+export function ForwardButtons({ count, disabled, onForward }) {
+  if (count < 2) return <button className="primary-button" disabled={disabled} onClick={() => onForward(false)}>转发</button>;
+  return FORWARD_MODES.map(([merge, Icon, label]) => <button key={label} className={`${merge ? 'primary-button' : 'secondary-button'} forward-button`} disabled={disabled} onClick={() => onForward(merge)}><Icon size={15} />{label}</button>);
+}
+
 const hextechTierName = value => HEXTECH_TIERS.find(tier => tier.id === value)?.name;
 const searchKey = value => value.normalize('NFKC').toLowerCase().replace(/[\s-]+/g, '');
 
@@ -93,7 +143,14 @@ export function IdentityFields({ name, setName, avatar, setAvatar }) {
 
 export function PrivatePreview({ privateMode, children }) {
   const [revealed, setRevealed] = useState(false);
-  useEffect(() => { setRevealed(false); const hide = () => setRevealed(false); window.addEventListener('blur', hide); return () => window.removeEventListener('blur', hide); }, [privateMode, children]);
+  useEffect(() => {
+    setRevealed(false);
+    if (!privateMode) return;
+    const hide = () => setRevealed(false);
+    window.addEventListener('blur', hide);
+    document.addEventListener('visibilitychange', hide);
+    return () => { window.removeEventListener('blur', hide); document.removeEventListener('visibilitychange', hide); };
+  }, [privateMode]);
   return <span className={`private-preview ${privateMode && !revealed ? 'masked-preview' : ''}`} onPointerEnter={() => setRevealed(true)} onPointerMove={() => setRevealed(true)} onPointerLeave={() => setRevealed(false)}>{privateMode && !revealed ? '****' : children}</span>;
 }
 
@@ -384,8 +441,8 @@ function useSwipeReply(enabled, onTrigger, press) {
 }
 
 // 正文：简单格式与 @提及高亮；@我和@所有人用更醒目的样式。
-function MessageText({ text, mentions = [], nameOf, viewerId, meta = null }) {
-  return <FormattedText text={text} mentions={mentions} nameOf={nameOf} viewerId={viewerId} tail={meta} />;
+function MessageText({ text, mentions = [], nameOf, viewerId, meta = null, mentionVersion = 0 }) {
+  return <FormattedText text={text} mentions={mentions} nameOf={nameOf} viewerId={viewerId} tail={meta} mentionVersion={mentionVersion} />;
 }
 
 // 群聊里按成员给昵称着色：同一个人颜色固定。
@@ -428,7 +485,7 @@ function ReactionPalette({ options, chosen, onPick, onClose }) {
   const [expanded, setExpanded] = useState(false);
   const usage = readStorage('linliao.reactionUse', {});
   const frequent = [...new Set([...Object.keys(usage).sort((a, b) => usage[b] - usage[a]), ...options])].slice(0, 8);
-  const pick = emoji => { localStorage.setItem('linliao.reactionUse', JSON.stringify({ ...usage, [emoji]: (usage[emoji] || 0) + 1 })); onPick(emoji); onClose(); };
+  const pick = emoji => { writeStorage('linliao.reactionUse', JSON.stringify({ ...usage, [emoji]: (usage[emoji] || 0) + 1 })); onPick(emoji); onClose(); };
   const button = emoji => <button type="button" key={emoji} aria-label={`回应 ${emoji}`} aria-pressed={chosen.includes(emoji)} className={chosen.includes(emoji) ? 'chosen' : ''} onClick={() => pick(emoji)}>{emoji}</button>;
   return <div ref={ref} className={`reaction-palette ${below ? 'below' : ''} ${expanded ? 'expanded' : ''}`} role="group" aria-label="选择表情">
     {expanded ? <div className="reaction-all"><h4>最常使用</h4><div className="reaction-grid">{frequent.map(button)}</div>
@@ -459,8 +516,8 @@ function ReactionChip({ item, viewerId, nameOf, userOf, live, onToggle }) {
   </button>;
 }
 
-// users 只用来在成员资料变化时让消息重新渲染（引用里的名字、回应者头像都取自成员资料）。
-export const Message = React.memo(function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, swipeReply = false, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf, onOpenProfile, showName: nameShown, reEditable = false, onReEdit, quickReact = false, onShowHistory, onChainEntry, onCloseChain, chainManager = false, voiceBlocked = '', burnContent, onOpenBurn }) {
+// profileVersion 只在成员可见资料字段变化时递增，避免上下线心跳击穿当前房间全部消息的 React.memo。
+function MessageBody({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, swipeReply = false, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf, onOpenProfile, showName: nameShown, reEditable = false, onReEdit, quickReact = false, onShowHistory, onChainEntry, onCloseChain, chainManager = false, voiceBlocked = '', burnContent, onOpenBurn, profileVersion = 0 }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -494,6 +551,7 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   };
   useEffect(() => {
     setRevealed(false);
+    if (!privateMode) return;
     const hide = () => setRevealed(false);
     window.addEventListener('blur', hide);
     document.addEventListener('visibilitychange', hide);
@@ -502,13 +560,13 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   const hidden = privateMode && !revealed;
   const alreadyRead = message.readBy?.includes(viewerId);
   useEffect(() => {
-    if (mine || !bubble.current) return;
+    if (mine || alreadyRead || message.recalledAt || burnGone || !bubble.current) return;
     const observer = new IntersectionObserver(([entry]) => {
       setVisible(entry.isIntersecting && entry.intersectionRect.height >= Math.min(60, entry.boundingClientRect.height * .5));
     }, { threshold: [0, .05, .15, .5, 1] });
     observer.observe(bubble.current);
     return () => observer.disconnect();
-  }, [message.id, mine, message.recalledAt]);
+  }, [message.id, mine, alreadyRead, message.recalledAt, burnGone]);
   useEffect(() => {
     if (message.recalledAt || mine || !readingEnabled || hidden || !visible || alreadyRead || !Array.isArray(message.readBy)) return;
     // 隐私模式下鼠标需停留 0.6 秒才算看过，划过不计。
@@ -556,7 +614,7 @@ export const Message = React.memo(function Message({ message, user, mine, contin
     {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo, message)} />}
     {message.card ? <ContactCard userId={message.card.userId} userOf={userOf} onOpen={selecting ? undefined : onOpenProfile} /> : message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
       : message.chain ? <><ChainCard message={message} viewerId={viewerId} nameOf={nameOf} canClose={mine || chainManager} blocked={voiceBlocked} onEntry={selecting ? undefined : onChainEntry} onClose={selecting ? undefined : onCloseChain} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
-      : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={reactionRow ? null : meta} />}
+      : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={reactionRow ? null : meta} mentionVersion={message.mentions?.length ? profileVersion : 0} />}
     {message.text && !message.poll && !message.chain && !message.bundle && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
     {album && <div className={`album album-${media.length}`}>{media.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}</div>}
     {message.attachments.filter(file => !album || !media.includes(file)).map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}
@@ -613,6 +671,21 @@ export const Message = React.memo(function Message({ message, user, mine, contin
     </div>
     {mine && avatar}
   </article>;
+}
+
+export const Message = React.memo(function Message(props) {
+  const { message, mine, privateMode } = props;
+  const resetKey = `${message?.id ?? ''}:${message?.editedAt ?? ''}:${message?.text ?? ''}`;
+  return <ErrorBoundary resetKey={resetKey} fallback={() => {
+    const raw = !privateMode && typeof message?.text === 'string' ? message.text : '';
+    const preview = raw.slice(0, 120);
+    return <article className={`message-row ${mine ? 'mine' : ''} last`} data-message-id={message?.id} data-seq={message?.seq}>
+      <div className="message-column"><div className="message-bubble message-error-fallback" role="alert">
+        <span className="message-error-title"><CircleAlert size={14} aria-hidden="true" />该消息暂时无法显示</span>
+        {preview && <p className="message-error-preview">{preview}{raw.length > 120 ? '…' : ''}</p>}
+      </div></div>
+    </article>;
+  }}><MessageBody {...props} /></ErrorBoundary>;
 });
 
 // 发件箱里还没发出去的消息：发送中半透明，失败的在下方给出原因和「重试 / 删除」。

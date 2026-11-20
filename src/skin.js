@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 
 // 界面风格：虾扯蛋（玻璃风）与经典（熟悉的三栏聊天布局），只保存在本机。经典风格的样式见 skins/classic.css。
 export const SKINS = [['xiachedan', '虾扯蛋'], ['classic', '经典']];
@@ -20,7 +21,7 @@ export default function useSkin() {
   const [skin, setSkin] = useState(storedSkin);
   useEffect(() => {
     applySkin(skin);
-    localStorage.setItem('linliao.skin', JSON.stringify(skin));
+    writeStorage('linliao.skin', JSON.stringify(skin));
   }, [skin]);
   return [skin, setSkin];
 }

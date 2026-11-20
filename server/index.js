@@ -50,6 +50,7 @@ function detectMime(file) {
 export async function startServer({ dataDir = path.join(root, '.data'), port = 4318, host = '0.0.0.0',
   mode = process.env.CHAT_MODE || (process.env.NODE_ENV === 'production' ? 'cloud' : 'local'),
   serveWeb = process.env.CHAT_SERVE_WEB === 'true' || (mode === 'local' && process.env.CHAT_SERVE_WEB !== 'false'),
+  webDir = path.join(root, 'dist'),
   previewFetcher = fetchPreview,
   scheduleInterval = 15000,
   scheduleMinLead = 30000,
@@ -2229,7 +2230,20 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json({ ok: true });
   });
   app.use('/api', (_req, _res, next) => next(fail('接口不存在', 404)));
-  if (serveWeb) app.use(express.static(path.join(root, 'dist'), { etag: true }));
+  if (serveWeb) {
+    const staticRoot = path.resolve(webDir);
+    app.use(express.static(staticRoot, {
+      etag: true,
+      setHeaders(res, filePath) {
+        const rel = path.relative(staticRoot, filePath).split(path.sep).join('/');
+        if (rel.startsWith('assets/') || rel.startsWith('avatars/hextech/')) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else if (rel === 'index.html' || rel === 'sw.js' || rel === 'manifest.webmanifest') {
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+      },
+    }));
+  }
   app.use((error, req, res, _next) => {
     if (req.file && error instanceof multer.MulterError) { try { unlinkSync(req.file.path); } catch {} }
     const status = error.status || (error instanceof multer.MulterError ? 400 : 500);
