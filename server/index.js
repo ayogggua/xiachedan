@@ -183,6 +183,34 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const workspace = () => stmt('SELECT * FROM workspace WHERE id=1').get();
   const ownerId = () => stmt('SELECT user_id FROM space_admin WHERE id=1').get()?.user_id;
   const isRemoved = id => Boolean(stmt('SELECT 1 FROM removed_users WHERE user_id=?').get(id));
+  // 空间管理者：账号模式是管理员和超级管理员，局域网模式是空间创建者。
+  const isManager = user => Boolean(user) && (cloud ? ['admin', 'super_admin'].includes(user.role) : user.id === ownerId());
+  const isManagerById = id => {
+    if (!id || isRemoved(id)) return false;
+    if (!cloud) return id === ownerId();
+    const row = stmt('SELECT role, status FROM accounts WHERE user_id=?').get(id);
+    return Boolean(row && row.status === 'approved' && ['admin', 'super_admin'].includes(row.role));
+  };
+  const requireManager = req => { if (!isManager(req.user)) throw fail('只有管理员可以这样操作', 403); };
+  const friendPair = (a, b) => a < b ? [a, b] : [b, a];
+  const areFriends = (a, b) => {
+    if (!a || !b || a === b) return false;
+    const [userA, userB] = friendPair(a, b);
+    return Boolean(stmt('SELECT 1 FROM friendships WHERE user_a=? AND user_b=?').get(userA, userB));
+  };
+  const friendIdsOf = userId => stmt('SELECT user_b AS id FROM friendships WHERE user_a=? UNION SELECT user_a AS id FROM friendships WHERE user_b=?').all(userId, userId).map(row => row.id);
+  const activeFriendIdsOf = userId => friendIdsOf(userId).filter(id => Boolean(userById(id)));
+  const directPeerOf = (room, userId) => room?.kind === 'direct' ? JSON.parse(room.members).find(id => id !== userId) || null : null;
+  const canSendInDirectById = (room, userId) => {
+    if (room?.kind !== 'direct') return true;
+    const peerId = directPeerOf(room, userId);
+    if (!peerId) return false;
+    if (bots.isBot(peerId)) return true;
+    return isManagerById(userId) || isManagerById(peerId) || areFriends(userId, peerId);
+  };
+  const requireDirectFriend = (room, user) => {
+    if (!canSendInDirectById(room, user.id)) throw fail('对方还不是你的好友，添加好友后才能发送消息', 403);
+  };
   const spaceInfo = () => ({ name: workspace().name, ownerId: ownerId(), mode });
   // 只找真人成员；机器人不是 users 里能登录的人，需要时用 bots.botRow。
   const userById = id => (!cloud || auth.activeId(id)) ? stmt('SELECT id, name, avatar FROM users WHERE id=? AND id NOT IN (SELECT user_id FROM removed_users) AND id NOT IN (SELECT id FROM bots)').get(id) : null;
@@ -220,8 +248,74 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const mutes = new Map(stmt('SELECT user_id, until FROM member_mutes').all().map(row => [row.user_id, row.until]));
     const colors = new Map(stmt('SELECT user_id, color FROM user_name_colors').all().map(row => [row.user_id, row.color]));
     return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); const profile = profiles.get(user.id);
-      return { ...user, removed, online: !removed && online.has(user.id), status: removed ? null : statusOf(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, nameColor: colors.get(user.id) ?? null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; })
+      return { ...user, removed, online: !removed && online.has(user.id), status: removed ? null : statusOf(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, nameColor: colors.get(user.id) ?? null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())), isManager: isManagerById(user.id) }; })
       .concat(bots.userViews());
+  };
+  // 非好友的基础资料：隐藏在线状态、最后在线时间、自定义状态与禁言状态。
+  const publicUserCard = user => ({
+    id: user.id, name: user.name, avatar: user.avatar, removed: Boolean(user.removed),
+    online: false, status: null, department: user.department || '', bio: user.bio || '',
+    lastSeen: null, nameColor: user.nameColor ?? null, muted: false, isManager: Boolean(user.isManager),
+    ...(user.bot ? { bot: user.bot } : {}),
+  });
+  // 普通成员仅可见自己、好友、同会话成员及会话中涉及的名片/历史发送人；管理员可见完整用户列表。
+  const visibleUserInfo = viewerId => {
+    if (isManagerById(viewerId)) return { all: true, allowed: null, presence: null };
+    const allowed = new Set([viewerId]);
+    const presence = new Set([viewerId]);
+    for (const id of friendIdsOf(viewerId)) { allowed.add(id); presence.add(id); }
+    const myRooms = stmt('SELECT id, kind, members FROM rooms').all().filter(room => canAccess(room, viewerId));
+    const roomIds = [];
+    for (const room of myRooms) {
+      roomIds.push(room.id);
+      for (const memberId of JSON.parse(room.members)) { allowed.add(memberId); presence.add(memberId); }
+      if (room.kind === 'group') {
+        const { ownerId: groupOwner, adminIds } = groupSettings(room);
+        if (viewerId === groupOwner || adminIds.includes(viewerId)) {
+          for (const row of stmt('SELECT user_id, invited_by FROM room_join_requests WHERE room_id=?').all(room.id)) {
+            allowed.add(row.user_id);
+            if (row.invited_by) allowed.add(row.invited_by);
+          }
+        }
+      }
+    }
+    if (roomIds.length) {
+      const placeholders = roomIds.map(() => '?').join(',');
+      for (const row of stmt(`SELECT DISTINCT sender_id FROM messages WHERE room_id IN (${placeholders})`).all(...roomIds)) allowed.add(row.sender_id);
+      for (const row of stmt(`SELECT DISTINCT c.user_id FROM message_cards c JOIN messages m ON m.id=c.message_id WHERE m.room_id IN (${placeholders})`).all(...roomIds)) allowed.add(row.user_id);
+      for (const row of stmt(`SELECT DISTINCT f.original_sender FROM message_forwards f JOIN messages m ON m.id=f.message_id WHERE m.room_id IN (${placeholders})`).all(...roomIds)) allowed.add(row.original_sender);
+    }
+    return { all: false, allowed, presence };
+  };
+  const usersFor = (viewerId, allUsers = null) => {
+    const list = allUsers || users();
+    const scope = visibleUserInfo(viewerId);
+    if (scope.all) return list;
+    return list.filter(user => Boolean(user.bot) || scope.allowed.has(user.id))
+      .map(user => user.bot || scope.presence.has(user.id) ? user : publicUserCard(user));
+  };
+  const friendRequestsFor = (viewerId, allUsers = null) => {
+    const list = allUsers || users();
+    const byId = new Map(list.map(item => [item.id, item]));
+    const manager = isManagerById(viewerId);
+    const friendSet = new Set(friendIdsOf(viewerId));
+    const userCard = id => {
+      const found = byId.get(id);
+      if (!found) return null;
+      return manager || friendSet.has(id) ? found : publicUserCard(found);
+    };
+    const serialize = (row, peerId) => ({
+      id: row.id, fromUserId: row.from_user_id, toUserId: row.to_user_id,
+      note: row.note, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at,
+      user: userCard(peerId),
+    });
+    const incoming = stmt("SELECT * FROM friend_requests WHERE to_user_id=? ORDER BY (status='pending') DESC, updated_at DESC LIMIT 50").all(viewerId)
+      .filter(row => row.status !== 'canceled' && (row.status !== 'pending' || Boolean(userById(row.from_user_id))))
+      .map(row => serialize(row, row.from_user_id)).filter(item => Boolean(item.user));
+    const outgoing = stmt("SELECT * FROM friend_requests WHERE from_user_id=? ORDER BY (status='pending') DESC, updated_at DESC LIMIT 50").all(viewerId)
+      .filter(row => row.status !== 'pending' || Boolean(userById(row.to_user_id)))
+      .map(row => serialize(row, row.to_user_id)).filter(item => Boolean(item.user));
+    return { incoming, outgoing };
   };
   // 群主：记录的群主不在群里（或旧数据没有记录）时，由成员列表里最早的人接任；创建群聊时创建者排在第一位。
   const groupSettings = room => {
@@ -282,6 +376,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const requireRoomVoice = (room, user) => {
     requireVoice(user);
     if (groupMuted(room, user.id)) throw fail('全员禁言中，只有群主和管理员可以发言', 403);
+    requireDirectFriend(room, user);
   };
   const savePolicy = (roomId, change) => {
     const current = stmt('SELECT * FROM room_group_policy WHERE room_id=?').get(roomId) || { all_muted: 0, join_approval: 0, invite_token: null, invite_at: null };
@@ -366,7 +461,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, status: statusOf(user.id), ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays(), recallWindow: recallWindow() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), phrases: phrasesFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS };
+    const allUsers = users();
+    return {
+      me: { ...user, status: statusOf(user.id), ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) },
+      workspace: { ...spaceInfo(), retentionDays: retentionDays(), recallWindow: recallWindow() },
+      canViewUserList: isManager(user),
+      users: usersFor(user.id, allUsers),
+      friends: activeFriendIdsOf(user.id),
+      friendRequests: friendRequestsFor(user.id, allUsers),
+      notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), phrases: phrasesFor(user.id),
+      rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS,
+    };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -375,6 +480,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const masked = secret && JSON.stringify({ ...event, message: burnView(event.message) });
     for (const socket of sockets) if (socket.readyState === WebSocket.OPEN && !isRemoved(socket.userId) && (!cloud || auth.validSocket(socket)) && accepts(socket)) {
       if (socket.bufferedAmount > 1024 * 1024) socket.terminate(); else socket.send(secret && socket.userId !== event.message.senderId ? masked : payload);
+    }
+  };
+  // 按每个连接的权限下发可见用户列表：管理员收全量，普通成员只收自己可见的用户子集。
+  const broadcastUsers = (targetUserIds = null) => {
+    const allUsers = users();
+    for (const socket of sockets) {
+      if (socket.readyState !== WebSocket.OPEN || isRemoved(socket.userId) || (cloud && !auth.validSocket(socket))) continue;
+      if (targetUserIds && !targetUserIds.has(socket.userId)) continue;
+      if (socket.bufferedAmount > 1024 * 1024) socket.terminate();
+      else socket.send(JSON.stringify({ type: 'users', users: usersFor(socket.userId, allUsers) }));
     }
   };
   const broadcast = (event, roomId) => {
@@ -394,7 +509,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const user = { id: randomUUID(), name, avatar: isPresetAvatar(avatar) ? avatar : 'cat' };
     stmt('INSERT INTO users (id,name,avatar,token_hash,created_at) VALUES (?,?,?,?,?)').run(user.id, name, user.avatar, hash(token), Date.now());
     setSession(res, token);
-    broadcast({ type: 'users', users: users() });
+    broadcastUsers();
     return user;
   };
   const rateLimit = (req, key, max, duration = 60000, identity) => {
@@ -431,7 +546,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   if (cloud) {
     try { auth = await createAuth({ db, app, production, rateLimit,
       closeUser: (id, sessionHash) => { for (const socket of sockets) if (sessionHash ? socket.sessionHash === sessionHash : socket.userId === id) socket.close(4001, 'account-changed'); },
-      changed: () => { broadcast({ type: 'users', users: users() }); broadcast({ type: 'rooms' }); },
+      changed: () => { broadcastUsers(); broadcast({ type: 'rooms' }); },
     }); } catch (error) { db.close(); throw error; }
   }
   app.get('/api/health', (_req, res) => { stmt('SELECT 1').get(); res.json({ app: 'linliao', version: VERSION, mode, ok: true, mobile: cloud, release: process.env.CHAT_RELEASE || 'development' }); });
@@ -526,7 +641,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.status(201).json({ ok: true, id });
   });
   const bots = createBots({ db, stmt, mode, fail, textValue, rateLimit, broadcast, serializeMessage, userById, canAccess, requireRoom, groupSettings,
-    isManager: user => isManager(user), clearedThroughSeq, recalledAt, isBurn, refreshUsers: () => broadcast({ type: 'users', users: users() }), options: botOptions });
+    isManager: user => isManager(user), clearedThroughSeq, recalledAt, isBurn, refreshUsers: () => broadcastUsers(), options: botOptions });
   bots.registerApi(app);
   app.use('/api', (req, _res, next) => {
     // 先销毁已经到点的阅后即焚消息，之后的任何接口都拿不到它们的内容。
@@ -570,7 +685,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     }
     res.json({ revoked: targets.length });
   });
-  const arcadeUsers = () => users().filter(user => !user.removed && !user.bot && userById(user.id));
+  const arcadeUsers = viewer => {
+    const list = users().filter(user => !user.removed && !user.bot && userById(user.id));
+    if (!viewer || isManager(viewer)) return list;
+    const allowed = new Set([viewer.id, ...friendIdsOf(viewer.id)]);
+    return list.filter(user => allowed.has(user.id));
+  };
   const arcadeBank = createArcadeBank({ db, userById, listUsers: arcadeUsers,
     canMint: user => cloud ? user.role === 'super_admin' : user.id === ownerId() });
   const poker = createPoker({ bank: arcadeBank, getUser: userById, changed: event => broadcast(event), onlineIds,
@@ -580,7 +700,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json(poker.state(req.user, req.query.id));
   });
   app.get('/api/arcade/invitations', (req, res) => { rateLimit(req, 'arcade-invitations', 120); res.json(poker.invitations(req.user)); });
-  app.get('/api/arcade/leaderboard', (req, res) => { rateLimit(req, 'arcade-rank', 120); res.json({ players: arcadeBank.leaderboard(req.query.sort) }); });
+  app.get('/api/arcade/leaderboard', (req, res) => { rateLimit(req, 'arcade-rank', 120); res.json({ players: arcadeBank.leaderboard(req.query.sort, req.user) }); });
   app.get('/api/arcade/wallet', (req, res) => {
     rateLimit(req, 'arcade-wallet', 120);
     res.json({ wallet: arcadeBank.wallet(req.user.id), history: arcadeBank.history(req.user.id), canMint: arcadeBank.canMint(req.user) });
@@ -591,7 +711,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const peers = new Set(stmt("SELECT members FROM rooms WHERE kind='direct'").all().flatMap(room => {
       const members = JSON.parse(room.members); return members.includes(req.user.id) ? members : [];
     }));
-    res.json({ users: arcadeUsers().filter(user => user.id !== req.user.id && (!q || user.name.toLowerCase().includes(q)))
+    res.json({ users: arcadeUsers(req.user).filter(user => user.id !== req.user.id && (!q || user.name.toLowerCase().includes(q)))
       .sort((a, b) => Number(peers.has(b.id)) - Number(peers.has(a.id)) || Number(b.online) - Number(a.online))
       .slice(0, 80).map(({ id, name, avatar, online }) => ({ id, name, avatar, online })) });
   });
@@ -608,7 +728,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.status(action === 'create' ? 201 : 200).json(poker[action](req.user, req.body || {}));
   });
   app.get('/api/state', (req, res) => res.json({ ...stateFor(req.user), ...(cloud ? auth.mobileAccess(req) : {}) }));
-  // 查找聊天对象与是否加入大厅无关；账号仅支持完整匹配，响应不返回手机号或邮箱。
+  // 查找聊天对象与是否加入大厅无关；账号仅支持完整匹配，响应不返回手机号或邮箱；非好友不暴露在线状态。
   app.get('/api/users/search', (req, res) => {
     rateLimit(req, 'user-search', 60);
     if (typeof req.query.q !== 'string' || req.query.q.length > 254) throw fail('请输入昵称、完整手机号或邮箱');
@@ -616,8 +736,126 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!query) return res.json({ users: [] });
     const phone = /^(?:\+86|0086)1\d{10}$/.test(query) ? query.replace(/^(?:\+86|0086)/, '') : query;
     const accountIds = new Set(cloud ? stmt('SELECT user_id FROM accounts WHERE phone=? OR email=?').all(phone, query).map(row => row.user_id) : []);
-    res.json({ users: users().filter(user => !user.removed && user.id !== req.user.id &&
-      (accountIds.has(user.id) || [user.name, user.department, user.bio].some(value => value.toLowerCase().includes(query)))).slice(0, 50) });
+    const manager = isManager(req.user);
+    const friendSet = new Set(friendIdsOf(req.user.id));
+    const outgoing = new Map(stmt("SELECT to_user_id, id FROM friend_requests WHERE from_user_id=? AND status='pending'").all(req.user.id).map(row => [row.to_user_id, row.id]));
+    const incoming = new Map(stmt("SELECT from_user_id, id FROM friend_requests WHERE to_user_id=? AND status='pending'").all(req.user.id).map(row => [row.from_user_id, row.id]));
+    const matched = users().filter(user => {
+      if (user.removed || user.id === req.user.id) return false;
+      if (user.bot) return user.bot.status === 'enabled' && [user.name, user.bio].some(value => value.toLowerCase().includes(query));
+      if (accountIds.has(user.id)) return true;
+      if (manager || friendSet.has(user.id)) return [user.name, user.department, user.bio].some(value => value.toLowerCase().includes(query));
+      return user.name.toLowerCase().includes(query);
+    }).slice(0, manager ? 50 : 20).map(user => {
+      if (user.bot) return { ...user, relation: 'bot', requestId: null };
+      const isFriend = friendSet.has(user.id);
+      const relation = isFriend ? 'friend' : incoming.has(user.id) ? 'pending_incoming' : outgoing.has(user.id) ? 'pending_outgoing' : 'none';
+      const requestId = incoming.get(user.id) || outgoing.get(user.id) || null;
+      const base = manager || isFriend ? user : publicUserCard(user);
+      return { ...base, relation, requestId };
+    });
+    res.json({ users: matched });
+  });
+  app.get('/api/friends', (req, res) => {
+    res.json({ friends: activeFriendIdsOf(req.user.id), requests: friendRequestsFor(req.user.id) });
+  });
+  // 提交好友申请：若对方已向自己发起待处理申请，直接自动通过并成为好友。
+  app.post('/api/friends/request', (req, res) => {
+    rateLimit(req, 'friend-request', 20);
+    const targetId = req.body?.userId;
+    if (typeof targetId !== 'string' || !targetId || targetId.length > 100) throw fail('请选择要添加的用户');
+    if (targetId === req.user.id) throw fail('不能添加自己为好友');
+    if (bots.isBot(targetId)) throw fail('机器人无需添加好友，可直接私聊');
+    const target = userById(targetId);
+    if (!target) throw fail('用户不存在', 404);
+    if (areFriends(req.user.id, target.id)) throw fail('对方已经是你的好友', 409);
+    const note = textValue(req.body?.note, 100);
+    const now = Date.now();
+    let autoAccepted = false;
+    let requestId = null;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (areFriends(req.user.id, target.id)) throw fail('对方已经是你的好友', 409);
+      const reverse = stmt("SELECT id FROM friend_requests WHERE from_user_id=? AND to_user_id=? AND status='pending'").get(target.id, req.user.id);
+      if (reverse) {
+        stmt("UPDATE friend_requests SET status='accepted', updated_at=? WHERE id=? AND status='pending'").run(now, reverse.id);
+        const [userA, userB] = friendPair(req.user.id, target.id);
+        stmt('INSERT OR IGNORE INTO friendships (user_a, user_b, created_at) VALUES (?,?,?)').run(userA, userB, now);
+        autoAccepted = true;
+        requestId = reverse.id;
+      } else {
+        const existing = stmt("SELECT id FROM friend_requests WHERE from_user_id=? AND to_user_id=? AND status='pending'").get(req.user.id, target.id);
+        if (existing) throw fail('你已发送过好友申请，请等待对方处理', 409);
+        requestId = randomUUID();
+        stmt("INSERT INTO friend_requests (id,from_user_id,to_user_id,note,status,created_at,updated_at) VALUES (?,?,?,?,'pending',?,?)").run(requestId, req.user.id, target.id, note, now, now);
+      }
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    if (autoAccepted) {
+      broadcastUsers(new Set([req.user.id, target.id]));
+      deliver({ type: 'friends', notice: { kind: 'accepted', userId: req.user.id, name: req.user.name } }, socket => socket.userId === target.id);
+      deliver({ type: 'friends' }, socket => socket.userId === req.user.id);
+      return res.status(201).json({ status: 'accepted', autoAccepted: true, requestId, friendId: target.id });
+    }
+    deliver({ type: 'friends', notice: { kind: 'request', userId: req.user.id, name: req.user.name } }, socket => socket.userId === target.id);
+    deliver({ type: 'friends' }, socket => socket.userId === req.user.id);
+    res.status(201).json({ status: 'pending', requestId });
+  });
+  // 处理收到的好友申请：action 为 accept（同意）或 reject（拒绝）。
+  app.post('/api/friends/respond', (req, res) => {
+    rateLimit(req, 'friend-respond', 60);
+    const requestId = req.body?.requestId;
+    const action = req.body?.action;
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 100) throw fail('申请标识无效');
+    if (!['accept', 'reject'].includes(action)) throw fail('操作无效');
+    const request = stmt('SELECT * FROM friend_requests WHERE id=? AND to_user_id=?').get(requestId, req.user.id);
+    if (!request) throw fail('好友申请不存在', 404);
+    if (request.status !== 'pending') throw fail('这条好友申请已处理', 409);
+    const now = Date.now();
+    if (action === 'accept') {
+      if (!userById(request.from_user_id)) {
+        stmt("UPDATE friend_requests SET status='canceled', updated_at=? WHERE id=? AND status='pending'").run(now, request.id);
+        throw fail('该用户已不可用', 404);
+      }
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const changed = stmt("UPDATE friend_requests SET status='accepted', updated_at=? WHERE id=? AND status='pending'").run(now, request.id).changes;
+        if (!changed) throw fail('这条好友申请已处理', 409);
+        stmt("UPDATE friend_requests SET status='accepted', updated_at=? WHERE from_user_id=? AND to_user_id=? AND status='pending'").run(now, req.user.id, request.from_user_id);
+        const [userA, userB] = friendPair(req.user.id, request.from_user_id);
+        stmt('INSERT OR IGNORE INTO friendships (user_a, user_b, created_at) VALUES (?,?,?)').run(userA, userB, now);
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      broadcastUsers(new Set([req.user.id, request.from_user_id]));
+      deliver({ type: 'friends', notice: { kind: 'accepted', userId: req.user.id, name: req.user.name } }, socket => socket.userId === request.from_user_id);
+      deliver({ type: 'friends' }, socket => socket.userId === req.user.id);
+      return res.json({ ok: true, status: 'accepted', friendId: request.from_user_id });
+    }
+    const changed = stmt("UPDATE friend_requests SET status='rejected', updated_at=? WHERE id=? AND status='pending'").run(now, request.id).changes;
+    if (!changed) throw fail('这条好友申请已处理', 409);
+    deliver({ type: 'friends' }, socket => socket.userId === req.user.id || socket.userId === request.from_user_id);
+    res.json({ ok: true, status: 'rejected' });
+  });
+  app.post('/api/friends/cancel', (req, res) => {
+    rateLimit(req, 'friend-cancel', 60);
+    const requestId = req.body?.requestId;
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 100) throw fail('申请标识无效');
+    const row = stmt("SELECT * FROM friend_requests WHERE id=? AND from_user_id=? AND status='pending'").get(requestId, req.user.id);
+    if (!row) throw fail('好友申请不存在或已处理', 404);
+    stmt("UPDATE friend_requests SET status='canceled', updated_at=? WHERE id=? AND status='pending'").run(Date.now(), row.id);
+    deliver({ type: 'friends' }, socket => socket.userId === req.user.id || socket.userId === row.to_user_id);
+    res.json({ ok: true });
+  });
+  app.post('/api/friends/remove', (req, res) => {
+    rateLimit(req, 'friend-remove', 30);
+    const targetId = req.body?.userId;
+    if (typeof targetId !== 'string' || !targetId || targetId.length > 100 || targetId === req.user.id) throw fail('请选择有效好友');
+    const [userA, userB] = friendPair(req.user.id, targetId);
+    const changed = stmt('DELETE FROM friendships WHERE user_a=? AND user_b=?').run(userA, userB).changes;
+    if (!changed) throw fail('对方不是你的好友', 404);
+    broadcastUsers(new Set([req.user.id, targetId]));
+    deliver({ type: 'friends' }, socket => socket.userId === req.user.id || socket.userId === targetId);
+    res.json({ ok: true });
   });
   app.post('/api/remove-member', (req, res) => {
     if (req.user.id !== ownerId()) throw fail('只有空间创建者可以移除成员', 403);
@@ -632,7 +870,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     for (const socket of sockets) if (socket.userId === id) socket.close(4003, 'removed');
-    broadcast({ type: 'users', users: users() });
+    broadcastUsers();
     broadcast({ type: 'rooms' });
     res.json({ ok: true });
   });
@@ -695,9 +933,6 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (root) broadcast({ type: 'message-thread', roomId: row.room_id, rootId: root, thread: threadInfo(root) }, row.room_id);
     }
   };
-  // 空间管理者：账号模式是管理员和超级管理员，局域网模式是空间创建者。
-  const isManager = user => cloud ? ['admin', 'super_admin'].includes(user.role) : user.id === ownerId();
-  const requireManager = req => { if (!isManager(req.user)) throw fail('只有管理员可以这样操作', 403); };
   // 管理员删除任何人的消息，记入操作日志（只记消息和会话标识，不保留被删的内容）。
   app.post('/api/admin/delete-message', (req, res) => {
     requireManager(req);
@@ -720,7 +955,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!target) throw fail('请选择有效成员');
     const department = textValue(req.body.department, 40);
     stmt('INSERT INTO user_profiles (user_id,department,bio,last_seen) VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET department=excluded.department').run(target.id, department, '', null);
-    broadcast({ type: 'users', users: users() });
+    broadcastUsers();
     res.json({ department });
   });
   app.post('/api/admin/mute', (req, res) => {
@@ -739,7 +974,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       stmt('INSERT OR REPLACE INTO member_mutes VALUES (?,?,?,?)').run(target.id, until, req.user.id, Date.now());
       stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(req.user.id, target.id, 'mute', minutes ? `${minutes} 分钟` : '直到解除', Date.now());
     }
-    broadcast({ type: 'users', users: users() });
+    broadcastUsers();
     deliver({ type: 'rooms' }, socket => socket.userId === target.id);
     res.json({ ok: true });
   });
@@ -780,7 +1015,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (typeof id !== 'string' || !id || id.length > 100) throw fail('消息标识无效');
     const row = stmt('SELECT * FROM messages WHERE id=?').get(id);
     if (!row || row.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
-    requireRoom(row.room_id, req.user.id);
+    const room = requireRoom(row.room_id, req.user.id);
+    requireDirectFriend(room, req.user);
     if (row.sender_id !== req.user.id) throw fail('只能编辑自己发送的消息', 403);
     if (pollOf(id)) throw fail('投票不能编辑');
     if (chainOf(id)) throw fail('接龙不能编辑');
@@ -957,6 +1193,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       throw error;
     }
     const messages = created.map(id => ({ ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] }));
+    broadcastUsers(new Set(JSON.parse(target.members)));
     for (const message of messages) broadcast({ type: 'message', message }, target.id);
     res.status(201).json({ messages, skipped });
   });
@@ -969,7 +1206,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (typeof messageId !== 'string' || messageId.length > 100 || !single) throw fail('表情回应无效');
     const row = stmt('SELECT * FROM messages WHERE id=?').get(messageId);
     if (!row || row.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
-    requireRoom(row.room_id, req.user.id);
+    const room = requireRoom(row.room_id, req.user.id);
+    requireDirectFriend(room, req.user);
     if (recalledAt(row.id)) throw fail('消息已撤回');
     if (isBurn(row.id)) throw fail('阅后即焚消息不能回应');
     const removed = stmt('DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?').run(row.id, req.user.id, emoji).changes;
@@ -1055,6 +1293,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/stickers/use', (req, res) => {
     rateLimit(req, 'sticker-use', 60);
     const room = requireRoom(req.body?.roomId, req.user.id);
+    requireDirectFriend(room, req.user);
     const sticker = typeof req.body?.id === 'string' && stmt('SELECT u.* FROM user_stickers s JOIN uploads u ON u.id=s.id WHERE s.id=? AND s.user_id=?').get(req.body.id, req.user.id);
     if (!sticker) throw fail('表情不存在', 404);
     // 另存的附件发出去之前都算存储：同一时间最多 10 份没发出的，避免反复调用把空间占满。
@@ -1158,14 +1397,19 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (until !== null && (!Number.isSafeInteger(until) || until <= Date.now() || until > Date.now() + 30 * 86400000)) throw fail('状态的清除时间无效');
     if (emoji || text) stmt('INSERT INTO user_status VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET emoji=excluded.emoji, text=excluded.text, until=excluded.until').run(req.user.id, emoji, text, until);
     else stmt('DELETE FROM user_status WHERE user_id=?').run(req.user.id);
-    broadcast({ type: 'users', users: users() });
+    broadcastUsers();
     res.json({ status: statusOf(req.user.id) });
   });
   app.post('/api/user-note', (req, res) => {
     rateLimit(req, 'notes', 60);
     const id = req.body?.userId;
-    if (typeof id !== 'string' || !(userById(id) || (bots.botRow(id) && !bots.botRow(id).deleted_at))) throw fail('成员不存在', 404);
+    const isBot = Boolean(typeof id === 'string' && bots.botRow(id) && !bots.botRow(id).deleted_at);
+    if (typeof id !== 'string' || !(userById(id) || isBot)) throw fail('成员不存在', 404);
     if (id === req.user.id) throw fail('不能给自己写备注');
+    if (!isBot) {
+      const scope = visibleUserInfo(req.user.id);
+      if (!scope.all && !scope.allowed.has(id)) throw fail('只能给好友或同会话成员写备注', 403);
+    }
     if (typeof req.body.note !== 'string' || req.body.note.trim().length > 200) throw fail('备注最多 200 个字');
     const note = req.body.note.trim();
     if (note) stmt('INSERT INTO user_notes (owner_id,user_id,note,updated_at) VALUES (?,?,?,?) ON CONFLICT(owner_id,user_id) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at').run(req.user.id, id, note, Date.now());
@@ -1192,7 +1436,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (req.body.nameColor === null) stmt('DELETE FROM user_name_colors WHERE user_id=?').run(req.user.id);
       else stmt('INSERT OR REPLACE INTO user_name_colors VALUES (?,?)').run(req.user.id, req.body.nameColor);
     }
-    broadcast({ type: 'users', users: users() });
+    broadcastUsers();
     const profile = stmt('SELECT department, bio FROM user_profiles WHERE user_id=?').get(req.user.id);
     res.json({ me: { ...userById(req.user.id), department: profile?.department || '', bio: profile?.bio || '' } });
   });
@@ -1207,6 +1451,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (target.id === req.user.id) throw fail('选择另一位成员开始私聊');
       const members = [req.user.id, target.id].sort();
       const existing = stmt("SELECT * FROM rooms WHERE kind='direct' AND members=?").get(JSON.stringify(members));
+      if (!bot) {
+        const allowed = isManager(req.user) || areFriends(req.user.id, target.id) || (Boolean(existing) && isManagerById(target.id));
+        if (!allowed) throw fail('请先添加对方为好友后再私聊', 403);
+      }
       if (existing) return res.json({ id: existing.id });
       if (bot && bot.status !== 'enabled') throw fail('机器人已停用，暂时不能私聊', 403);
       room = { id: randomUUID(), name: '', kind: 'direct', members };
@@ -1216,10 +1464,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (!name) throw fail('请输入频道名称');
       const ids = Array.isArray(req.body.memberIds) ? [...new Set(req.body.memberIds)] : [];
       if (!ids.length || ids.length > 100 || ids.some(id => typeof id !== 'string' || !userById(id))) throw fail('请选择至少一位有效成员');
+      if (!isManager(req.user) && ids.some(id => id !== req.user.id && !areFriends(req.user.id, id))) throw fail('只能邀请好友创建群聊', 403);
       room = { id: randomUUID(), name, kind: 'group', members: [...new Set([req.user.id, ...ids])] };
     }
     stmt('INSERT INTO rooms (id,name,kind,members,created_at) VALUES (?,?,?,?,?)').run(room.id, room.name, room.kind, JSON.stringify(room.members), Date.now());
     if (room.kind === 'group') saveSettings(room.id, { owner_id: req.user.id });
+    broadcastUsers(new Set(room.members));
     broadcast({ type: 'rooms' }, room.id);
     res.status(201).json({ id: room.id });
   });
@@ -1255,6 +1505,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (previousOwner === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
     // 最后一个人退出后群聊谁都看不到了，群里的机器人也一起移出。
     if (!members.length) stmt('DELETE FROM bot_rooms WHERE room_id=?').run(room.id);
+    broadcastUsers(new Set([req.user.id]));
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
     res.json({ ok: true });
@@ -1345,10 +1596,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (JSON.parse(room.members).includes(req.user.id)) return res.json({ joined: true, roomId: room.id });
     if (groupSettings(room).joinApproval) {
       requestJoin(room, req.user.id, null);
+      broadcastUsers(new Set(JSON.parse(room.members)));
       broadcast({ type: 'rooms' }, room.id);
       return res.json({ pending: true });
     }
     addToGroup(room, [req.user.id]);
+    broadcastUsers(new Set([...JSON.parse(room.members), req.user.id]));
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
     res.json({ joined: true, roomId: room.id });
@@ -1360,6 +1613,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!request) throw fail('申请不存在或已处理', 404);
     if (req.body.approve && userById(request.user_id)) addToGroup(room, [request.user_id]);
     else stmt('DELETE FROM room_join_requests WHERE id=?').run(request.id);
+    broadcastUsers(new Set([...JSON.parse(room.members), request.user_id]));
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === request.user_id);
     res.json({ ok: true });
@@ -1400,6 +1654,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members.filter(id => id !== target)), room.id);
     stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
     stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, target);
+    broadcastUsers(new Set([target]));
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === target);
     res.json({ ok: true });
@@ -1414,12 +1669,15 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const { ownerId, adminIds, joinApproval } = room.kind === 'group' ? groupSettings(room) : { joinApproval: false };
     // 开了入群审批时，普通成员拉的人先进申请，群主或管理员同意后才加入。
     const fresh = ids.filter(id => !JSON.parse(room.members).includes(id));
+    if (room.kind === 'group' && !isManager(req.user) && fresh.some(id => id !== req.user.id && !areFriends(req.user.id, id))) throw fail('只能邀请好友加入群聊', 403);
     if (joinApproval && req.user.id !== ownerId && !adminIds.includes(req.user.id)) {
       for (const id of fresh) requestJoin(room, id, req.user.id);
+      broadcastUsers(new Set(JSON.parse(room.members)));
       broadcast({ type: 'rooms' }, room.id);
       return res.json({ ok: true, pending: fresh.length });
     }
     addToGroup(room, ids);
+    broadcastUsers(new Set([...JSON.parse(room.members), ...ids]));
     broadcast({ type: 'rooms' }, room.id);
     res.json({ ok: true });
   });
@@ -1635,7 +1893,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const row of stmt('SELECT * FROM scheduled_messages WHERE send_at<=? ORDER BY send_at').all(now)) {
       stmt('DELETE FROM scheduled_messages WHERE id=?').run(row.id);
       const room = stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
-      if (!canAccess(room, row.sender_id) || muteOf(row.sender_id) || groupMuted(room, row.sender_id)) continue;
+      if (!canAccess(room, row.sender_id) || muteOf(row.sender_id) || groupMuted(room, row.sender_id) || !canSendInDirectById(room, row.sender_id)) continue;
       const id = randomUUID();
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, row.sender_id, row.text, '[]', `scheduled:${row.id}`, Date.now());
       broadcast({ type: 'message', message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } }, room.id);
@@ -1823,6 +2081,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/room-pins', (req, res) => {
     rateLimit(req, 'pins', 30);
     const room = requireRoom(req.body?.roomId, req.user.id);
+    requireDirectFriend(room, req.user);
     if (!canPin(room, req.user)) throw fail('只有群主或管理员可以置顶消息', 403);
     const message = typeof req.body?.messageId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.body.messageId);
     if (!message || message.room_id !== room.id || message.seq <= clearedThroughSeq() || recalledAt(message.id)) throw fail('消息不存在或已撤回', 404);
@@ -1954,6 +2213,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const AUTO_DELETE = [0, 86400, 604800, 2592000];
   app.post('/api/room-auto-delete', (req, res) => {
     const room = requireRoom(req.body?.roomId, req.user.id);
+    requireDirectFriend(room, req.user);
     const allowed = room.kind === 'direct' || (room.kind === 'group' ? groupSettings(room).ownerId === req.user.id : isManager(req.user));
     if (!allowed) throw fail(room.kind === 'group' ? '只有群主可以设置自动删除' : '只有管理员可以设置大厅的自动删除', 403);
     const seconds = Number(req.body.seconds);
@@ -2017,7 +2277,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/uploads', (req, res, next) => {
     rateLimit(req, 'upload', 30);
     // 授权发生在接收文件之前，防止向无权限会话写入磁盘。
-    if (req.query.purpose !== 'avatar') requireRoom(req.query.roomId, req.user.id);
+    if (req.query.purpose !== 'avatar') {
+      const room = requireRoom(req.query.roomId, req.user.id);
+      if (req.query.purpose !== 'room-avatar') requireDirectFriend(room, req.user);
+    }
     if (req.query.purpose === 'room-avatar') requireRoomAvatarOwner(req);
     if (req.query.thumbnailFor !== undefined) thumbnailTarget(req);
     // 每人存储上限（CHAT_MAX_USER_BYTES，可选）：超出后不能再上传，删除或清理后恢复。
@@ -2049,7 +2312,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         .run(attachment.id, req.user.id, isAvatar ? null : req.query.roomId, attachment.name, mime, file.size, isAvatar ? 'avatar' : 'message', isAvatar ? 1 : 0, Date.now());
       if (isAvatar) {
         stmt('UPDATE users SET avatar=? WHERE id=?').run(`upload:${attachment.id}`, req.user.id);
-        broadcast({ type: 'users', users: users() });
+        broadcastUsers();
       }
       res.status(201).json({ attachment, ...(isAvatar ? { me: userById(req.user.id) } : {}) });
     } catch (error) { try { unlinkSync(file.path); } catch {} throw error; }
@@ -2172,6 +2435,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     requireRoomVoice(room, req.user);
     const target = typeof req.body.userId === 'string' && userById(req.body.userId);
     if (!target) throw fail('这位成员不存在', 404);
+    const scope = visibleUserInfo(req.user.id);
+    if (!scope.all && !scope.allowed.has(target.id)) throw fail('只能推荐好友或同会话成员的名片', 403);
     const id = randomUUID();
     db.exec('BEGIN');
     try {
@@ -2180,6 +2445,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
+    broadcastUsers(new Set(JSON.parse(room.members)));
     broadcast({ type: 'message', message }, room.id);
     res.status(201).json({ message });
   });
@@ -2274,7 +2540,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         if (event?.type !== 'typing' || typeof event.roomId !== 'string' || event.roomId.length > 100) return;
         if (Date.now() - (ws.typedAt || 0) < 2000) return;
         const room = stmt('SELECT * FROM rooms WHERE id=?').get(event.roomId);
-        if (!canAccess(room, ws.userId) || (cloud && !auth.validSocket(ws))) return;
+        if (!canAccess(room, ws.userId) || !canSendInDirectById(room, ws.userId) || (cloud && !auth.validSocket(ws))) return;
         ws.typedAt = Date.now();
         deliver({ type: 'typing', roomId: room.id, userId: ws.userId }, socket => socket.userId !== ws.userId && canAccess(room, socket.userId));
       });
@@ -2282,10 +2548,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       ws.on('close', () => {
         sockets.delete(ws);
         if (!closing && ![...sockets].some(socket => socket.userId === ws.userId)) stmt('INSERT INTO user_profiles (user_id,last_seen) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen').run(ws.userId, Date.now());
-        if (!closing) { broadcast({ type: 'users', users: users() }); poker.presence(); }
+        if (!closing) { broadcastUsers(); poker.presence(); }
       });
       ws.send(JSON.stringify({ type: 'ready' }));
-      broadcast({ type: 'users', users: users() });
+      broadcastUsers();
       poker.presence();
     });
   });

@@ -94,7 +94,7 @@ export function RoomAvatarDialog({ room, onClose, onSaved, notify }) {
     {cropping && <LazyModal title="裁剪群头像" onClose={() => setCropping(null)}><AvatarCropper title="裁剪群头像" file={cropping} onCancel={() => setCropping(null)} onDone={cropped => { setCropping(null); setFile(cropped); }} /></LazyModal>}</>;
 }
 
-export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
+export function GroupDialog({ users, me, room, friendsOnly = false, onClose, onCreated, notify }) {
   const [name, setName] = useState('');
   const [selected, setSelected] = useState([]);
   const [search, setSearch] = useState('');
@@ -109,10 +109,10 @@ export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
       await onCreated(result.id || room.id); onClose(); notify(result.pending ? '已发送入群申请，等待群主或管理员同意' : room ? room.kind === 'public' ? '成员已加入大厅' : '成员已加入群聊' : '群聊已创建');
     } catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  return <Modal title={room ? `邀请成员加入${room.name}` : '把大家聚在一起'} subtitle={room ? `新成员加入后可以查看${room.kind === 'public' ? '大厅' : '群聊'}历史消息。` : '创建一个群聊，让话题有自己的小天地。'} onClose={onClose}><form onSubmit={submit}>
+  return <Modal title={room ? `邀请成员加入${room.name}` : '把大家聚在一起'} subtitle={room ? `新成员加入后可以查看${room.kind === 'public' ? '大厅' : '群聊'}历史消息。` : friendsOnly ? '从你的好友中选择成员创建群聊。' : '创建一个群聊，让话题有自己的小天地。'} onClose={onClose}><form onSubmit={submit}>
     {!room && <><label className="field-label" htmlFor="group-name">群聊名称</label><input id="group-name" placeholder="例如：午饭研究所" value={name} maxLength={24} onChange={event => setName(event.target.value)} required /></>}
-    <div className="field-label group-select-label"><span>选择成员</span><small>已选 {selected.length} 人</small></div><div className="search-input"><Search size={16} /><input placeholder="搜索昵称" aria-label="搜索群成员" value={search} onChange={event => setSearch(event.target.value)} /></div>
-    <div className="member-picker">{filtered.map(user => <label className="member-option" key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={event => setSelected(previous => event.target.checked ? [...previous, user.id] : previous.filter(id => id !== user.id))} /><Avatar user={user} size={36} online={user.online} /><span>{user.name}<small>{user.online ? '在线' : '离线'}</small></span><span className={`selection-check ${selected.includes(user.id) ? 'checked' : ''}`}>{selected.includes(user.id) && <Check size={13} />}</span></label>)}{!filtered.length && <div className="compact-empty"><Users size={25} /><p>{candidates.length ? '没有找到这个昵称' : room ? '空间里的成员都已在群中' : '还没有其他成员，先邀请同事加入空间吧'}</p></div>}</div>
+    <div className="field-label group-select-label"><span>{friendsOnly ? '选择好友' : '选择成员'}</span><small>已选 {selected.length} 人</small></div><div className="search-input"><Search size={16} /><input placeholder="搜索昵称" aria-label="搜索群成员" value={search} onChange={event => setSearch(event.target.value)} /></div>
+    <div className="member-picker">{filtered.map(user => <label className="member-option" key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={event => setSelected(previous => event.target.checked ? [...previous, user.id] : previous.filter(id => id !== user.id))} /><Avatar user={user} size={36} online={user.online} /><span>{user.name}<small>{user.online ? '在线' : '离线'}</small></span><span className={`selection-check ${selected.includes(user.id) ? 'checked' : ''}`}>{selected.includes(user.id) && <Check size={13} />}</span></label>)}{!filtered.length && <div className="compact-empty"><Users size={25} /><p>{candidates.length ? '没有找到这个昵称' : friendsOnly ? (room ? '你的好友都已在这个群里' : '还没有可邀请的好友，先去通讯录搜索并添加好友') : room ? '空间里的成员都已在群中' : '还没有其他成员，先邀请同事加入空间吧'}</p></div>}</div>
     {error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !selected.length}>{busy ? '处理中…' : room ? '邀请加入' : '创建群聊'}<ArrowRight size={16} /></button></div>
   </form></Modal>;
 }
@@ -596,5 +596,39 @@ export function RecallDialog({ message, onClose, onRecalled }) {
   return <Modal title="撤回这条消息？" subtitle="撤回后，所有成员将看到撤回提示，原来的文字、图片和视频不再提供查看。" onClose={() => !busy && onClose()}>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy} onClick={recall}>{busy ? '正在撤回…' : '确认撤回'}</button></div>
+  </Modal>;
+}
+
+// 申请添加好友：附带可选验证信息；若对方已向自己发起申请，提交后直接通过。
+export function FriendRequestDialog({ user, onClose, onSent }) {
+  const input = useFocusOnOpen();
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(event) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      const result = await api('friends/request', { userId: user.id, note: note.trim() });
+      await onSent?.(result);
+      onClose();
+    } catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title="添加好友" subtitle="对方通过好友申请后，即可发起私聊。" onClose={() => !busy && onClose()}>
+    <form className="friend-request-form" onSubmit={submit}>
+      <div className="friend-request-target">
+        <Avatar user={user} size={44} />
+        <div><b>{user.name}</b>{(user.department || user.bio) && <small>{[user.department, user.bio].filter(Boolean).join(' · ')}</small>}</div>
+      </div>
+      <label className="field-label" htmlFor="friend-request-note">验证信息（可选）</label>
+      <textarea ref={input} id="friend-request-note" className="announcement-input" rows={3} maxLength={100} placeholder="简单介绍一下自己，方便对方确认身份" value={note} disabled={busy} onChange={event => setNote(event.target.value)} />
+      <small className="field-hint">{note.trim().length}/100</small>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="modal-footer">
+        <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button>
+        <button className="primary-button" disabled={busy}>{busy ? '正在发送…' : '发送申请'}</button>
+      </div>
+    </form>
   </Modal>;
 }

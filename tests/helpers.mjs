@@ -49,9 +49,11 @@ export async function startLocal({ setup = true, ...options } = {}) {
   const created = await owner.post('/api/setup', { name: '空间主人', spaceName: '测试空间', avatar: 'cat' }, { 'X-Setup-Key': setupKey });
   if (created.status !== 201) throw new Error(`setup failed: ${created.status}`);
   context.ownerId = created.body.me.id;
+  owner.id = context.ownerId;
   const invite = await owner.get('/api/invite');
   context.inviteCode = invite.body.code;
-  context.join = async (name, avatar = 'bird', { lobby = true } = {}) => {
+  const joinedMembers = [owner];
+  context.join = async (name, avatar = 'bird', { lobby = true, friends = true } = {}) => {
     const member = client(context.base);
     const joined = await member.post('/api/join', { inviteCode: context.inviteCode, name, avatar });
     if (joined.status !== 201) throw new Error(`join failed: ${joined.status} ${JSON.stringify(joined.body)}`);
@@ -59,6 +61,17 @@ export async function startLocal({ setup = true, ...options } = {}) {
     if (lobby) {
       const invited = await owner.post('/api/room-members', { roomId: 'lobby', memberIds: [member.id] });
       if (invited.status !== 200) throw new Error(`lobby invite failed: ${invited.status}`);
+    }
+    if (friends) {
+      for (const peer of joinedMembers) {
+        const requested = await member.post('/api/friends/request', { userId: peer.id });
+        if (requested.status !== 201) throw new Error(`friend request failed: ${requested.status} ${JSON.stringify(requested.body)}`);
+        if (requested.body.status === 'pending') {
+          const accepted = await peer.post('/api/friends/respond', { requestId: requested.body.requestId, action: 'accept' });
+          if (accepted.status !== 200) throw new Error(`friend accept failed: ${accepted.status} ${JSON.stringify(accepted.body)}`);
+        }
+      }
+      joinedMembers.push(member);
     }
     return member;
   };
@@ -80,6 +93,7 @@ export async function startCloud(options = {}) {
   context.admin = admin;
   context.client = () => client(context.base);
   let count = 0;
+  const approvedMembers = [admin];
   context.register = async (name) => {
     const member = client(context.base);
     const registered = await member.post('/api/auth/register', { identifier: `member${++count}@example.com`, password: 'Member-pass-2026', name });
@@ -87,13 +101,24 @@ export async function startCloud(options = {}) {
     member.id = registered.body.account.id;
     return member;
   };
-  context.member = async (name, { lobby = true } = {}) => {
+  context.member = async (name, { lobby = true, friends = true } = {}) => {
     const member = await context.register(name);
     const approved = await admin.post('/api/admin/review', { userId: member.id, status: 'approved' });
     if (approved.status !== 200) throw new Error(`approve failed: ${approved.status}`);
     if (lobby) {
       const invited = await admin.post('/api/room-members', { roomId: 'lobby', memberIds: [member.id] });
       if (invited.status !== 200) throw new Error(`lobby invite failed: ${invited.status}`);
+    }
+    if (friends) {
+      for (const peer of approvedMembers) {
+        const requested = await member.post('/api/friends/request', { userId: peer.id });
+        if (requested.status !== 201) throw new Error(`friend request failed: ${requested.status} ${JSON.stringify(requested.body)}`);
+        if (requested.body.status === 'pending') {
+          const accepted = await peer.post('/api/friends/respond', { requestId: requested.body.requestId, action: 'accept' });
+          if (accepted.status !== 200) throw new Error(`friend accept failed: ${accepted.status} ${JSON.stringify(accepted.body)}`);
+        }
+      }
+      approvedMembers.push(member);
     }
     return member;
   };

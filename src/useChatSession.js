@@ -347,6 +347,11 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         }
         if (data.type === 'users') setState(previous => previous ? ({ ...previous, users: data.users, me: { ...previous.me, ...data.users.find(user => user.id === previous.me.id) } }) : previous);
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
+        if (data.type === 'friends') {
+          refresh().catch(() => {});
+          if (data.notice?.kind === 'request') notify(`${data.notice.name} 申请添加你为好友`);
+          if (data.notice?.kind === 'accepted') notify(`${data.notice.name} 已通过你的好友申请`);
+        }
         if (data.type === 'room-pins') setPinsVersion(version => version + 1);
         if (data.type === 'saved') setSavedVersion(version => version + 1);
         if (data.type === 'user-note') applyNote(data);

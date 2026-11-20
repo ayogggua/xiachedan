@@ -1,6 +1,6 @@
 import React, { Suspense, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Contact, Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand, ListOrdered, Flame, Rows3 } from 'lucide-react';
+import { Contact, Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand, ListOrdered, Flame, Rows3, UserPlus, UserCheck } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName, seenText } from './api';
 import { burnDeadline, previewText, readStorage } from './history';
 import { writeStorage } from './storage';
@@ -757,7 +757,7 @@ function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu
   return <article className="recalled-message nudge-message" data-message-id={message.id} data-seq={message.seq} onContextMenu={event => onContextMenu?.(event, message)}>{actor} 拍了拍 {targetName}</article>;
 }
 
-export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onShare, onSetStatus, onSetDepartment, groupActions = [], groupNickname }) {
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onAddFriend, onAcceptFriend, onCancelFriendRequest, onRemoveFriend, friendRelation, onEdit, onClose, onNudge, onShare, onSetStatus, onSetDepartment, groupActions = [], groupNickname }) {
   const [department, setDepartment] = useState(null);
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
@@ -783,10 +783,12 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     window.addEventListener('resize', onClose);
     return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key, true); window.removeEventListener('resize', onClose); };
   }, [onClose]);
-  const status = user.bot ? botStatusText(user) : user.removed ? '已离开空间' : user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线';
+  const showPresence = !user.removed && !user.bot && (self || friendRelation === 'friend' || Boolean(user.online || user.lastSeen));
+  const status = user.bot ? botStatusText(user) : user.removed ? '已离开空间' : showPresence ? (user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线') : '';
+  const footerActions = [...groupActions, ...(!self && !user.bot && !user.removed && friendRelation === 'friend' && onRemoveFriend ? [{ label: '删除好友', danger: true, action: onRemoveFriend }] : [])];
   return <div ref={ref} role="dialog" aria-label={`${user.name}的资料`} tabIndex={-1} className="profile-card"
     style={{ left: Math.max(8, Math.min(anchor.x, innerWidth - 268)), top }}>
-    <Avatar user={user} size={64} online={user.removed || user.bot ? undefined : user.online} />
+    <Avatar user={user} size={64} online={showPresence ? user.online : undefined} />
     <h3 style={{ color: nameColor(user.id, user) }}>{user.name}{self && <small className="me-tag">我</small>}{user.bot && <BotTag />}</h3>
     {groupNickname && <p className="profile-status">群昵称：{groupNickname}</p>}
     {status && <p className={`profile-status ${user.online ? 'online' : ''}`}>{status}</p>}
@@ -800,7 +802,7 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
       {user.bio && <><dt>{user.bot ? '简介' : '签名'}</dt><dd>{user.bio}</dd></>}
     </dl>}
     {/* 备注只有自己看得到，也只显示在资料卡里 */}
-    {!self && (editingNote ? <form className="profile-note editing" onSubmit={saveNote}>
+    {!self && onSaveNote && (editingNote ? <form className="profile-note editing" onSubmit={saveNote}>
       <input autoFocus aria-label={`给${user.name}写备注`} placeholder="只有你自己能看到" maxLength={200} value={draftNote} disabled={savingNote}
         onChange={event => setDraftNote(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setDraftNote(note); setEditingNote(false); } }} />
       <span><button type="button" className="secondary-button" onClick={() => { setDraftNote(note); setEditingNote(false); }}>取消</button><button className="primary-button" disabled={savingNote}>保存</button></span>
@@ -809,10 +811,18 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     </button>)}
     {self && onSetStatus && <button type="button" className="secondary-button" onClick={onSetStatus}>{activeStatus(user) ? '修改状态' : '设置状态'}</button>}
     {self ? <button type="button" className="secondary-button" onClick={onEdit}>编辑资料</button>
-      : !user.removed && <button type="button" className="primary-button" onClick={onMessage}><MessageCircle size={15} />发送消息</button>}
+      : !user.removed && <>
+        {onMessage && <button type="button" className="primary-button" onClick={onMessage}><MessageCircle size={15} />发送消息</button>}
+        {!user.bot && friendRelation === 'none' && onAddFriend && <button type="button" className={onMessage ? 'secondary-button' : 'primary-button'} onClick={onAddFriend}><UserPlus size={15} />添加好友</button>}
+        {!user.bot && friendRelation === 'pending_incoming' && onAcceptFriend && <button type="button" className={onMessage ? 'secondary-button' : 'primary-button'} onClick={onAcceptFriend}><UserCheck size={15} />同意好友申请</button>}
+        {!user.bot && friendRelation === 'pending_outgoing' && <>
+          <p className="profile-status">已发送好友申请，等待对方通过</p>
+          {onCancelFriendRequest && <button type="button" className="secondary-button" onClick={onCancelFriendRequest}>撤回好友申请</button>}
+        </>}
+      </>}
     {onNudge && <button type="button" className="secondary-button" onClick={onNudge}><Hand size={15} />{self ? '拍拍自己' : '拍一拍'}</button>}
     {onShare && !user.removed && <button type="button" className="secondary-button" onClick={onShare}><Contact size={15} />推荐给别人</button>}
-    {groupActions.length > 0 && <div className="profile-group-actions">{groupActions.map(item => <button type="button" key={item.label} className={`text-button ${item.danger ? 'danger-text' : ''}`} onClick={item.action}>{item.label}</button>)}</div>}
+    {footerActions.length > 0 && <div className="profile-group-actions">{footerActions.map(item => <button type="button" key={item.label} className={`text-button ${item.danger ? 'danger-text' : ''}`} onClick={item.action}>{item.label}</button>)}</div>}
   </div>;
 }
 

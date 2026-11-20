@@ -194,8 +194,23 @@ export function openStore(directory) {
       purpose TEXT NOT NULL, claimed INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL
     );
+    -- 好友关系：按字典序保存双方 user_id（user_a < user_b），互为好友后才能私聊。不使用外键或枚举。
+    CREATE TABLE IF NOT EXISTS friendships (
+      user_a TEXT NOT NULL, user_b TEXT NOT NULL, created_at INTEGER NOT NULL,
+      PRIMARY KEY (user_a, user_b)
+    );
+    CREATE INDEX IF NOT EXISTS friendships_b ON friendships(user_b);
+    -- 好友申请：status 为字符串：pending 待处理；accepted 已同意；rejected 已拒绝；canceled 已取消。不使用外键或枚举。
+    CREATE TABLE IF NOT EXISTS friend_requests (
+      id TEXT PRIMARY KEY, from_user_id TEXT NOT NULL, to_user_id TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS friend_requests_to ON friend_requests(to_user_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS friend_requests_from ON friend_requests(from_user_id, status, updated_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS friend_requests_pending_pair ON friend_requests(from_user_id, to_user_id) WHERE status = 'pending';
   `);
-  // 旧大厅只初始化一次成员名单，保留已有成员；以后注册、登录或重启都不再补入。
+  // 旧大厅与历史私聊好友关系只各初始化一次，保留已有数据；以后注册、登录或重启都不再自动补入。
   db.exec('BEGIN IMMEDIATE');
   try {
     if (!db.prepare("SELECT 1 FROM space_settings WHERE key='public_members_explicit'").get()) {
@@ -205,6 +220,18 @@ export function openStore(directory) {
         AND (a.user_id IS NULL OR a.status IN ('approved','suspended')) ORDER BY u.created_at`).all().map(user => user.id);
       db.prepare("UPDATE rooms SET members=? WHERE kind='public'").run(JSON.stringify(members));
       db.prepare("INSERT INTO space_settings (key,value) VALUES ('public_members_explicit','1')").run();
+    }
+    if (!db.prepare("SELECT 1 FROM space_settings WHERE key='friends_initialized'").get()) {
+      const botIds = new Set(db.prepare('SELECT id FROM bots').all().map(row => row.id));
+      const insertFriend = db.prepare('INSERT OR IGNORE INTO friendships (user_a, user_b, created_at) VALUES (?,?,?)');
+      for (const room of db.prepare("SELECT members, created_at FROM rooms WHERE kind='direct'").all()) {
+        const members = JSON.parse(room.members);
+        if (members.length === 2 && members[0] !== members[1] && !botIds.has(members[0]) && !botIds.has(members[1])) {
+          const [userA, userB] = [...members].sort();
+          insertFriend.run(userA, userB, room.created_at || Date.now());
+        }
+      }
+      db.prepare("INSERT INTO space_settings (key,value) VALUES ('friends_initialized','1')").run();
     }
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
