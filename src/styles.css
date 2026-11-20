@@ -1468,13 +1468,38 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .status-emoji-input { flex: none; width: 56px; text-align: center; font-size: 18px; }
 .settings-profile + .setting-row { margin-bottom: 12px; }
 
-/* 通讯录 */
-.modal.contacts-dialog { width: min(480px, calc(100vw - 24px)); }
-.contacts-search { margin: 12px 0 4px; }
+/* 通讯录与好友 */
+.modal.contacts-dialog { width: min(500px, calc(100vw - 24px)); }
+.contacts-tabs { margin: 14px 0 8px; }
+.contacts-tabs button { gap: 6px; }
+.contacts-tabs button small { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.contacts-search { margin: 8px 0 4px; }
 .contacts-group { display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; font-size: 12px; font-weight: 600; color: var(--text-2); }
 .contacts-group small { font-weight: 500; color: var(--text-3); }
 .dept-edit { margin-left: 6px; font-size: 11px; }
 .contacts-dialog .member-department { display: none; }
+.icon-button.contacts-entry { position: relative; }
+.contacts-badge { position: absolute; top: 1px; right: 1px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px; background: var(--accent-bright); color: #fff; font-size: 10px; line-height: 15px; font-weight: 600; text-align: center; pointer-events: none; }
+.search-user-item { gap: 6px; }
+.search-user-item .member-row { min-width: 0; }
+.friend-inline-btn { flex: none; min-height: 28px; height: 28px; padding: 0 10px; font-size: 12px; border-radius: 8px; gap: 4px; }
+.friend-status-tag { flex: none; padding: 0 8px; font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.friend-badge { padding: 1px 6px; border-radius: 999px; background: var(--fill-2); color: var(--text-2); font-size: 10px; font-weight: 500; }
+.friend-requests-panel { gap: 4px; }
+.friend-request-row { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-radius: 10px; }
+.friend-request-row:hover { background: var(--fill-1); }
+.friend-request-person { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; text-align: left; }
+.friend-request-person > span:not(.avatar) { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.friend-request-person b { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-request-person small { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-request-person .friend-request-time { font-size: 11px; color: var(--text-3); }
+.friend-request-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+.friend-request-form { display: flex; flex-direction: column; gap: 6px; }
+.friend-request-target { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 6px; border-radius: 12px; background: var(--fill-1); }
+.friend-request-target > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.friend-request-target b { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-request-target small { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-gate-notice { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; }
 
 /* 群管理 */
 .admin-tag { background: var(--fill-2); color: var(--text-2); }

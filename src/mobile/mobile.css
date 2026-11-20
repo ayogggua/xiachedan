@@ -54,16 +54,19 @@
   .mobile-home header > button { display: grid; place-items: center; width: 44px; height: 44px; color: var(--accent-bright); }
   .mobile-contact-search { display: flex; align-items: center; gap: 10px; padding: 0 12px; border-radius: 13px; background: var(--fill-1); color: var(--text-3); }
   .mobile-contact-search input { width: 100%; min-width: 0; height: 44px; border: 0; background: none; box-shadow: none; }
+  .mobile-contact-tabs { margin-top: 12px; }
   .mobile-contact-group { display: flex; align-items: center; gap: 12px; min-height: 76px; border-bottom: 1px solid var(--line); }
-  .mobile-contact-group > span { display: grid; place-items: center; width: 44px; height: 44px; background: var(--fill-2); border-radius: 14px; color: var(--accent-bright); }
+  .mobile-contact-group > span:not(.unread-badge) { display: grid; place-items: center; width: 44px; height: 44px; background: var(--fill-2); border-radius: 14px; color: var(--accent-bright); }
   .mobile-contact-group b { flex: 1; text-align: left; font-size: 15px; font-weight: 500; }
   .mobile-contact-group > svg, .mobile-contact > svg { color: var(--text-3); }
   .mobile-list-label { margin: 22px 0 8px; color: var(--text-3); font-size: 12px; }
   .mobile-contact { display: flex; align-items: center; width: 100%; gap: 12px; min-height: 76px; text-align: left; }
-  .mobile-contact > span:not(.avatar) { flex: 1; min-width: 0; }
+  .mobile-contact > span:not(.avatar):not(.mobile-friend-state) { flex: 1; min-width: 0; }
   .mobile-contact b, .mobile-contact > span > small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-contact b { font-size: 16px; line-height: 24px; font-weight: 550; }
   .mobile-contact > span > small { margin-top: 2px; font-size: 12px; color: var(--text-3); }
+  .mobile-friend-action { flex: none; min-height: 32px; height: 32px; padding: 0 12px; font-size: 13px; border-radius: 10px; }
+  .mobile-friend-state { flex: none; font-size: 12px; color: var(--text-3); }
   .mobile-profile { display: flex; align-items: center; gap: 16px; min-height: 96px; text-align: left; }
   .mobile-profile > span:not(.avatar) { flex: 1; min-width: 0; }
   .mobile-profile b { display: block; font-size: 23px; line-height: 30px; overflow-wrap: anywhere; }

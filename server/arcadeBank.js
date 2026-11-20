@@ -114,11 +114,11 @@ export function createArcadeBank({ db, userById, listUsers, canMint, now = Date.
       return stmt('SELECT * FROM arcade_ledger WHERE user_id=? ORDER BY created_at DESC,rowid DESC LIMIT 50').all(userId)
         .map(row => ({ id: row.id, kind: row.kind, amount: row.amount, peer: row.peer_id ? userById(row.peer_id)?.name || '用户' : '', note: row.note, at: row.created_at }));
     },
-    leaderboard(sort = 'net') {
+    leaderboard(sort = 'net', viewer = null) {
       const keys = new Set(['net', 'total', 'winRate', 'hands', 'won']);
       const field = keys.has(sort) ? sort : 'net';
       const rows = new Map(stmt(`SELECT s.*,w.balance,COALESCE(e.amount,0) AS reserved FROM arcade_stats s JOIN arcade_wallets w ON w.user_id=s.user_id LEFT JOIN arcade_escrow e ON e.user_id=s.user_id`).all().map(row => [row.user_id, row]));
-      return listUsers().map(user => {
+      return listUsers(viewer).map(user => {
         const s = rows.get(user.id) || {};
         return { id: user.id, name: user.name, avatar: user.avatar, online: user.online,
           total: (s.balance ?? INITIAL_CHIPS) + (s.reserved || 0), hands: s.hands || 0, wins: s.wins || 0, splits: s.splits || 0,

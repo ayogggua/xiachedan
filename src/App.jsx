@@ -73,8 +73,9 @@ const ShortcutsDialog = lazyModule(loadDialogs, module => module.ShortcutsDialog
 const FolderDialog = lazyModule(loadDialogs, module => module.FolderDialog);
 const StatusDialog = lazyModule(loadDialogs, module => module.StatusDialog);
 const BundleDialog = lazyModule(loadDialogs, module => module.BundleDialog);
+const FriendRequestDialog = lazyModule(loadDialogs, module => module.FriendRequestDialog);
 
-const ERROR_TEXT = /失败|错误|无法|不能|无效|超时|中断|不存在|无权|禁言|超限|超过|空文件|不对|未完成|没有送达|没有发出|没有添加|没有找到|不可用|频繁|不在列表中|已不在/;
+const ERROR_TEXT = /失败|错误|无法|不能|无效|超时|中断|不存在|无权|禁言|超限|超过|空文件|不对|未完成|没有送达|没有发出|没有添加|没有找到|不可用|频繁|不在列表中|已不在|还不是你的好友|先添加对方为好友|已发送过好友申请|已是你的好友|已经是你的好友/;
 const userProfileKey = user => `${user.id}\0${user.name}\0${user.avatar}\0${user.nameColor ?? ''}\0${user.status?.emoji ?? ''}\0${user.status?.text ?? ''}\0${user.status?.until ?? ''}\0${user.bot?.status ?? ''}\0${user.removed ? 1 : 0}\0${user.department ?? ''}`;
 
 const EMPTY_RECORD = Object.freeze({});
@@ -251,6 +252,10 @@ export default function App() {
   const [profileCard, setProfileCard] = useState(null);
   const [draftTexts, setDraftTexts] = useState({});
   const [contactQuery, setContactQuery] = useState('');
+  const [contactTab, setContactTab] = useState('friends');
+  const [requestingFriend, setRequestingFriend] = useState(null);
+  const [removingFriend, setRemovingFriend] = useState(null);
+  const [friendBusy, setFriendBusy] = useState('');
   // 会话列表上方的分组标签：全部 / 未读 / 群聊 / 私聊 / 自建文件夹；停在哪个标签只记在本机。
   const [folderTab, setFolderTab] = useState(() => { try { return localStorage.getItem('linliao.folderTab') || 'all'; } catch { return 'all'; } });
   const [editingFolder, setEditingFolder] = useState(null);
@@ -484,10 +489,29 @@ export default function App() {
     if (first && first.getBoundingClientRect().top >= top) setUnreadAnchor(null);
   }, [unreadAnchor, selected]);
   useEffect(() => { requestAnimationFrame(checkUnreadAnchor); }, [checkUnreadAnchor, lastSeq, loading]);
+  const canViewUserList = Boolean(state?.canViewUserList);
+  const friendIds = state?.friends || [];
+  const friendSet = useMemo(() => new Set(friendIds), [friendIds]);
+  const friendRequests = state?.friendRequests || { incoming: [], outgoing: [] };
+  const pendingIncomingMap = useMemo(() => new Map((friendRequests.incoming || []).filter(item => item.status === 'pending').map(item => [item.fromUserId, item])), [friendRequests.incoming]);
+  const pendingOutgoingMap = useMemo(() => new Map((friendRequests.outgoing || []).filter(item => item.status === 'pending').map(item => [item.toUserId, item])), [friendRequests.outgoing]);
+  const pendingFriendCount = pendingIncomingMap.size;
+  const activeContactTab = contactTab === 'all' && !canViewUserList ? 'friends' : contactTab;
+  const friendUsers = useMemo(() => (state?.users || []).filter(user => !user.removed && !user.bot && friendSet.has(user.id)), [state?.users, friendSet]);
+  const contactBaseUsers = useMemo(() => {
+    const list = state?.users || [];
+    if (canViewUserList && activeContactTab === 'all') return list.filter(user => !user.removed);
+    return list.filter(user => !user.removed && (friendSet.has(user.id) || (user.bot && user.bot.status === 'enabled')));
+  }, [state?.users, canViewUserList, activeContactTab, friendSet]);
+  const sidebarSearchBase = useMemo(() => {
+    const list = state?.users || [];
+    if (canViewUserList) return list.filter(user => !user.removed);
+    return list.filter(user => !user.removed && (friendSet.has(user.id) || (user.bot && user.bot.status === 'enabled')));
+  }, [state?.users, canViewUserList, friendSet]);
   const searchTerm = search.trim();
   const globalSearch = useMessageSearch(searchTerm, null, historyVersion, Boolean(state?.me));
-  const userSearch = useUserSearch(state?.users, searchTerm, Boolean(state?.me), state?.notes);
-  const contactSearch = useUserSearch(state?.users, contactQuery, Boolean(state?.me) && modal === 'members', state?.notes);
+  const userSearch = useUserSearch(sidebarSearchBase, searchTerm, Boolean(state?.me), state?.notes);
+  const contactSearch = useUserSearch(contactBaseUsers, contactQuery, Boolean(state?.me) && modal === 'members' && activeContactTab !== 'requests', state?.notes);
   useEffect(() => {
     if (!messageList.current || loading) return;
     const spot = pendingSpot.current;
@@ -787,19 +811,67 @@ export default function App() {
     try { applyReactions(await api('reactions', { messageId: message.id, emoji })); }
     catch (error) { notify(error.message); }
   }
+  const relationOf = user => {
+    if (!user) return 'none';
+    if (user.bot) return 'bot';
+    if (friendSet.has(user.id)) return 'friend';
+    if (pendingIncomingMap.has(user.id)) return 'pending_incoming';
+    if (pendingOutgoingMap.has(user.id)) return 'pending_outgoing';
+    return user.relation || 'none';
+  };
+  const canDirectUser = user => {
+    if (!user || user.removed) return false;
+    if (user.id === state?.me?.id) return true;
+    if (user.bot) return user.bot.status === 'enabled' || Boolean(state?.rooms?.some(item => item.kind === 'direct' && item.members.includes(user.id)));
+    if (canViewUserList || friendSet.has(user.id)) return true;
+    return Boolean(user.isManager && state?.rooms?.some(item => item.kind === 'direct' && item.members.includes(user.id)));
+  };
+  function openContacts(tab = 'friends') {
+    setContactQuery('');
+    setContactTab(tab === 'all' && !canViewUserList ? 'friends' : tab);
+    setModal('members');
+  }
+  async function respondFriend(requestId, action) {
+    if (!requestId || friendBusy) return;
+    setFriendBusy(requestId);
+    try {
+      await api('friends/respond', { requestId, action });
+      await refresh();
+      notify(action === 'accept' ? '已同意好友申请，现在可以开始私聊' : '已拒绝好友申请');
+    } catch (error) { notify(error.message); }
+    finally { setFriendBusy(''); }
+  }
+  async function cancelFriend(requestId) {
+    if (!requestId || friendBusy) return;
+    setFriendBusy(requestId);
+    try {
+      await api('friends/cancel', { requestId });
+      await refresh();
+      notify('已撤回好友申请');
+    } catch (error) { notify(error.message); }
+    finally { setFriendBusy(''); }
+  }
   async function directMessage(user) {
     if (user.id === state.me.id) return setModal('profile');
+    if (!canDirectUser(user)) {
+      if (relationOf(user) === 'pending_incoming') {
+        const req = pendingIncomingMap.get(user.id);
+        if (req) return respondFriend(req.id, 'accept');
+      }
+      setRequestingFriend(user);
+      return;
+    }
     try { const result = await api('rooms', { userId: user.id }); await refresh(); openRoom(result.id); setModal(null); setTimeout(() => document.querySelector('.composer textarea')?.focus(), 60); }
     catch (error) { notify(error.message); }
   }
   // 资料卡贴着头像弹出：头像在右半边时卡片放在左侧。
   function openProfile(user, element) {
     const rect = element.getBoundingClientRect();
-    setProfileCard({ userId: user.id, x: rect.left > innerWidth / 2 ? rect.left - 268 : rect.right + 8, y: rect.top });
+    setProfileCard({ userId: user.id, user, x: rect.left > innerWidth / 2 ? rect.left - 268 : rect.right + 8, y: rect.top });
   }
-  // 群聊头像和成员列表：单击看资料卡，双击直接发起私聊；单击稍等一下，免得双击时卡片闪一下。键盘回车立即打开。
+  // 群聊头像和成员列表：单击看资料卡，可私聊时双击直接发起私聊；单击稍等一下，免得双击时卡片闪一下。键盘回车立即打开。
   // 私聊里已经在和对方说话：单击只看资料卡，不等待双击。
-  const profileClick = user => room?.kind === 'direct' ? { title: '查看资料', onClick: event => openProfile(user, event.currentTarget) } : ({
+  const profileClick = (user, disableDouble = room?.kind === 'direct') => disableDouble || !canDirectUser(user) ? { title: '查看资料', onClick: event => openProfile(user, event.currentTarget) } : ({
     title: user.id === state.me.id ? '查看资料' : '单击查看资料，双击发消息',
     onClick: event => { if (event.detail > 1) return; const element = event.currentTarget; clearTimeout(avatarClick.current);
       avatarClick.current = setTimeout(() => openProfile(user, element), event.detail === 0 || user.id === state.me.id ? 0 : 220); },
@@ -1066,6 +1138,16 @@ export default function App() {
   // 会接收这里全部消息的机器人（私聊里机器人总是收全部，另有说明）。
   const listeningBots = room && room.kind !== 'direct' ? groupMembers.filter(user => user.bot?.receiveAll) : [];
   const online = state.users.filter(user => !user.removed && user.online);
+  const onlineFriendsCount = friendUsers.filter(user => user.online).length;
+  const canChatInRoom = target => {
+    if (!target || target.kind !== 'direct') return true;
+    const directPeer = peerOf(target);
+    if (!directPeer) return false;
+    if (directPeer.bot) return directPeer.bot.status !== 'deleted';
+    if (directPeer.removed) return false;
+    return canViewUserList || friendSet.has(directPeer.id) || Boolean(directPeer.isManager);
+  };
+  const canChatWithPeer = !room || canChatInRoom(room);
   latest.current = { messageMenu, userMap, displayUser, jumpToMessage, toggleReaction, votePoll, closePoll, closeChain, openBurnMessage, openThread, markMessageRead, openProfile, selectMessage,
     joinGroup: async ({ roomId, token }) => {
       try {
@@ -1157,7 +1239,7 @@ export default function App() {
     const rect = event.currentTarget.getBoundingClientRect();
     setContextMenu({ x: rect.left, y: rect.bottom + 4, label: '发起', items: [
       { id: 'group', label: '发起群聊', action: () => setModal('group') },
-      { id: 'direct', label: '发起私聊', action: () => { setContactQuery(''); setModal('members'); } },
+      { id: 'direct', label: '发起私聊', action: () => openContacts('friends') },
       { id: 'invite', label: '邀请同事', action: () => setModal('invite') },
       { id: 'folder', label: '新建文件夹', action: () => setEditingFolder('new') },
       ...(anyUnread ? [{ id: 'read-all', label: '全部标为已读', action: markAllRead }] : []),
@@ -1228,15 +1310,15 @@ export default function App() {
   const isGroupManager = groupOwner === state.me.id || groupAdmins.includes(state.me.id);
   // 把机器人拉进、移出：群聊是群主和群管理员，大厅是空间管理者。
   const canManageRoomBots = Boolean(room && (room.kind === 'group' ? isGroupManager : room.kind === 'public' && (cloud ? isAdmin : isOwner)));
-  // 不能发言时（禁言、全员禁言）不提供左滑回复。
-  const composerBlocked = Boolean(room && ((room.kind === 'group' && room.allMuted && !isGroupManager) || state.me.muted));
+  // 不能发言时（禁言、全员禁言、非好友私聊）不提供左滑回复。
+  const composerBlocked = Boolean(room && ((room.kind === 'group' && room.allMuted && !isGroupManager) || state.me.muted || (room.kind === 'direct' && !canChatWithPeer)));
   // 接龙：群主、群管理员（大厅是空间管理者）也能结束别人发起的；不能发言时不能接龙。
   const chainManager = room?.kind === 'group' ? isGroupManager : room?.kind === 'public' && (cloud ? isAdmin : isOwner);
   const voiceBlocked = !room ? '' : room.kind === 'group' && room.allMuted && !isGroupManager ? '全员禁言中，只有群主和管理员可以接龙' : state.me.muted ? '你已被管理员禁言' : '';
-  const canSetAutoDelete = room?.kind === 'direct' || (room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner));
+  const canSetAutoDelete = (room?.kind === 'direct' && canChatWithPeer) || (room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner));
   const canEditRoomAvatar = room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner);
   // 右侧成员面板里单击看资料卡、双击私聊；「空间成员」弹窗里单击直接私聊。
-  const memberRow = (user, size, inGroup = false, panel = false, roomPanel = false) => { const shown = inGroup ? displayUser(user) : user; return <div className="managed-member" key={user.id}><button type="button" className="member-row" {...(panel ? profileClick(user) : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.bot ? undefined : user.online} /><span className="member-name" title={shown.realName ? `原名：${shown.realName}` : undefined}>{shown.name}<StatusEmoji user={user} />{user.bot && <BotTag />}{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}{inGroup && groupAdmins.includes(user.id) && <small className="owner-tag admin-tag">管理员</small>}</span><small title={user.bio || undefined} className={user.bot?.receiveAll && user.bot.status === 'enabled' ? 'bot-listening-text' : undefined}>{user.bot ? user.bot.status !== 'enabled' ? '已停用' : user.bot.receiveAll ? '接收全部消息' : '' : user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && !user.bot && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button type="button" className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
+  const memberRow = (user, size, inGroup = false, panel = false, roomPanel = false) => { const shown = inGroup ? displayUser(user) : user; return <div className="managed-member" key={user.id}><button type="button" className="member-row" {...(panel ? profileClick(user, roomPanel && room?.kind === 'direct') : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.bot ? undefined : user.online} /><span className="member-name" title={shown.realName ? `原名：${shown.realName}` : undefined}>{shown.name}<StatusEmoji user={user} />{user.bot && <BotTag />}{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}{inGroup && groupAdmins.includes(user.id) && <small className="owner-tag admin-tag">管理员</small>}</span><small title={user.bio || undefined} className={user.bot?.receiveAll && user.bot.status === 'enabled' ? 'bot-listening-text' : undefined}>{user.bot ? user.bot.status !== 'enabled' ? '已停用' : user.bot.receiveAll ? '接收全部消息' : '' : user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && !user.bot && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button type="button" className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
       const rect = event.currentTarget.getBoundingClientRect();
       setContextMenu({ x: rect.left - 100, y: rect.bottom + 4, label: `管理${user.name}`, items: [
         { id: 'mute', label: user.muted ? '解除禁言' : '禁言…', action: async () => { if (!user.muted) return setMutingUser(user); try { await api('admin/mute', { userId: user.id, muted: false }); notify('已解除禁言'); } catch (error) { notify(error.message); } } },
@@ -1247,10 +1329,39 @@ export default function App() {
     {inGroup && !user.bot && groupOwner === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setGroupAction({ type: 'transfer', user })} aria-label={`把群主转让给${user.name}`}>转让</button>}
     {roomPanel && user.bot && canManageRoomBots && <button className="remove-member" onClick={() => setGroupAction({ type: 'removeBot', user })} aria-label={`把机器人${user.name}移出`}>移出</button>}</div>; };
   // 通讯录：按部门分组，没填部门的放最后；组内在线的排前面。
-  const contactGroups = Object.entries(contactSearch.users
+  const contactGroups = Object.entries(contactSearch.users.filter(user => user.id !== state.me.id)
     .reduce((groups, user) => { (groups[user.bot ? '机器人' : user.department || '未设置部门'] ||= []).push(user); return groups; }, {}))
     .sort(([a], [b]) => (a === '机器人') - (b === '机器人') || (a === '未设置部门') - (b === '未设置部门') || a.localeCompare(b, 'zh-Hans-CN'))
     .map(([department, members]) => [department, members.sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name, 'zh-Hans-CN'))]);
+  const formatRequestTime = time => new Date(time).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const renderUserSearchRow = (user, { clearSidebar = false } = {}) => {
+    const relation = relationOf(user);
+    const canDirect = canDirectUser(user);
+    const incomingReq = pendingIncomingMap.get(user.id);
+    const outgoingReq = pendingOutgoingMap.get(user.id);
+    const reqId = incomingReq?.id || outgoingReq?.id || user.requestId;
+    if (canDirect) {
+      return <div className="managed-member search-user-item" key={user.id}>
+        <button type="button" className="member-row" onClick={event => clearSidebar ? (setSearch(''), directMessage(user)) : openProfile(user, event.currentTarget)}>
+          <Avatar user={user} size={32} online={user.bot ? undefined : user.online} />
+          <span className="member-name">{user.name}{user.bot && <BotTag />}{relation === 'friend' && <small className="friend-badge">好友</small>}{user.department && <small className="member-department">{user.department}</small>}</span>
+          {clearSidebar && <MessageCircle size={16} />}
+        </button>
+        {!clearSidebar && <button type="button" className="secondary-button friend-inline-btn" onClick={() => directMessage(user)}>发消息</button>}
+      </div>;
+    }
+    return <div className="managed-member search-user-item" key={user.id}>
+      <button type="button" className="member-row" onClick={event => openProfile(user, event.currentTarget)}>
+        <Avatar user={user} size={32} />
+        <span className="member-name">{user.name}{user.department && <small className="member-department">{user.department}</small>}</span>
+      </button>
+      {relation === 'pending_incoming'
+        ? <button type="button" className="primary-button friend-inline-btn" disabled={friendBusy === reqId} onClick={() => respondFriend(reqId, 'accept')}>同意</button>
+        : relation === 'pending_outgoing'
+          ? <span className="friend-status-tag">已申请</span>
+          : <button type="button" className="secondary-button friend-inline-btn" onClick={() => setRequestingFriend(user)}><UserPlus size={13} />加好友</button>}
+    </div>;
+  };
   const peerStatus = room?.kind === 'direct' && activeStatus(peer);
   // 和机器人的私聊：它总是收这里的全部消息，停用、删除后说清楚收不到。
   const botPeerText = peer => peer.bot.status === 'deleted' ? '机器人已删除，消息不会再送达' : peer.bot.status === 'enabled' ? '你在这里发的消息都会发给它' : '机器人已停用，暂时收不到消息';
@@ -1289,7 +1400,7 @@ export default function App() {
       <div className="rail-drag" data-drag-region aria-hidden="true" />
       <button type="button" className="rail-me" aria-label="修改昵称和头像" title={`${state.me.name} · ${state.workspace.name}`} onClick={() => setModal('profile')}><Avatar user={userMap[state.me.id] || state.me} size={36} /></button>
       {railButton(MessageCircle, '聊天', () => chooseFolderTab('all'), { active: true, badge: unreadCount })}
-      {railButton(BookUser, '通讯录', () => { setContactQuery(''); setModal('members'); })}
+      {railButton(BookUser, '通讯录', () => openContacts(pendingFriendCount ? 'requests' : 'friends'), { badge: pendingFriendCount })}
       {railButton(AtSign, '提到我的', () => { setActivity(null); setModal('activity'); })}
       {railButton(Bookmark, '收藏', () => setModal('saved'))}
       <span className="rail-spacer" />
@@ -1299,9 +1410,9 @@ export default function App() {
       {railButton(LogOut, loggingOut ? '正在退出…' : '退出登录', logout, { disabled: loggingOut })}
     </nav>}
     <aside className="sidebar glass" aria-label="会话列表" data-mobile-tab={mobileTab}>{resizer}
-      <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} notes={state.notes} connected={connected} onDirect={directMessage} onAction={setModal} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
+      <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} friendIds={friendIds} friendRequests={friendRequests} canViewUserList={canViewUserList} notes={state.notes} connected={connected} onDirect={directMessage} onRequestFriend={setRequestingFriend} onRespondFriend={respondFriend} onAction={action => action === 'friendRequests' ? openContacts('requests') : setModal(action)} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
-      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{anyUnread && <IconButton icon={CheckCheck} label="全部标为已读" onClick={markAllRead} />}<IconButton icon={BookUser} label="通讯录" className="contacts-entry" onClick={() => { setContactQuery(''); setModal('members'); }} /><IconButton icon={AtSign} label="提到我的" onClick={() => { setActivity(null); setModal('activity'); }} /><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /><ArcadeEntry className="arcade-launcher--mobile" onClick={() => setModal('arcade')} /></span></div>
+      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{canViewUserList ? `${online.length} 人在线` : `${onlineFriendsCount} 位好友在线`}</p></div><span className="space-actions">{anyUnread && <IconButton icon={CheckCheck} label="全部标为已读" onClick={markAllRead} />}<button type="button" title={pendingFriendCount ? `通讯录（${pendingFriendCount} 条好友申请）` : '通讯录'} aria-label={pendingFriendCount ? `通讯录，${pendingFriendCount} 条好友申请` : '通讯录'} className="icon-button contacts-entry" onClick={() => openContacts(pendingFriendCount ? 'requests' : 'friends')}><BookUser size={17} strokeWidth={1.7} />{pendingFriendCount > 0 && <span className="contacts-badge" aria-hidden="true">{pendingFriendCount > 99 ? '99+' : pendingFriendCount}</span>}</button><IconButton icon={AtSign} label="提到我的" onClick={() => { setActivity(null); setModal('activity'); }} /><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /><ArcadeEntry className="arcade-launcher--mobile" onClick={() => setModal('arcade')} /></span></div>
       {classic ? <div className="classic-search">{searchBox}<IconButton icon={CirclePlus} size={22} label="发起聊天、邀请同事" className="classic-plus" aria-haspopup="menu" onClick={openClassicMenu} /></div> : searchBox}
       {!compact && <div className="folder-bar"><div className="folder-tabs" role="tablist" aria-label="会话分组">{folderTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={tab.id === tabKey} className={tab.id === tabKey ? 'active' : ''} onClick={() => chooseFolderTab(tab.id)}>
         {tab.label}{tab.unread > 0 && <span className="folder-unread">{tab.unread > 99 ? '99+' : tab.unread}</span>}</button>)}</div>
@@ -1309,8 +1420,7 @@ export default function App() {
         <IconButton icon={FolderPlus} label="新建文件夹" size={14} onClick={() => setEditingFolder('new')} /></div>}
       <nav className="conversation-scroll" aria-label="会话">
         {searchTerm && <section aria-label="用户搜索结果" aria-live="polite"><div className="section-label"><span>用户</span></div>
-          {userSearch.users.filter(user => user.id !== state.me.id).map(user => <button type="button" key={user.id} className="member-row" onClick={() => { setSearch(''); directMessage(user); }}>
-            <Avatar user={user} size={32} online={user.bot ? undefined : user.online} /><span className="member-name">{user.name}{user.bot && <BotTag />}{user.department && <small className="member-department">{user.department}</small>}</span><MessageCircle size={16} /></button>)}
+          {userSearch.users.filter(user => user.id !== state.me.id).map(user => renderUserSearchRow(user, { clearSidebar: true }))}
           {userSearch.error ? <p className="sidebar-empty" role="alert">{userSearch.error}</p> : userSearch.loading ? <p className="sidebar-empty">正在搜索用户…</p> : !userSearch.users.some(user => user.id !== state.me.id) && <p className="sidebar-empty">没有找到相关用户</p>}
         </section>}
         {classic ? (() => {
@@ -1321,10 +1431,10 @@ export default function App() {
         })() : <>
         {filtered.some(room => room.pinned) && <><div className="section-label"><span>置顶</span></div>{(() => { const pinnedRooms = filtered.filter(room => room.pinned), ids = query || tabKey !== 'all' ? undefined : pinnedRooms.map(room => room.id); return pinnedRooms.map(target => roomButton(target, ids)); })()}</>}
         {showGroupSection && <><div className="section-label"><span>群聊</span><IconButton icon={Plus} label="新建群聊" size={15} onClick={() => setModal('group')} /></div>{filtered.filter(room => !room.pinned && room.kind !== 'direct').map(roomButton)}</>}
-        {showDirectSection && <><div className="section-label"><span>私聊</span><IconButton icon={Plus} label="发起私聊" size={15} onClick={() => setModal('members')} /></div>{filtered.filter(room => !room.pinned && room.kind === 'direct').map(roomButton)}</>}
+        {showDirectSection && <><div className="section-label"><span>私聊</span><IconButton icon={Plus} label="发起私聊" size={15} onClick={() => openContacts('friends')} /></div>{filtered.filter(room => !room.pinned && room.kind === 'direct').map(roomButton)}</>}
         </>}
         {!query && !['all', 'groups', 'direct'].includes(tabKey) && !filtered.length && <p className="sidebar-empty">{tabKey === 'unread' ? '没有未读的会话。' : '这个文件夹里还没有会话，点上方的编辑按钮添加。'}</p>}
-        {['all', 'direct'].includes(tabKey) && !filtered.some(room => room.kind === 'direct') && <p className="sidebar-empty">{search ? '没有匹配的私聊' : '找到一位同事，聊点新鲜事。'}</p>}
+        {['all', 'direct'].includes(tabKey) && !filtered.some(room => room.kind === 'direct') && <p className="sidebar-empty">{search ? '没有匹配的私聊' : canViewUserList ? '找到一位同事，聊点新鲜事。' : '在上方搜索用户并添加好友后，即可发起私聊。'}</p>}
         {searchTerm && <section className="sidebar-messages" aria-label="消息搜索结果" aria-live="polite"><div className="section-label"><span>消息</span></div>
           {globalSearch.results?.map(message => { const target = rooms.find(item => item.id === message.roomId); if (!target) return null;
             const sender = message.senderId === state.me.id ? '我' : userMap[message.senderId]?.name || '成员';
@@ -1336,7 +1446,7 @@ export default function App() {
       {cloud && isAdmin && <button className="admin-entry" onClick={() => setModal('admin')}><ShieldCheck size={16} /><span>用户管理</span><ChevronRight size={14} /></button>}
       <div className="me-card"><button className="me-profile" title="修改昵称和头像" onClick={() => setModal('profile')}><Avatar user={state.me} size={30} /><span><b>{state.me.name}</b><small className={connected ? '' : 'warning'}>{connected ? cloud ? '已连接' : '局域网已连接' : '正在重新连接…'}</small></span></button><ArcadeEntry onClick={() => setModal('arcade')} /><IconButton icon={Settings2} label={update?.available ? '设置（有新版本）' : '设置'} className={update?.available ? 'has-update' : ''} onClick={() => setModal('connection')} /></div>
       <button type="button" className="sidebar-logout" disabled={loggingOut} onClick={logout}>{loggingOut ? <LoaderCircle className="spin" size={14} /> : <LogOut size={14} />}<span>{loggingOut ? '正在退出…' : '退出登录'}</span></button>
-      <MobileTabs tab={mobileTab} onChange={tab => { setMobileTab(tab); setMobileChat(false); }} unread={rooms.reduce((count, target) => count + (!target.muted && !target.hidden ? unread[target.id]?.count || 0 : 0), 0)} />
+      <MobileTabs tab={mobileTab} onChange={tab => { setMobileTab(tab); setMobileChat(false); }} unread={rooms.reduce((count, target) => count + (!target.muted && !target.hidden ? unread[target.id]?.count || 0 : 0), 0)} friendBadge={pendingFriendCount} />
     </aside>
     <main className="chat-main">
       {room ? <>
@@ -1378,7 +1488,12 @@ export default function App() {
         <button className="secondary-button" onClick={() => setSelection(null)}>取消</button>
         <button className="secondary-button" disabled={!selection.length || overSelected} onClick={() => setHiding([...selection])}>删除</button>
         <ForwardButtons count={selection.length} disabled={!selection.length || overSelected} onForward={merge => { setForwardMerge(merge); setForwarding([...selection]); }} />
-      </div> : peer?.bot?.status === 'deleted' ? <div className="muted-notice glass" role="status">机器人已删除，不能再发消息</div> : room.kind === 'group' && room.allMuted && !isGroupManager ? <div className="muted-notice glass" role="status">全员禁言中，只有群主和管理员可以发言</div> : state.me.muted ? <div className="muted-notice glass" role="status">你已被管理员禁言{state.me.mutedUntil ? `，${new Date(state.me.mutedUntil).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 后恢复` : ''}</div> : <Composer injectDraft={injectDraft} injectShare={injectShare} sendKey={chatPrefs.sendKey} onDraft={(id, text) => setDraftTexts(previous => (previous[id] || '') === text ? previous : { ...previous, [id]: text })} room={room} connected={connected && !loggingOut} onQueue={(payload, preview) => { sticky.current = true; setReturnSpot(null); outbox.send(payload, preview); }} notify={notify} privateMode={privateMode}
+      </div> : peer?.bot?.status === 'deleted' ? <div className="muted-notice glass" role="status">机器人已删除，不能再发消息</div> : room.kind === 'direct' && peer && !peer.bot && !canChatWithPeer ? <div className="muted-notice glass friend-gate-notice" role="status">
+        {peer.removed ? <span>对方已离开空间，不能再发消息</span>
+          : pendingIncomingMap.has(peer.id) ? <><span>对方已向你发送好友申请，通过后即可私聊</span><button type="button" className="primary-button friend-inline-btn" disabled={friendBusy === pendingIncomingMap.get(peer.id).id} onClick={() => respondFriend(pendingIncomingMap.get(peer.id).id, 'accept')}>同意申请</button></>
+          : pendingOutgoingMap.has(peer.id) ? <span>对方还不是你的好友，已发送好友申请，等待对方通过</span>
+          : <><span>对方还不是你的好友，添加好友后才能发送消息</span><button type="button" className="primary-button friend-inline-btn" onClick={() => setRequestingFriend(peer)}>添加好友</button></>}
+      </div> : room.kind === 'group' && room.allMuted && !isGroupManager ? <div className="muted-notice glass" role="status">全员禁言中，只有群主和管理员可以发言</div> : state.me.muted ? <div className="muted-notice glass" role="status">你已被管理员禁言{state.me.mutedUntil ? `，${new Date(state.me.mutedUntil).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 后恢复` : ''}</div> : <Composer injectDraft={injectDraft} injectShare={injectShare} sendKey={chatPrefs.sendKey} onDraft={(id, text) => setDraftTexts(previous => (previous[id] || '') === text ? previous : { ...previous, [id]: text })} room={room} connected={connected && !loggingOut} onQueue={(payload, preview) => { sticky.current = true; setReturnSpot(null); outbox.send(payload, preview); }} notify={notify} privateMode={privateMode}
         members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))} phrases={state.phrases}
         notice={scheduled.roomId === room.id && scheduled.items.length > 0 && <button type="button" className="scheduled-bar glass" onClick={() => setModal('scheduled')}><Clock size={14} />{scheduled.items.length} 条定时消息待发送 · 最近 {new Date(scheduled.items[0].sendAt).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</button>}
         onCreatePoll={() => { if (!burnBlocked(room.id, '发起投票')) setModal('poll'); }} onCreateChain={room.kind !== 'direct' ? () => setModal('chain') : undefined}
@@ -1389,7 +1504,7 @@ export default function App() {
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : panelView === 'files' ? '图片与文件' : panelView === 'thread' ? '话题' : '会话成员'}>{panelView === 'thread' && threadRoot
         ? <ThreadPanel key={threadRoot} rootId={threadRoot} room={room} viewerId={state.me.id} privateMode={privateMode} threadTick={threadTick} onBack={() => setPanelView('members')} notify={notify}
           onLoaded={items => { threadMessages.current = items; }} handlers={messageHandlers} userOf={userOf} reactionOptions={state.reactions || NO_REACTIONS} reactingTo={reactingTo} quickReact={chatPrefs.quickReact}
-          blocked={room.kind === 'group' && room.allMuted && !isGroupManager ? '全员禁言中，只有群主和管理员可以发言' : state.me.muted ? '你已被管理员禁言' : burnModes[room.id] ? '阅后即焚开着，话题里不能回复；先关掉输入框上方的阅后即焚' : ''}
+          blocked={room.kind === 'direct' && !canChatWithPeer ? '对方还不是你的好友，添加好友后才能发送消息' : room.kind === 'group' && room.allMuted && !isGroupManager ? '全员禁言中，只有群主和管理员可以发言' : state.me.muted ? '你已被管理员禁言' : burnModes[room.id] ? '阅后即焚开着，话题里不能回复；先关掉输入框上方的阅后即焚' : ''}
           composer={{ connected, notify, privateMode, phrases: state.phrases, sendKey: chatPrefs.sendKey, members: room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id), canMentionAll: room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin)) }}
           outbox={outbox} editing={threadEditing && !threadEditing.recalledAt ? threadEditing : null} onCancelEdit={() => setThreadEditing(null)} onEdited={message => { applyEdit(message); setThreadEditing(null); }}
           onEditLast={() => { const own = threadMessages.current.findLast(item => item.threadOf && item.senderId === state.me.id && !item.recalledAt); if (own) setThreadEditing(own); }} />
@@ -1431,19 +1546,66 @@ export default function App() {
           {listeningBots.length > 0 && <p className="bot-listening-note" role="note"><Bot size={14} aria-hidden="true" /><span>{listeningBots.map(user => `「${user.name}」`).join('、')}会接收这里的全部消息，不只是 @它的消息。</span></p>}
           <div className="members-list">{groupMembers.map(user => memberRow(user, 30, room.kind === 'group', true, true))}</div>
           {(room.kind === 'group' || (room.kind === 'public' && !isOwner)) && <button className="leave-group" onClick={() => setGroupAction({ type: 'leave' })}><LogOut size={15} />{room.kind === 'public' ? '退出大厅' : '退出群聊'}</button>}</>}</aside>}</div>
-      </> : <div className="empty-conversation"><MessageCircle size={32} /><h2>选择一个对话</h2><button className="secondary-button" onClick={() => setModal('members')}>发起私聊</button></div>}
+      </> : <div className="empty-conversation"><MessageCircle size={32} /><h2>选择一个对话</h2><button className="secondary-button" onClick={() => openContacts('friends')}>{canViewUserList ? '发起私聊' : '查找好友'}</button></div>}
     </main>
     {modal === 'profile' && <LazyModal title="个人资料" onClose={() => setModal(null)}><ProfileDialog me={{ ...state.me, ...userMap[state.me.id] }} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} /></LazyModal>}
     {modal === 'roomAvatar' && room && room.kind !== 'direct' && <LazyModal title="设置群头像" onClose={() => setModal(null)}><RoomAvatarDialog key={room.id} room={room} onClose={() => setModal(null)} onSaved={refresh} notify={notify} /></LazyModal>}
     {modal === 'invite' && <LazyModal title="邀请同事" onClose={() => setModal(null)}><InviteDialog cloud={cloud} onClose={() => setModal(null)} notify={notify} /></LazyModal>}
     {modal === 'admin' && cloud && isAdmin && <LazyModal title="用户管理" onClose={() => setModal(null)}><AdminDialog me={state.me} onClose={() => setModal(null)} onUpdated={refresh} notify={notify} /></LazyModal>}
     {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><LazySlot fallback={<p className="inline-note" role="status">正在加载…</p>}><PasswordForm onChanged={() => location.reload()} /></LazySlot></Modal>}
-    {['group', 'addMembers'].includes(modal) && <LazyModal title={modal === 'addMembers' ? '邀请成员' : '创建群聊'} onClose={() => setModal(null)}><GroupDialog users={state.users.filter(user => !user.removed && !user.bot)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} /></LazyModal>}
+    {['group', 'addMembers'].includes(modal) && <LazyModal title={modal === 'addMembers' ? '邀请成员' : '创建群聊'} onClose={() => setModal(null)}><GroupDialog users={canViewUserList ? state.users.filter(user => !user.removed && !user.bot) : friendUsers} friendsOnly={!canViewUserList} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} /></LazyModal>}
     {modal === 'connection' && <LazyModal title="设置" onClose={() => setModal(null)}><SettingsDialog appLock={appLock} pushSettings={{ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }} phrases={state.phrases || []} onPhrases={async list => applyPhrases((await api('phrases', { phrases: list })).phrases)} onSetStatus={() => setModal('status')} keywords={state.keywords || []} onKeywords={async list => applyKeywords((await api('keywords', { keywords: list })).keywords)} onShortcuts={() => setModal('shortcuts')} onArcade={() => setModal('arcade')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} skin={skin} onSkin={setSkin} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} onBots={(cloud ? isAdmin : isOwner) ? () => setModal('bots') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={{ ...state.me, ...userMap[state.me.id] }} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} /></LazyModal>}
-    {modal === 'members' && <Modal title="通讯录" subtitle={`${state.users.filter(user => !user.removed && !user.bot).length} 位成员，${online.length} 人在线。单击查看资料，双击直接私聊。`} onClose={() => setModal(null)} className="contacts-dialog">
-      <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus aria-label="搜索成员" placeholder="搜索昵称、完整手机号或邮箱" value={contactQuery} onChange={event => setContactQuery(event.target.value)} /></label>
-      <div className="space-members">{contactGroups.map(([department, members]) => <section key={department} aria-label={department}><h4 className="contacts-group">{department}<small>{members.length}</small></h4>{members.map(user => memberRow(user, 32, false, true))}</section>)}
-        {contactSearch.error ? <p className="form-error" role="alert">{contactSearch.error}</p> : contactSearch.loading ? <p className="history-empty">正在搜索用户…</p> : !contactGroups.length && <p className="history-empty">没有找到「{contactQuery.trim()}」</p>}</div>
+    {modal === 'members' && <Modal title="通讯录" subtitle={activeContactTab === 'requests' ? '处理收到的好友申请，或查看已发出的申请。' : activeContactTab === 'all' ? `${state.users.filter(user => !user.removed && !user.bot).length} 位成员，${online.length} 人在线。单击查看资料，双击直接私聊。` : `${friendUsers.length} 位好友，${onlineFriendsCount} 人在线。输入昵称、完整手机号或邮箱搜索并添加好友。`} onClose={() => setModal(null)} className="contacts-dialog">
+      <div className="account-tabs contacts-tabs" role="tablist" aria-label="通讯录分类">
+        <button type="button" role="tab" aria-selected={activeContactTab === 'friends'} className={`secondary-button ${activeContactTab === 'friends' ? 'selected' : ''}`} onClick={() => setContactTab('friends')}>好友<small>{friendUsers.length}</small></button>
+        <button type="button" role="tab" aria-selected={activeContactTab === 'requests'} className={`secondary-button ${activeContactTab === 'requests' ? 'selected' : ''}`} onClick={() => setContactTab('requests')}>好友申请{pendingFriendCount > 0 && <span className="unread-badge">{pendingFriendCount > 99 ? '99+' : pendingFriendCount}</span>}</button>
+        {canViewUserList && <button type="button" role="tab" aria-selected={activeContactTab === 'all'} className={`secondary-button ${activeContactTab === 'all' ? 'selected' : ''}`} onClick={() => setContactTab('all')}>用户列表<small>{state.users.filter(user => !user.removed && !user.bot).length}</small></button>}
+      </div>
+      {activeContactTab === 'requests' ? <div className="space-members friend-requests-panel">
+        <section aria-label="收到的申请">
+          <h4 className="contacts-group">收到的申请<small>{friendRequests.incoming.length}</small></h4>
+          {friendRequests.incoming.length > 0 ? friendRequests.incoming.map(item => <div className="friend-request-row" key={item.id}>
+            <button type="button" className="friend-request-person" onClick={event => openProfile(item.user, event.currentTarget)}>
+              <Avatar user={item.user} size={36} />
+              <span><b>{item.user.name}</b><small>{item.note || '申请添加你为好友'}</small><small className="friend-request-time">{formatRequestTime(item.updatedAt)}</small></span>
+            </button>
+            <div className="friend-request-actions">
+              {item.status === 'pending' ? <>
+                <button type="button" className="text-button danger-text" disabled={friendBusy === item.id} onClick={() => respondFriend(item.id, 'reject')}>拒绝</button>
+                <button type="button" className="primary-button friend-inline-btn" disabled={friendBusy === item.id} onClick={() => respondFriend(item.id, 'accept')}>同意</button>
+              </> : item.status === 'accepted' && friendSet.has(item.fromUserId)
+                ? <button type="button" className="secondary-button friend-inline-btn" onClick={() => directMessage(userMap[item.fromUserId] || item.user)}>发消息</button>
+                : <span className="friend-status-tag">{item.status === 'accepted' ? '已同意' : '已拒绝'}</span>}
+            </div>
+          </div>) : <p className="inline-note">暂无收到的好友申请</p>}
+        </section>
+        <section aria-label="发出的申请">
+          <h4 className="contacts-group">发出的申请<small>{friendRequests.outgoing.length}</small></h4>
+          {friendRequests.outgoing.length > 0 ? friendRequests.outgoing.map(item => <div className="friend-request-row" key={item.id}>
+            <button type="button" className="friend-request-person" onClick={event => openProfile(item.user, event.currentTarget)}>
+              <Avatar user={item.user} size={36} />
+              <span><b>{item.user.name}</b><small>{item.note || '已发送好友申请'}</small><small className="friend-request-time">{formatRequestTime(item.updatedAt)}</small></span>
+            </button>
+            <div className="friend-request-actions">
+              {item.status === 'pending' ? <>
+                <span className="friend-status-tag">等待验证</span>
+                <button type="button" className="text-button" disabled={friendBusy === item.id} onClick={() => cancelFriend(item.id)}>撤回</button>
+              </> : item.status === 'accepted' && friendSet.has(item.toUserId)
+                ? <button type="button" className="secondary-button friend-inline-btn" onClick={() => directMessage(userMap[item.toUserId] || item.user)}>发消息</button>
+                : <>
+                  <span className="friend-status-tag">{item.status === 'accepted' ? '已通过' : item.status === 'rejected' ? '已拒绝' : '已取消'}</span>
+                  {!friendSet.has(item.toUserId) && !pendingOutgoingMap.has(item.toUserId) && <button type="button" className="text-button" onClick={() => setRequestingFriend(item.user)}>重新申请</button>}
+                </>}
+            </div>
+          </div>) : <p className="inline-note">暂无发出的好友申请</p>}
+        </section>
+      </div> : <>
+        <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus aria-label="搜索用户" placeholder="搜索昵称、完整手机号或邮箱" value={contactQuery} onChange={event => setContactQuery(event.target.value)} />{contactQuery && <IconButton icon={X} label="清空搜索" size={14} onClick={() => setContactQuery('')} />}</label>
+        <div className="space-members">{contactQuery.trim()
+          ? contactSearch.users.filter(user => user.id !== state.me.id).map(user => renderUserSearchRow(user))
+          : contactGroups.map(([department, members]) => <section key={department} aria-label={department}><h4 className="contacts-group">{department}<small>{members.length}</small></h4>{members.map(user => memberRow(user, 32, false, true))}</section>)}
+          {contactSearch.error ? <p className="form-error" role="alert">{contactSearch.error}</p> : contactSearch.loading ? <p className="history-empty">正在搜索用户…</p> : (contactQuery.trim() ? !contactSearch.users.some(user => user.id !== state.me.id) : !contactGroups.length) && <p className="history-empty">{contactQuery.trim() ? `没有找到「${contactQuery.trim()}」` : activeContactTab === 'all' ? '还没有其他成员' : '还没有好友，在上方搜索昵称、完整手机号或邮箱添加好友'}</p>}</div>
+      </>}
       <div className="modal-footer"><button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请新同事</button></div></Modal>}
     {preview && !privateMode && (() => {
       // 没揭开的剧透图不进左右翻页。
@@ -1455,14 +1617,32 @@ export default function App() {
     })()}
     {removing && <LazyModal title="移除成员" onClose={() => setRemoving(null)}><RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} /></LazyModal>}
     {/* 从通讯录等弹窗里打开时，资料卡要挂在弹窗里面，否则会被弹窗挡住 */}
-    {profileCard && userMap[profileCard.userId] && createPortal(<ProfileCard key={profileCard.userId} user={userMap[profileCard.userId]} anchor={profileCard} self={profileCard.userId === state.me.id} onClose={closeProfile}
-      note={state.notes?.[profileCard.userId] || ''} onSaveNote={note => saveNote(userMap[profileCard.userId], note)}
-      onMessage={() => { setProfileCard(null); directMessage(userMap[profileCard.userId]); }} onSetStatus={() => { setProfileCard(null); setModal('status'); }}
-      groupNickname={nicknames[profileCard.userId]}
-      groupActions={room && room.kind !== 'direct' && profileCard.userId !== state.me.id && room.members.includes(profileCard.userId) ? groupActionsFor(userMap[profileCard.userId])
-        : canManageRoomBots && (room.bots || []).includes(profileCard.userId) ? [{ label: '移出机器人', danger: true, action: () => { setProfileCard(null); setGroupAction({ type: 'removeBot', user: userMap[profileCard.userId] }); } }] : []}
-      onSetDepartment={(cloud ? isAdmin : isOwner) && profileCard.userId !== state.me.id && !userMap[profileCard.userId].bot ? async department => { try { await api('admin/department', { userId: profileCard.userId, department }); notify('部门已更新'); } catch (error) { notify(error.message); throw error; } } : undefined}
-      onNudge={room && !userMap[profileCard.userId].bot && !peer?.bot && room.members.includes(profileCard.userId) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onShare={userMap[profileCard.userId].bot ? undefined : () => { setProfileCard(null); setSharingCard(userMap[profileCard.userId]); }} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, [...document.querySelectorAll('dialog[open]')].at(-1) || document.body)}
+    {profileCard && (() => {
+      const cardUser = userMap[profileCard.userId] || profileCard.user;
+      if (!cardUser) return null;
+      const cardSelf = cardUser.id === state.me.id;
+      const cardRelation = relationOf(cardUser);
+      const cardCanMessage = !cardSelf && canDirectUser(cardUser);
+      const cardVisible = canViewUserList || Boolean(userMap[cardUser.id]);
+      const cardIncomingId = pendingIncomingMap.get(cardUser.id)?.id || (cardRelation === 'pending_incoming' ? cardUser.requestId : null);
+      const cardOutgoingId = pendingOutgoingMap.get(cardUser.id)?.id || (cardRelation === 'pending_outgoing' ? cardUser.requestId : null);
+      return createPortal(<ProfileCard key={cardUser.id} user={cardUser} anchor={profileCard} self={cardSelf} onClose={closeProfile}
+        note={state.notes?.[cardUser.id] || ''} onSaveNote={cardVisible && !cardSelf ? note => saveNote(cardUser, note) : undefined}
+        onMessage={cardCanMessage ? () => { setProfileCard(null); directMessage(cardUser); } : undefined}
+        friendRelation={cardRelation}
+        onAddFriend={!cardSelf && !cardUser.bot && cardRelation === 'none' ? () => { setProfileCard(null); setRequestingFriend(cardUser); } : undefined}
+        onAcceptFriend={!cardSelf && !cardUser.bot && cardRelation === 'pending_incoming' && cardIncomingId ? () => { setProfileCard(null); respondFriend(cardIncomingId, 'accept'); } : undefined}
+        onCancelFriendRequest={!cardSelf && !cardUser.bot && cardRelation === 'pending_outgoing' && cardOutgoingId ? () => { setProfileCard(null); cancelFriend(cardOutgoingId); } : undefined}
+        onRemoveFriend={!cardSelf && !cardUser.bot && cardRelation === 'friend' ? () => { setProfileCard(null); setRemovingFriend(cardUser); } : undefined}
+        onSetStatus={() => { setProfileCard(null); setModal('status'); }}
+        groupNickname={nicknames[cardUser.id]}
+        groupActions={room && room.kind !== 'direct' && !cardSelf && room.members.includes(cardUser.id) ? groupActionsFor(cardUser)
+          : canManageRoomBots && (room.bots || []).includes(cardUser.id) ? [{ label: '移出机器人', danger: true, action: () => { setProfileCard(null); setGroupAction({ type: 'removeBot', user: cardUser }); } }] : []}
+        onSetDepartment={(cloud ? isAdmin : isOwner) && !cardSelf && !cardUser.bot ? async department => { try { await api('admin/department', { userId: cardUser.id, department }); notify('部门已更新'); } catch (error) { notify(error.message); throw error; } } : undefined}
+        onNudge={room && !cardUser.bot && !peer?.bot && canChatWithPeer && room.members.includes(cardUser.id) && !state.me.muted ? () => { setProfileCard(null); nudge(cardUser); } : undefined}
+        onShare={cardUser.bot || !cardVisible ? undefined : () => { setProfileCard(null); setSharingCard(cardUser); }}
+        onEdit={() => { setProfileCard(null); setModal('profile'); }} />, [...document.querySelectorAll('dialog[open]')].at(-1) || document.body);
+    })()}
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id && !user.bot)} onClose={closeReadDetail}
       onOpenProfile={(user, element) => { openProfile(user, element); setReadDetail(null); }} />}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}
@@ -1526,10 +1706,10 @@ export default function App() {
           if (part && !quotable(quoting.text, part.slice(0, 500))) return notify('选中的文字里有剧透，不能引用；换一段，或者不选、引用整条');
           setEditing(null); setReplying({ roomId: quoting.roomId, id: quoting.id, quote: part.slice(0, 500) }); setQuoting(null); }}>引用</button></div>
     </Modal>}
-    {incomingShare && <LazyModal title="发送到…" onClose={() => setIncomingShare(null)}><ShareTargetDialog share={incomingShare} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setIncomingShare(null)}
+    {incomingShare && <LazyModal title="发送到…" onClose={() => setIncomingShare(null)}><ShareTargetDialog share={incomingShare} rooms={rooms.filter(target => !target.hidden && canChatInRoom(target))} icon={target => roomIcon(target, 32)} onClose={() => setIncomingShare(null)}
       onPick={target => { const share = incomingShare; setIncomingShare(null); openRoom(target.id); setMobileChat(true); setInjectShare({ roomId: target.id, text: share.text, files: share.files, nonce: Date.now() }); }} /></LazyModal>}
     {filePreview && <TextPreviewDialog file={filePreview} onClose={() => setFilePreview(null)} />}
-    {sharingCard && <LazyModal title="推荐名片" onClose={() => setSharingCard(null)}><ForwardDialog count={1} title={`推荐「${displayUser(sharingCard)?.name || sharingCard.name}」的名片`} subtitle="对方点开名片就能看到资料卡、发起私聊。" rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setSharingCard(null)}
+    {sharingCard && <LazyModal title="推荐名片" onClose={() => setSharingCard(null)}><ForwardDialog count={1} title={`推荐「${displayUser(sharingCard)?.name || sharingCard.name}」的名片`} subtitle="对方点开名片就能看到资料卡、添加好友或发起私聊。" rooms={rooms.filter(target => !target.hidden && canChatInRoom(target))} icon={target => roomIcon(target, 32)} onClose={() => setSharingCard(null)}
       onForward={async (targets, _merge, comment) => {
         const failed = [];
         for (const target of targets) {
@@ -1544,7 +1724,7 @@ export default function App() {
         if (failed.length === targets.length) throw new Error(failed.join('；'));
         notify(failed.length ? `已推荐到 ${targets.length - failed.length} 个会话；${failed.join('；')}` : '名片已发送');
       }} /></LazyModal>}
-    {forwarding && <LazyModal title="转发消息" onClose={() => setForwarding(null)}><ForwardDialog count={forwarding.length} initialMerge={forwardMerge} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} /></LazyModal>}
+    {forwarding && <LazyModal title="转发消息" onClose={() => setForwarding(null)}><ForwardDialog count={forwarding.length} initialMerge={forwardMerge} rooms={rooms.filter(target => !target.hidden && canChatInRoom(target))} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} /></LazyModal>}
     {editingFolder && <LazyModal title={editingFolder === 'new' ? '新建文件夹' : '编辑文件夹'} onClose={() => setEditingFolder(null)}><FolderDialog folder={editingFolder === 'new' ? null : editingFolder} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 28)}
       onSave={(name, roomIds) => saveFolder(editingFolder === 'new' ? null : editingFolder, name, roomIds)} onDelete={() => deleteFolder(editingFolder)} onClose={() => setEditingFolder(null)} /></LazyModal>}
     {modal === 'status' && <LazyModal title="设置状态" onClose={() => setModal(null)}><StatusDialog status={activeStatus(userMap[state.me.id])} notify={notify} onClose={() => setModal(null)} /></LazyModal>}
@@ -1554,6 +1734,8 @@ export default function App() {
       syncHistory([message]); notify('消息已撤回');
       if (recalling.text?.trim() && !recalling.burn) { setRecalledTexts(previous => ({ ...previous, [message.id]: { text: recalling.text } })); setTimeout(() => forgetRecalled(message.id), 10 * 60000); }
     }} /></LazyModal>}
+    {requestingFriend && <LazyModal title="添加好友" onClose={() => setRequestingFriend(null)}><FriendRequestDialog user={requestingFriend} onClose={() => setRequestingFriend(null)} onSent={async result => { await refresh(); notify(result.autoAccepted ? `已与「${requestingFriend.name}」成为好友，现在可以开始私聊` : `已向「${requestingFriend.name}」发送好友申请`); }} /></LazyModal>}
+    {removingFriend && <LazyModal title="删除好友" onClose={() => setRemovingFriend(null)}><ConfirmDialog title={`删除好友「${removingFriend.name}」？`} subtitle="删除后将无法继续发送私聊消息，原有聊天记录会保留。重新添加好友后可恢复私聊。" confirmLabel="删除好友" busyLabel="正在删除…" danger onConfirm={async () => { await api('friends/remove', { userId: removingFriend.id }); await refresh(); notify(`已删除好友「${removingFriend.name}」`); }} onClose={() => setRemovingFriend(null)} /></LazyModal>}
     {['arcade', 'arcade-joined'].includes(modal) && !appLock.locked && <LazyModal title="游戏厅" onClose={() => setModal(null)} fallback={<Modal title="游戏厅" onClose={() => setModal(null)}><p role="status">正在打开游戏厅…</p></Modal>}><Arcade me={state.me} connected={connected} enterTable={modal === 'arcade-joined'} onClose={() => setModal(null)} /></LazyModal>}
     {!popoutRoom && <ArcadeInvitation userId={state.me.id} hidden={appLock.locked} onOpen={() => setModal('arcade-joined')} />}
     {toastElement}
