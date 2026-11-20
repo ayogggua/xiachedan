@@ -51,10 +51,11 @@ export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, them
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
   const open = id => { setTab(id); setPaneOpen(true); sessionStorage.setItem('linliao.settingsTab', id); };
+  const myStatus = activeStatus(me);
   const panes = {
     account: <>
       <div className="settings-profile"><Avatar user={me} size={52} /><span><b>{me.name}</b><small>{cloud ? me.phone || me.email : '局域网成员'}</small></span></div>
-      {onSetStatus && <SettingRow title="状态" description={activeStatus(me) ? `${activeStatus(me).emoji} ${activeStatus(me).text}` : '让同事知道你在忙什么，比如开会、休假。'}><button type="button" className="secondary-button" onClick={onSetStatus}>{activeStatus(me) ? '修改' : '设置'}</button></SettingRow>}
+      {onSetStatus && <SettingRow title="状态" description={myStatus ? [myStatus.emoji, myStatus.text].filter(Boolean).join(' ') : '让同事知道你在忙什么，比如开会、休假。'}><button type="button" className="secondary-button" onClick={onSetStatus}>{myStatus ? '修改' : '设置'}</button></SettingRow>}
       <div className="account-actions">
         <button type="button" className="secondary-button" onClick={onEditProfile}><PencilLine size={15} />编辑资料</button>
         {cloud && <button type="button" className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button>}
