@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 const worker = readFileSync(new URL('../src/pwa/worker.js', import.meta.url), 'utf8');
 const icons = [192, 512].map(size => ({ src: `/icons/app-${size}.png`, sizes: `${size}x${size}`, type: 'image/png', purpose: 'any maskable' }));
 
+const capacitorChunk = entry => {
+  if (entry?.type !== 'chunk' || entry.isEntry) return false;
+  const ids = (entry.moduleIds || []).filter(id => !id.startsWith('\0'));
+  return ids.length > 0 && ids.every(id => /[\\/]node_modules[\\/](@capacitor[\\/]|@aparajita[\\/]capacitor-)/.test(id));
+};
+
 export default function pwa() {
   return {
     name: 'xiachedan-pwa',
@@ -30,7 +36,7 @@ export default function pwa() {
       }, null, 2);
       const files = [...new Set(['/index.html', '/manifest.webmanifest', '/icons/apple-touch-icon.png',
         // Game sounds load on use, so opening chat does not download the sound bank.
-        ...icons.map(icon => icon.src), ...Object.keys(bundle).filter(file => !/\.(?:map|wav)$/.test(file)).map(file => `/${file}`)])].sort();
+        ...icons.map(icon => icon.src), ...Object.entries(bundle).filter(([file, entry]) => !/\.(?:map|wav)$/.test(file) && !capacitorChunk(entry)).map(([file]) => `/${file}`)])].sort();
       const hash = createHash('sha256').update(JSON.stringify(files)).update(manifest).update(worker)
         .update(String(bundle['index.html']?.source || ''));
       for (const icon of [...icons.map(icon => icon.src), '/icons/apple-touch-icon.png']) hash.update(readFileSync(new URL(`../public${icon}`, import.meta.url)));

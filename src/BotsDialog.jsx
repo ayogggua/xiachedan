@@ -76,7 +76,7 @@ export function BotsDialog({ notify, onClose, onChanged }) {
     setFocusKey(null);
   }, [view, focusKey, bots, confirm]);
   const openForm = key => { setFocusKey(key === 'new' ? 'new' : `edit:${key}`); setView(key); };
-  const load = () => api('bots').then(result => setBots(result.bots)).catch(failure => setError(failure.message));
+  const load = () => { setError(''); return api('bots').then(result => { setBots(result.bots); setError(''); }).catch(failure => setError(failure.message)); };
   useEffect(() => { load(); }, []);
   async function run(key, action) {
     setBusy(key); setError('');
@@ -99,8 +99,8 @@ export function BotsDialog({ notify, onClose, onChanged }) {
       notify(editing ? '机器人已更新' : '机器人已创建'); setView('list'); await load(); await onChanged?.();
     }} /> : <>
     {issued && <Credentials issued={issued} notify={notify} onDone={() => setIssued(null)} />}
-    {error && <p className="form-error" role="alert">{error}</p>}
-    {!bots ? <p className="inline-note">正在加载…</p> : !bots.length ? <p className="inline-note">还没有机器人。</p> : <ul className="bot-list">{bots.map(bot => <li key={bot.id} className="bot-item">
+    {error && <div className="inline-error-row" role="alert"><p className="form-error">{error}</p><button type="button" className="secondary-button" onClick={load}>重试</button></div>}
+    {!bots ? (!error && <p className="inline-note">正在加载…</p>) : !bots.length ? <p className="inline-note">还没有机器人。</p> : <ul className="bot-list">{bots.map(bot => <li key={bot.id} className="bot-item">
       <Avatar user={bot} size={36} />
       <div className="bot-info">
         <b>{bot.name}</b>

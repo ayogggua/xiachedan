@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, LoaderCircle, Server, RefreshCw } from 'lucide-react';
 import App from '../App';
 import { api } from '../api';
+import { writeStorage } from '../storage';
 import { Logo } from '../components';
 import { initializeSession, clearSession, hasMobileSession, mobileClient, mobilePlatform, serverOrigin, validateServer } from './session';
 import { initializeNative, setupViewport } from './runtime';
@@ -54,7 +55,8 @@ export default function MobileRoot() {
       const data = await response.json();
       if (!response.ok || data.app !== 'linliao' || data.mode !== 'cloud') throw new Error('这个地址不是可用的聊天服务器');
       if (!data.mobile) throw new Error('服务器尚未启用移动端，请先更新服务端');
-      localStorage.setItem('linliao.mobile.server', origin); location.reload();
+      if (!writeStorage('linliao.mobile.server', origin)) throw new Error('无法保存服务器地址，请检查本机存储空间');
+      location.reload();
     } catch (error) { setError(error.name === 'AbortError' ? '连接超时，请检查地址和网络' : error instanceof TypeError ? '无法连接，请检查服务器地址和网络' : error.message); }
     finally { setBusy(false); }
   }

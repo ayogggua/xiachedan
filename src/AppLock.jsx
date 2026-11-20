@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Lock, LogOut } from 'lucide-react';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 import { Logo } from './components';
 
 // 应用锁：闲置一段时间或切到后台太久后挡住整个界面，输入本机密码才能继续看。
@@ -8,9 +9,12 @@ import { Logo } from './components';
 const KEY = 'linliao.appLock';
 // 忘记密码时先退出登录；确认已经退出后（下次打开是登录页）才清掉应用锁，退出失败时锁照旧。
 const RESET_KEY = 'linliao.appLockReset';
+const removeStorage = key => { try { localStorage.removeItem(key); } catch {} };
 export function finishLockReset(loggedIn, appLock) {
-  if (loggedIn || !localStorage.getItem(RESET_KEY)) return;
-  localStorage.removeItem(RESET_KEY);
+  let pending = false;
+  try { pending = Boolean(localStorage.getItem(RESET_KEY)); } catch {}
+  if (loggedIn || !pending) return;
+  removeStorage(RESET_KEY);
   appLock.disable();
 }
 export const LOCK_TIMEOUTS = [[1, '1 分钟'], [5, '5 分钟'], [15, '15 分钟'], [60, '1 小时']];
@@ -43,13 +47,13 @@ export function useAppLock() {
     touch();
     return () => { clearInterval(timer); for (const name of events) window.removeEventListener(name, touch); document.removeEventListener('visibilitychange', visibility); };
   }, [config, locked]);
-  const save = next => { if (next) localStorage.setItem(KEY, JSON.stringify(next)); else localStorage.removeItem(KEY); setConfig(next); };
+  const save = next => { if (next) writeStorage(KEY, JSON.stringify(next)); else removeStorage(KEY); setConfig(next); };
   const enable = async (password, minutes) => {
     const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
     save({ salt, hash: await digest(password, salt), minutes });
   };
   const verify = async password => Boolean(config) && await digest(password, config.salt) === config.hash;
-  const unlock = async password => { if (!await verify(password)) return false; localStorage.removeItem(RESET_KEY); lastActive.current = Date.now(); setLocked(false); return true; };
+  const unlock = async password => { if (!await verify(password)) return false; removeStorage(RESET_KEY); lastActive.current = Date.now(); setLocked(false); return true; };
   return { enabled: Boolean(config), minutes: config?.minutes || 5, locked: locked && Boolean(config), lock, unlock, verify, enable,
     setMinutes: minutes => config && save({ ...config, minutes }), disable: () => { save(null); setLocked(false); } };
 }
@@ -58,8 +62,26 @@ export function LockScreen({ appLock, onLogout, loggingOut }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const dialogRef = useRef(null);
   const input = useRef(null);
-  useEffect(() => { input.current?.focus(); }, []);
+  const mounted = useRef(true);
+  const lockedRef = useRef(appLock.locked);
+  lockedRef.current = appLock.locked;
+  useEffect(() => {
+    mounted.current = true;
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+    input.current?.focus();
+    const onKeyDown = event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      mounted.current = false;
+      window.removeEventListener('keydown', onKeyDown, true);
+      if (el?.open) el.close();
+    };
+  }, []);
   async function submit(event) {
     event.preventDefault();
     if (!password || busy) return;
@@ -70,14 +92,21 @@ export function LockScreen({ appLock, onLogout, loggingOut }) {
     setBusy(false);
     if (!ok) input.current?.focus();
   }
-  return <div className="lock-screen" role="dialog" aria-modal="true" aria-label="虾扯蛋已锁定">
+  return <dialog ref={dialogRef} className="lock-screen" closedby="none" aria-label="虾扯蛋已锁定"
+    onCancel={event => { event.preventDefault(); event.stopPropagation(); }}
+    onClose={() => {
+      if (mounted.current && lockedRef.current && dialogRef.current && !dialogRef.current.open) {
+        dialogRef.current.showModal();
+        input.current?.focus();
+      }
+    }}>
     <form className="lock-card" onSubmit={submit}>
       <Logo />
       <h2><Lock size={16} />虾扯蛋已锁定</h2>
       <input ref={input} type="password" aria-label="应用锁密码" placeholder="输入密码解锁" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <button className="primary-button full" disabled={!password || busy}>解锁</button>
-      <button type="button" className="text-button" disabled={loggingOut} onClick={() => { localStorage.setItem(RESET_KEY, '1'); onLogout(); }}><LogOut size={13} />忘记密码？退出登录</button>
+      <button type="button" className="text-button" disabled={loggingOut} onClick={() => { writeStorage(RESET_KEY, '1'); onLogout(); }}><LogOut size={13} />忘记密码？退出登录</button>
     </form>
-  </div>;
+  </dialog>;
 }

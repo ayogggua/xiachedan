@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef } from 'react';
 import { chipLayout, createChipPile, createMovingChip, paintChipPile } from './pokerChips';
 import { advanceChips, chipLaunchOffsets, createChipParticle } from './chipPhysics';
 
-// 动画读取真实牌桌布局，手机端和换座后仍从荷官发到对应位置。状态始终以服务端为准。
+// 动画读取真实牌桌布局，手机端和换座后仍从发牌靴发到对应位置。状态始终以服务端为准。
 export default function useTableMotion(table, stage, visible, onSound, onStopSound) {
   const cursor = useRef(null);
   const sound = useRef(onSound); sound.current = onSound;
@@ -127,14 +127,53 @@ export default function useTableMotion(table, stage, visible, onSound, onStopSou
       return;
     }
     const animate = (node, frames, options, done) => {
+      if (!node?.animate) { done?.(); return; }
       const animation = node.animate(frames, options); state.animations.add(animation);
       animation.onfinish = () => { state.animations.delete(animation); done?.(); animation.cancel(); };
     };
     const remove = node => { state.nodes.delete(node); node.remove(); };
-    const pulse = (node, delay) => { if (node) later(delay, () => animate(node, [{ transform: 'scale(1)' }, { transform: 'scale(1.1)' }, { transform: 'scale(1)' }], { duration: 240, easing: 'ease-out' })); };
+    const pulse = (node, delay, peak = 1.1) => {
+      if (node) later(delay, () => animate(node, [
+        { transform: 'scale(1)' },
+        { transform: `scale(${peak})`, offset: .45 },
+        { transform: 'scale(0.98)', offset: .78 },
+        { transform: 'scale(1)' },
+      ], { duration: 300, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }));
+    };
+    const spawnRipple = (target, variant = 'bet', size = 64) => {
+      const point = target?.x !== undefined ? target : center(target);
+      if (!point) return;
+      const ring = document.createElement('span');
+      ring.className = `motion-ripple is-${variant}`;
+      ring.setAttribute('aria-hidden', 'true');
+      Object.assign(ring.style, {
+        width: `${size}px`,
+        height: `${size}px`,
+        left: `${point.x - size / 2}px`,
+        top: `${point.y - size / 2}px`,
+      });
+      layer.append(ring); state.nodes.add(ring);
+      const duration = variant === 'win' ? 680 : variant === 'pot' ? 540 : 440;
+      const endScale = variant === 'win' ? 1.85 : variant === 'pot' ? 1.65 : 1.48;
+      animate(ring, [
+        { transform: 'scale(0.55)', opacity: .88 },
+        { transform: `scale(${endScale * .78})`, opacity: .45, offset: .52 },
+        { transform: `scale(${endScale})`, opacity: 0 },
+      ], { duration, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' }, () => remove(ring));
+    };
+    const sweepGlint = cardNode => {
+      const glint = cardNode?.querySelector('.card-glint');
+      if (!glint) return;
+      animate(glint, [
+        { transform: 'translate3d(-135%, 0, 0) skewX(-22deg)', opacity: 0 },
+        { transform: 'translate3d(-15%, 0, 0) skewX(-22deg)', opacity: .92, offset: .42 },
+        { transform: 'translate3d(135%, 0, 0) skewX(-22deg)', opacity: 0 },
+      ], { duration: 480, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+    };
     const pitch = (target, delay, index) => {
       if (!target) return;
       const end = center(target);
+      if (!end) return;
       target.style.visibility = 'hidden'; state.hidden.add(target);
       const card = deck.cloneNode(true);
       card.classList.add('flying-card'); card.removeAttribute('aria-label'); card.setAttribute('aria-hidden', 'true');
@@ -144,20 +183,36 @@ export default function useTableMotion(table, stage, visible, onSound, onStopSou
       later(delay, () => {
         card.style.visibility = '';
         cue('deal', target);
-        const spin = (end.x < origin.x ? -1 : 1) * (25 + index % 3 * 7);
+        const spin = (end.x < origin.x ? -1 : 1) * (28 + index % 3 * 8);
+        const arcLift = Math.min(44, Math.max(24, Math.hypot(end.x - origin.x, end.y - origin.y) * 0.1));
         animate(card, [
-          { transform: at(origin, spin, .55), opacity: .4 },
-          { transform: at({ x: origin.x + (end.x - origin.x) * .62, y: origin.y + (end.y - origin.y) * .62 - 28 }, spin * -.35, 1.04), opacity: 1, offset: .58 },
-          { transform: at({ x: end.x + 2, y: end.y + 3 }, 2), opacity: 1, offset: .88 },
-          { transform: at(end, 0), opacity: 1 },
-        ], { duration: 420, easing: 'cubic-bezier(.18,.72,.3,1)', fill: 'forwards' }, () => {
+          { transform: at(origin, spin, .56), opacity: .45 },
+          { transform: at({ x: origin.x + (end.x - origin.x) * .56, y: origin.y + (end.y - origin.y) * .56 - arcLift }, spin * -.32, 1.07), opacity: 1, offset: .56 },
+          { transform: at({ x: end.x + 1.5, y: end.y + 2.5 }, 1.8, 1.01), opacity: 1, offset: .87 },
+          { transform: at(end, 0, 1), opacity: 1 },
+        ], { duration: 410, easing: 'cubic-bezier(.16,.76,.28,1)', fill: 'forwards' }, () => {
           target.style.visibility = ''; state.hidden.delete(target); remove(card);
           const back = target.classList.contains('back');
           const boardCard = target.hasAttribute('data-board-index');
           const boardIndex = Number(target.dataset.boardIndex);
           cue(boardCard ? 'board-land' : 'card-land', target, { sequence: boardCard && boardIndex < 3 ? boardIndex + 1 : 0 });
-          if (boardCard) later(50, () => cue('flip', target));
-          animate(target.querySelector('.poker-card-face'), back ? [{ transform: 'translateY(2px)' }, { transform: 'translateY(0)' }] : [{ transform: 'rotateY(-85deg)' }, { transform: 'rotateY(0deg)' }], { duration: back ? 100 : 180, easing: 'ease-out' });
+          if (boardCard) {
+            later(50, () => cue('flip', target));
+            spawnRipple(end, 'board', Math.max(end.w, end.h) * 1.15);
+          }
+          const face = target.querySelector('.poker-card-face');
+          animate(face, back
+            ? [
+              { transform: 'translate3d(0, 2px, 0) scale(0.96)' },
+              { transform: 'translate3d(0, 0, 0) scale(1)' },
+            ]
+            : [
+              { transform: 'perspective(900px) rotateY(-88deg) scale(0.94)' },
+              { transform: 'perspective(900px) rotateY(7deg) scale(1.03)', offset: .72 },
+              { transform: 'perspective(900px) rotateY(0deg) scale(1)' },
+            ],
+          { duration: back ? 125 : 270, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+          () => { if (!back) sweepGlint(target); });
         });
       });
     };
@@ -278,9 +333,9 @@ export default function useTableMotion(table, stage, visible, onSound, onStopSou
       return packet;
     };
     let delay = Math.max(0, state.until - performance.now());
+    const machine = root.querySelector('.poker-dealer-machine');
     for (const event of next) {
       if (event.type === 'deal') {
-        const machine = root.querySelector('.poker-dealer-machine');
         later(delay, () => { if (machine) machine.dataset.dealing = 'true'; });
         for (let round = 0; round < 2; round++) event.seats.forEach((id, i) => pitch(seat(id)?.querySelector(`[data-card-index="${round}"]`), delay + (round * event.seats.length + i) * 95, i));
         delay += event.seats.length * 2 * 95 + 500;
@@ -289,7 +344,13 @@ export default function useTableMotion(table, stage, visible, onSound, onStopSou
         const level = betLevel(event.amount);
         const target = bet(event.seat), before = Math.max(0, valueAt(target)); adjust(target, event.amount);
         const packet = chips(stack(event.seat), target, event.amount, delay, 'bet', event.amount, before, before + event.amount);
-        if (packet) packet.betLevel = level;
+        if (packet) {
+          packet.betLevel = level;
+          packet.onFinish = () => {
+            spawnRipple(target, 'bet', 66);
+            pulse(target?.closest('[data-bet-anchor]')?.querySelector('b'), 0, 1.14);
+          };
+        }
         delay += 180;
       }
       else if (event.type === 'collect') {
@@ -301,38 +362,76 @@ export default function useTableMotion(table, stage, visible, onSound, onStopSou
           if (packet) group.push(packet);
         });
         let started = false, completed = 0;
+        const potBadge = root.querySelector('.poker-pot');
         for (const packet of group) {
           packet.onBegin = () => { if (!started) { started = true; cue('collect', pot, { count: group.length }); } };
-          packet.onFinish = () => cue('collect-end', pot, { sequence: ++completed });
+          packet.onFinish = () => {
+            cue('collect-end', pot, { sequence: ++completed });
+            if (completed === group.length) {
+              spawnRipple(pot, 'pot', 92);
+              pulse(potBadge, 0, 1.12);
+            }
+          };
         }
-        delay += 650 + Math.max(0, event.bets.length - 1) * 80; pulse(root.querySelector('.poker-pot'), delay);
+        delay += 650 + Math.max(0, event.bets.length - 1) * 80;
+        if (!group.length) pulse(potBadge, delay, 1.1);
       }
       else if (event.type === 'refund') {
         const source = bet(event.seat), before = Math.max(event.amount, valueAt(source)); adjust(source, -event.amount);
         chips(source, stack(event.seat), event.amount, delay, 'refund', before, 0, event.amount); delay += 180;
       }
-      else if (event.type === 'board') { event.indices.forEach((i, n) => pitch(root.querySelector(`[data-board-index="${i}"]`), delay + n * 100, n)); delay += 580 + event.indices.length * 100; }
+      else if (event.type === 'board') {
+        later(delay, () => { if (machine) machine.dataset.dealing = 'true'; });
+        event.indices.forEach((i, n) => pitch(root.querySelector(`[data-board-index="${i}"]`), delay + n * 100, n));
+        const boardEnd = delay + 580 + event.indices.length * 100;
+        later(boardEnd - 120, () => machine?.removeAttribute('data-dealing'));
+        delay = boardEnd;
+      }
       else if (event.type === 'win') {
         event.awards.forEach((item, i) => {
           const before = Math.max(item.amount, valueAt(pot)); adjust(pot, -item.amount);
-          chips(pot, stack(item.seat), item.amount, delay + i * 100, 'win', before, 0, item.amount);
-          pulse(seat(item.seat)?.querySelector('.seat-identity'), delay + i * 100 + 600);
+          const seatNode = seat(item.seat);
+          const packet = chips(pot, stack(item.seat), item.amount, delay + i * 100, 'win', before, 0, item.amount);
+          const celebrate = () => {
+            spawnRipple(seatNode?.querySelector('.seat-person'), 'win', 112);
+            pulse(seatNode?.querySelector('.seat-person'), 0, 1.07);
+            pulse(seatNode?.querySelector('.seat-identity'), 60, 1.06);
+          };
+          if (packet) packet.onFinish = celebrate;
+          else later(delay + i * 100 + 520, celebrate);
         }); delay += 350;
       }
-      else if (event.type === 'check') later(delay, () => cue('check', seat(event.seat)));
+      else if (event.type === 'check') {
+        later(delay, () => {
+          cue('check', seat(event.seat));
+          const person = seat(event.seat)?.querySelector('.seat-person');
+          animate(person, [
+            { transform: 'translate3d(0, 0, 0)' },
+            { transform: 'translate3d(0, 2.5px, 0)', offset: .28 },
+            { transform: 'translate3d(0, 0, 0)', offset: .52 },
+            { transform: 'translate3d(0, 2px, 0)', offset: .76 },
+            { transform: 'translate3d(0, 0, 0)' },
+          ], { duration: 290, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+        });
+      }
       else if (event.type === 'fold') {
         later(delay, () => cue('fold', seat(event.seat)));
         seat(event.seat)?.querySelectorAll('.seat-cards .poker-card').forEach((target, i) => {
-          const from = center(target), card = deck.cloneNode(true);
+          const from = center(target);
+          if (!from) return;
+          const card = deck.cloneNode(true);
           card.classList.add('flying-card'); card.style.animation = 'none'; card.style.visibility = 'hidden';
           Object.assign(card.style, { width: `${from.w}px`, height: `${from.h}px` });
           layer.append(card); state.nodes.add(card);
-          later(delay + i * 45, () => {
+          later(delay + i * 50, () => {
             card.style.visibility = '';
+            const midX = (from.x + origin.x) * .5 + (i ? 14 : -14);
+            const midY = (from.y + origin.y) * .5 - 18;
             animate(card, [
-              { transform: `translate(${from.x - from.w / 2}px,${from.y - from.h / 2}px) rotate(${i ? 8 : -8}deg)`, opacity: 1 },
-              { transform: `translate(${origin.x - from.w / 2 + 30}px,${origin.y - from.h / 2 + 25}px) rotate(-30deg) scale(.65)`, opacity: 0 },
-            ], { duration: 380, easing: 'ease-in', fill: 'both' }, () => remove(card));
+              { transform: `translate3d(${from.x - from.w / 2}px,${from.y - from.h / 2}px,0) rotate(${i ? 8 : -8}deg) scale(1)`, opacity: 1 },
+              { transform: `translate3d(${midX - from.w / 2}px,${midY - from.h / 2}px,0) rotate(${i ? -14 : -22}deg) scale(0.84)`, opacity: .82, offset: .52 },
+              { transform: `translate3d(${origin.x - from.w / 2 + 24}px,${origin.y - from.h / 2 + 18}px,0) rotate(-36deg) scale(0.62)`, opacity: 0 },
+            ], { duration: 400, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'both' }, () => remove(card));
           });
         });
         delay += 230;

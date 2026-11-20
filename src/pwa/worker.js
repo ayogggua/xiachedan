@@ -1,6 +1,32 @@
 const CACHE_NAME = '__PWA_CACHE__';
 const SHELL_FILES = __PWA_FILES__;
 const staticPaths = new Set(SHELL_FILES);
+const SHARE_CACHE = 'xiachedan-share';
+const SHARE_TTL = 60 * 60 * 1000;
+
+async function pruneShares(maxAge = SHARE_TTL) {
+  const cache = await caches.open(SHARE_CACHE);
+  const requests = await cache.keys();
+  if (!requests.length) return;
+  const now = Date.now();
+  const metas = new Set();
+  for (const request of requests) {
+    const match = new URL(request.url).pathname.match(/^\/__share\/([a-z0-9]+)\/meta$/);
+    if (match) metas.add(match[1]);
+  }
+  await Promise.all(requests.map(async request => {
+    const match = new URL(request.url).pathname.match(/^\/__share\/([a-z0-9]+)\/(.+)$/);
+    if (!match || !metas.has(match[1])) { await cache.delete(request); return; }
+    const response = await cache.match(request);
+    let createdAt = Number(response?.headers.get('X-Share-At') || 0);
+    if (!createdAt && match[1].length >= 10) createdAt = parseInt(match[1].slice(0, -4), 36) || 0;
+    if (!createdAt || now - createdAt > maxAge) await cache.delete(request);
+  }));
+}
+
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
 
 self.addEventListener('install', event => {
   // 只保存构建出的界面资源，不保存聊天接口、用户资料或附件。
@@ -10,6 +36,7 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     for (const key of await caches.keys()) if (key.startsWith('xiachedan-shell-') && key !== CACHE_NAME) await caches.delete(key);
+    await pruneShares().catch(() => {});
     await self.clients.claim();
   })());
 });
@@ -57,20 +84,21 @@ self.addEventListener('notificationclick', event => {
 });
 
 // 系统分享菜单发来的文字和文件：先存进缓存，再打开 App 让用户选会话（最多 6 个文件）。
-const SHARE_CACHE = 'xiachedan-share';
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'POST' || url.origin !== self.location.origin || url.pathname !== '/share-target') return;
   event.respondWith((async () => {
-    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const now = Date.now();
+    const id = `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     try {
+      await pruneShares().catch(() => {});
       const form = await event.request.formData();
       const cache = await caches.open(SHARE_CACHE);
       const files = form.getAll('files').filter(file => typeof file === 'object' && file.size > 0).slice(0, 6);
-      const meta = { title: String(form.get('title') || ''), text: String(form.get('text') || ''), url: String(form.get('url') || ''),
+      const meta = { createdAt: now, title: String(form.get('title') || ''), text: String(form.get('text') || ''), url: String(form.get('url') || ''),
         files: files.map((file, index) => ({ name: file.name || `文件${index + 1}`, type: file.type || 'application/octet-stream', key: `/__share/${id}/${index}` })) };
-      await Promise.all(files.map((file, index) => cache.put(meta.files[index].key, new Response(file, { headers: { 'Content-Type': meta.files[index].type } }))));
-      await cache.put(`/__share/${id}/meta`, new Response(JSON.stringify(meta), { headers: { 'Content-Type': 'application/json' } }));
+      await Promise.all(files.map((file, index) => cache.put(meta.files[index].key, new Response(file, { headers: { 'Content-Type': meta.files[index].type, 'X-Share-At': String(now) } }))));
+      await cache.put(`/__share/${id}/meta`, new Response(JSON.stringify(meta), { headers: { 'Content-Type': 'application/json', 'X-Share-At': String(now) } }));
     } catch {}
     return Response.redirect(`/?share=${id}`, 303);
   })());

@@ -1,9 +1,10 @@
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 
 // 本机的勿扰设置：每天固定时段，或临时暂停到某个时间；可以让 @我 的消息照常提醒。
 const KEY = 'linliao.quiet';
 export const readQuiet = () => ({ enabled: false, start: '22:00', end: '08:00', until: 0, mentions: true, ...readStorage(KEY, {}) });
-export const saveQuiet = value => localStorage.setItem(KEY, JSON.stringify(value));
+export const saveQuiet = value => writeStorage(KEY, JSON.stringify(value));
 const minutes = value => { const [hours, mins] = String(value).split(':').map(Number); return hours * 60 + mins; };
 
 export function isQuiet(mentioned = false, now = new Date()) {

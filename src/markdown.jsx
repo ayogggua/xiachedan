@@ -31,11 +31,15 @@ const openMessage = (event, target) => { event.preventDefault(); event.stopPropa
 function Link({ href, children }) {
   if (!href) return children;
   const invite = groupInviteLink(href);
-  if (invite) return <a href={href} className="message-link" title="加入这个群聊" onClick={event => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent('linliao:join-group', { detail: invite })); }}>👥 群聊邀请</a>;
+  if (invite) {
+    const safeHref = `#join-group=${encodeURIComponent(invite.roomId)}.${invite.token}`;
+    return <a href={safeHref} rel="noopener noreferrer" className="message-link" title="加入这个群聊" onClick={event => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent('linliao:join-group', { detail: invite })); }}>👥 群聊邀请</a>;
+  }
   const target = messageLink(href);
   if (!target) return <a href={href} target="_blank" rel="noopener noreferrer" onClick={event => openLink(event, href)}>{children}</a>;
+  const safeHref = `#msg=${encodeURIComponent(target.roomId)}/${encodeURIComponent(target.id)}`;
   const label = React.Children.toArray(children);
-  return <a href={href} className="message-link" title="跳到这条消息" onClick={event => openMessage(event, target)}>{label.length === 1 && label[0] === href ? '🔗 消息链接' : children}</a>;
+  return <a href={safeHref} rel="noopener noreferrer" className="message-link" title="跳到这条消息" onClick={event => openMessage(event, target)}>{label.length === 1 && label[0] === href ? '🔗 消息链接' : children}</a>;
 }
 
 // 文字节点里补上 GFM 认不出的网址（紧贴汉字的网址），并把 @提及标成高亮。
@@ -232,17 +236,27 @@ function components(tailRef) {
 }
 const urlTransform = url => SAFE_URL.test(url) ? url : '';
 
-export function FormattedText({ text, mentions = [], nameOf, viewerId, tail = null }) {
-  const tokens = mentions.map(id => ({ id, self: id === viewerId || id === '*', label: `@${id === '*' ? '所有人' : nameOf?.(id) || ''}` }))
-    .filter(token => token.label.length > 1).sort((a, b) => b.label.length - a.label.length);
+export const FormattedText = React.memo(function FormattedText({ text, mentions = [], nameOf, viewerId, tail = null, mentionVersion = 0 }) {
+  const mentionKey = mentions.length
+    ? mentions.map(id => `${id}:${id === '*' ? '所有人' : nameOf?.(id) || ''}`).join('\0')
+    : '';
+  const tokens = React.useMemo(() => {
+    if (!mentions.length) return [];
+    return mentions.map(id => ({ id, self: id === viewerId || id === '*', label: `@${id === '*' ? '所有人' : nameOf?.(id) || ''}` }))
+      .filter(token => token.label.length > 1).sort((a, b) => b.label.length - a.label.length);
+  }, [mentionKey, viewerId, mentionVersion]);
+  const hasTail = Boolean(tail);
   const tailRef = React.useRef(tail);
   tailRef.current = tail;
   const parts = React.useMemo(() => components(tailRef), []);
+  const remarkPlugins = React.useMemo(
+    () => [[remarkGfm, { singleTilde: false }], remarkCjkFriendly, [remarkChat, { tokens, tail: hasTail, source: text }]],
+    [tokens, hasTail, text],
+  );
   return <div className="message-text markdown">
-    <Markdown remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkCjkFriendly, [remarkChat, { tokens, tail: Boolean(tail), source: text }]]}
-      components={parts} urlTransform={urlTransform}>{text}</Markdown>
+    <Markdown remarkPlugins={remarkPlugins} components={parts} urlTransform={urlTransform}>{text}</Markdown>
   </div>;
-}
+});
 
 // 正文里第一个网页链接（代码里和剧透里的不算），用来显示链接预览。
 export const firstLink = text => [...maskSpoilers(text, ' ').replace(/```[\s\S]*?(```|$)/g, '').replace(/`[^`\n]+`/g, '')

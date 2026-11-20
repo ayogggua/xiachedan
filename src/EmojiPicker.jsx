@@ -1,15 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 import { api, mediaUrl } from './api';
+import { GROUPS } from './emojiShortcodes';
 
 // 输入区的表情面板：常用（本机最近用过的）加几组常见表情，点击插入到光标处。
-export const GROUPS = [
-  ['笑脸', '😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😌 😍 🥰 😘 😋 😛 😜 🤪 😎 🤓 🧐 🤔 🤨 😐 😑 😶 🙄 😏 😬 🤐 😴 😪 😮 😯 😲 🥱 😢 😭 😤 😡 🤯 😳 🥵 🥶 😱 😨 😰 😓 🤗 🤭 🫡 🤫 🤥 😷 🤒 🤕 🥳 🥺 🫠'],
-  ['手势', '👍 👎 👌 ✌️ 🤞 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ ✋ 🤚 🖐️ 🖖 👋 🤝 🙏 👏 🙌 👐 🤲 💪 ✍️ 🫶 👀 🧠'],
-  ['心情', '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 💔 ❣️ 💕 💯 💢 💥 💫 💦 💤 🔥 ✨ 🎉 🎊 🎈 🎁 🏆 🥇 ⭐ 🌟 ☀️ 🌈 ☔'],
-  ['日常', '☕ 🍵 🧋 🍺 🍻 🍰 🎂 🍉 🍎 🍜 🍚 🍔 🍕 🍟 🍗 🥟 🍱 🚗 🚕 🚇 ✈️ 🏠 🏢 💻 ⌨️ 🖥️ 📱 📷 📅 📌 📎 📝 📚 💡 🔔 🔍 🔒 🔑 ⏰ ⏳ 💰 📈 📉 ✅ ❌ ⚠️ ❓ ❗ 🆗 🆕 🚀'],
-].map(([name, list]) => [name, list.split(' ')]);
+export { GROUPS };
 const RECENT_KEY = 'linliao.recentEmoji';
 
 export default function EmojiPicker({ onPick, onSticker, notify, onClose }) {
@@ -29,7 +26,7 @@ export default function EmojiPicker({ onPick, onSticker, notify, onClose }) {
     return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key, true); };
   }, [onClose]);
   function pick(emoji) {
-    localStorage.setItem(RECENT_KEY, JSON.stringify([emoji, ...recent.filter(item => item !== emoji)].slice(0, 16)));
+    writeStorage(RECENT_KEY, JSON.stringify([emoji, ...recent.filter(item => item !== emoji)].slice(0, 16)));
     onPick(emoji);
   }
   const groups = recent.length ? [['常用', recent], ...GROUPS] : GROUPS;

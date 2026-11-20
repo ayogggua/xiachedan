@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 
 // 发件箱：发出的消息先排队，显示在会话底部；断网或服务暂时不可用时留在队列里，连上后按顺序自动重发。
 // 每条消息的 clientId 不变，服务端按它去重，响应丢失后重发也不会出现两条。队列存在本机，重启后继续。
@@ -19,7 +20,7 @@ export default function useOutbox({ storageKey, connected, onSent, onFailed }) {
     setItems(next);
     if (!context.current.key) return;
     // 阅后即焚消息只在内存里排队，不写进本机存储：没发出去就关掉页面，内容不会留在磁盘上。
-    try { localStorage.setItem(context.current.key, JSON.stringify(next.filter(item => !item.payload.burn).map(({ status, error, ...item }) => item))); } catch {}
+    writeStorage(context.current.key, JSON.stringify(next.filter(item => !item.payload.burn).map(({ status, error, ...item }) => item)));
   }, []);
   const patch = useCallback((clientId, change) => commit(context.current.items.map(item => item.clientId === clientId ? { ...item, ...change } : item)), [commit]);
 

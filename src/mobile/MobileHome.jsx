@@ -18,9 +18,9 @@ export function MobileTabs({ tab, onChange, unread }) {
 const departments = users => Object.entries(users.reduce((groups, user) => { (groups[user.bot ? '机器人' : user.department || '未设置部门'] ||= []).push(user); return groups; }, {}))
   .sort(([a], [b]) => (a === '机器人') - (b === '机器人') || (a === '未设置部门') - (b === '未设置部门') || a.localeCompare(b, 'zh-Hans-CN'));
 
-export function MobileHome({ tab, me, users, connected, onDirect, onAction, isAdmin, loggingOut, onLogout }) {
+export function MobileHome({ tab, me, users, notes, connected, onDirect, onAction, isAdmin, loggingOut, onLogout }) {
   const [query, setQuery] = useState('');
-  const search = useUserSearch(users, query, tab === 'contacts');
+  const search = useUserSearch(users, query, tab === 'contacts', notes);
   if (tab === 'chats') return null;
   if (tab === 'contacts') {
     const contacts = search.users.filter(user => user.id !== me.id).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));

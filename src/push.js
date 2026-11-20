@@ -2,6 +2,7 @@
 import { api } from './api';
 import { mobileClient } from './mobile/session';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 
 const KEY = 'linliao.push';
 export const pushSupported = () => import.meta.env.MODE === 'pwa' && !window.desktop && !mobileClient && window.isSecureContext
@@ -26,7 +27,7 @@ async function subscription() {
 
 async function upload(item, settings) {
   const { id } = await api('push/subscribe', { subscription: item.toJSON(), muted: settings.muted, private: settings.private });
-  localStorage.setItem(KEY, JSON.stringify({ id, endpoint: item.endpoint }));
+  writeStorage(KEY, JSON.stringify({ id, endpoint: item.endpoint }));
   return id;
 }
 

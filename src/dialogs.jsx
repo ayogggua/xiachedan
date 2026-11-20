@@ -3,10 +3,13 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Camera, Check, Search, Users, Hash, ArrowRight, Copy, Bot, Rows3, MessagesSquare } from 'lucide-react';
 import { api, upload, absoluteUrl, mediaUrl, formatTime } from './api';
 import { FormattedText } from './markdown';
-import { Modal, Avatar, AvatarPicker, IdentityFields, FileCard, Attachment, nameColor, SpoilerBadge, coveredMedia, revealedMedia } from './components';
+import { Modal, LazyModal, Avatar, AvatarPicker, IdentityFields, FileCard, Attachment, nameColor, SpoilerBadge, coveredMedia, revealedMedia, ForwardButtons } from './components';
 import { InvitationShare } from './Invitation';
-import AvatarCropper from './AvatarCropper';
+import { lazyModule } from './ErrorBoundary';
 import { modKey } from './chatPrefs';
+
+const AvatarCropper = lazyModule(() => import('./AvatarCropper'));
+export { ForwardButtons };
 
 export function ProfileDialog({ me, onClose, onUpdate, notify }) {
   const [name, setName] = useState(me.name);
@@ -35,15 +38,16 @@ export function ProfileDialog({ me, onClose, onUpdate, notify }) {
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
   return <><Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { chooseAvatar(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} /><span className="field-label">名字颜色</span><div className="accent-row name-colors" role="radiogroup" aria-label="名字颜色"><button type="button" role="radio" aria-checked={color === null} className={`name-color-auto ${color === null ? 'active' : ''}`} onClick={() => setColor(null)}>自动</button>{[0, 1, 2, 3, 4, 5, 6].map(index => <button type="button" key={index} role="radio" aria-checked={color === index} aria-label={`名字颜色 ${index + 1}`} className={`accent-swatch ${color === index ? 'active' : ''}`} style={{ background: `var(--name-${index})` }} onClick={() => setColor(index)} />)}<b className="name-color-preview" style={{ color: color === null ? 'var(--text-1)' : `var(--name-${color})` }}>{name || '名字'}</b></div><label className="field-label" htmlFor="profile-department">部门（可选）</label><input id="profile-department" value={department} maxLength={40} placeholder="例如：设计部" onChange={event => setDepartment(event.target.value)} /><label className="field-label" htmlFor="profile-bio">签名（可选）</label><input id="profile-bio" value={bio} maxLength={120} placeholder="一句话介绍自己" onChange={event => setBio(event.target.value)} />{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>
-    {cropping && <AvatarCropper file={cropping} onCancel={() => setCropping(null)} onDone={cropped => { setCropping(null); avatarUpload(cropped); }} />}</>;
+    {cropping && <LazyModal title="裁剪头像" onClose={() => setCropping(null)}><AvatarCropper file={cropping} onCancel={() => setCropping(null)} onDone={cropped => { setCropping(null); avatarUpload(cropped); }} /></LazyModal>}</>;
 }
 
 export function InviteDialog({ cloud, onClose, notify }) {
   const [invite, setInvite] = useState(null);
   const [error, setError] = useState('');
-  useEffect(() => { api('invite').then(setInvite).catch(error => setError(error.message)); }, []);
+  const load = () => { setError(''); setInvite(null); api('invite').then(setInvite).catch(failure => setError(failure.message)); };
+  useEffect(() => { load(); }, []);
   return <Modal title="喊上同事，一起扯两句" subtitle={cloud ? '分享注册链接，管理员审核通过后即可加入。' : '复制一份邀请，同事粘贴一次就能加入。'} onClose={onClose}>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    {error && <div className="inline-error-row" role="alert"><p className="form-error">{error}</p>{!invite && <button type="button" className="secondary-button" onClick={load}>重试</button>}</div>}
     {invite ? cloud ? <div className="cloud-invite"><input aria-label="注册链接" value={invite.url || absoluteUrl('')} readOnly onFocus={event => event.target.select()} /><button className="primary-button full" onClick={() => copyText(invite.url || absoluteUrl('')).then(() => notify('注册链接已复制')).catch(() => setError('复制失败，请选中上方链接复制'))}><Copy size={15} />复制注册链接</button></div> : <InvitationShare invite={invite} notify={notify} /> : !error && <p className="inline-note">正在获取邀请信息…</p>}
   </Modal>;
 }
@@ -87,7 +91,7 @@ export function RoomAvatarDialog({ room, onClose, onSaved, notify }) {
     </div><input ref={fileInput} type="file" aria-label="上传群头像" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { chooseFile(event.target.files[0]); event.target.value = ''; }} /><AvatarPicker avatar={file ? null : avatar} setAvatar={choose} /></fieldset>
     {error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || (!file && avatar === (room.avatar || null))}>{busy ? '正在保存…' : '保存头像'}</button></div>
   </form></Modal>
-    {cropping && <AvatarCropper title="裁剪群头像" file={cropping} onCancel={() => setCropping(null)} onDone={cropped => { setCropping(null); setFile(cropped); }} />}</>;
+    {cropping && <LazyModal title="裁剪群头像" onClose={() => setCropping(null)}><AvatarCropper title="裁剪群头像" file={cropping} onCancel={() => setCropping(null)} onDone={cropped => { setCropping(null); setFile(cropped); }} /></LazyModal>}</>;
 }
 
 export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
@@ -126,13 +130,8 @@ export function ShareTargetDialog({ share, rooms, icon, onClose, onPick }) {
   </Modal>;
 }
 
-// 两种转发方式，多选栏的按钮和转发弹窗里的选项共用。
+// 两种转发方式，转发弹窗里的选项共用。
 const FORWARD_MODES = [[false, Rows3, '逐条转发', '按原顺序逐条发出'], [true, MessagesSquare, '合并转发', '合成一条聊天记录']];
-// 多选栏：选了两条及以上时，两种转发方式各一个按钮。
-export function ForwardButtons({ count, disabled, onForward }) {
-  if (count < 2) return <button className="primary-button" disabled={disabled} onClick={() => onForward(false)}>转发</button>;
-  return FORWARD_MODES.map(([merge, Icon, label]) => <button key={label} className={`${merge ? 'primary-button' : 'secondary-button'} forward-button`} disabled={disabled} onClick={() => onForward(merge)}><Icon size={15} />{label}</button>);
-}
 
 // 转发：一次最多选 9 个会话；附言跟在每个会话的转发内容之后。
 const FORWARD_LIMIT = 9;
@@ -256,11 +255,17 @@ export function ShortcutsDialog({ sendKey, onClose }) {
 export function EditHistoryDialog({ message, onClose }) {
   const [history, setHistory] = useState(null);
   const [error, setError] = useState('');
-  useEffect(() => { api(`message-history?id=${encodeURIComponent(message.id)}`).then(setHistory).catch(failure => setError(failure.message)); }, [message.id]);
+  const [retryCount, setRetryCount] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setHistory(null); setError('');
+    api(`message-history?id=${encodeURIComponent(message.id)}`).then(data => { if (alive) setHistory(data); }).catch(failure => { if (alive) setError(failure.message); });
+    return () => { alive = false; };
+  }, [message.id, retryCount]);
   const when = time => new Date(time).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   const versions = history ? [{ ...history.current, current: true }, ...[...history.versions].reverse()] : [];
   return <Modal title="编辑历史" subtitle={history ? `共 ${versions.length} 个版本` : undefined} onClose={onClose}>
-    {error ? <p className="form-error" role="alert">{error}</p> : !history ? <p className="inline-note">正在读取…</p> : <ol className="edit-history">
+    {error ? <div className="inline-error-row" role="alert"><p className="form-error">{error}</p><button type="button" className="secondary-button" onClick={() => setRetryCount(c => c + 1)}>重试</button></div> : !history ? <p className="inline-note">正在读取…</p> : <ol className="edit-history">
       {versions.map((version, index) => <li key={index} className={version.current ? 'current' : ''}>
         <small>{version.current ? '当前版本' : index === versions.length - 1 && history.complete ? '原始版本' : '较早版本'}{version.at ? ` · ${when(version.at)}` : ''}</small>
         <FormattedText text={version.text || '（无文字）'} /></li>)}
@@ -325,7 +330,7 @@ export function WebhooksDialog({ room, onClose, notify }) {
   const [issued, setIssued] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const load = () => api(`webhooks?roomId=${encodeURIComponent(room.id)}`).then(result => setHooks(result.webhooks)).catch(failure => setError(failure.message));
+  const load = () => { setError(''); return api(`webhooks?roomId=${encodeURIComponent(room.id)}`).then(result => { setHooks(result.webhooks); setError(''); }).catch(failure => setError(failure.message)); };
   useEffect(() => { load(); }, [room.id]);
   async function run(action) {
     setBusy(true); setError('');
@@ -349,7 +354,7 @@ export function WebhooksDialog({ room, onClose, notify }) {
     {hooks && !hooks.length && <p className="inline-note">还没有机器人。</p>}
     <form className="webhook-create" onSubmit={create}><input aria-label="机器人名称" placeholder="机器人名称，例如：告警" value={name} maxLength={24} onChange={event => setName(event.target.value)} disabled={busy} />
       <button className="primary-button" disabled={busy || !name.trim()}>{busy ? '请稍候…' : '添加'}</button></form>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    {error && <div className="inline-error-row" role="alert"><p className="form-error">{error}</p>{!hooks && <button type="button" className="secondary-button" onClick={load}>重试</button>}</div>}
   </Modal>;
 }
 
@@ -360,11 +365,17 @@ export function AuditDialog({ onClose }) {
   const [page, setPage] = useState(1);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
-  useEffect(() => { api(`admin/audit?page=${page}`).then(setResult).catch(failure => setError(failure.message)); }, [page]);
+  const [retryCount, setRetryCount] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setError('');
+    api(`admin/audit?page=${page}`).then(data => { if (alive) setResult(data); }).catch(failure => { if (alive) setError(failure.message); });
+    return () => { alive = false; };
+  }, [page, retryCount]);
   const where = entry => { if (entry.action !== 'delete-message') return ['role', 'mute', 'bot-receive-all'].includes(entry.action) ? `（${entry.detail}）` : ''; try { const detail = JSON.parse(entry.detail); return detail.roomName ? `（在「${detail.roomName}」）` : ''; } catch { return ''; } };
   return <Modal title="操作日志" subtitle="管理员的审核、权限、密码和删除消息操作，最新的在前。" wide onClose={onClose}>
-    {error && <p className="form-error" role="alert">{error}</p>}
-    {!result ? <p className="inline-note">正在加载…</p> : !result.entries.length ? <p className="inline-note">还没有管理操作。</p> : <ul className="audit-list">{result.entries.map(entry => <li key={entry.id}>
+    {error && <div className="inline-error-row" role="alert"><p className="form-error">{error}</p><button type="button" className="secondary-button" onClick={() => setRetryCount(c => c + 1)}>重试</button></div>}
+    {!result ? (!error && <p className="inline-note">正在加载…</p>) : !result.entries.length ? <p className="inline-note">还没有管理操作。</p> : <ul className="audit-list">{result.entries.map(entry => <li key={entry.id}>
       <time>{new Date(entry.createdAt).toLocaleString('zh-CN', { hour12: false })}</time>
       <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{['retention', 'recall-window'].includes(entry.action) ? ` ${entry.detail}` : ['password', 'bot-auto-disable'].includes(entry.action) ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
     </li>)}</ul>}

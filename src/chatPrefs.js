@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 
 // 聊天显示偏好：只保存在本机。
 // avatarMode：sticky = 头像跟随滚动贴在一组消息底部（Telegram 式）；top = 固定在一组消息第一条旁边。
@@ -27,7 +28,7 @@ export default function useChatPrefs() {
   const [prefs, setPrefs] = useState(readPrefs);
   const update = change => setPrefs(previous => {
     const next = { ...previous, ...change };
-    try { localStorage.setItem(KEY, JSON.stringify(next)); } catch {}
+    writeStorage(KEY, JSON.stringify(next));
     return next;
   });
   return [prefs, update];

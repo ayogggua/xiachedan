@@ -329,7 +329,7 @@ function DeviceSettings({ notify }) {
   const [sessions, setSessions] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const load = () => api('sessions').then(result => setSessions(result.sessions)).catch(failure => setError(failure.message));
+  const load = () => { setError(''); return api('sessions').then(result => { setSessions(result.sessions); setError(''); }).catch(failure => setError(failure.message)); };
   useEffect(() => { load(); }, []);
   async function revoke(body, message) {
     setBusy(true); setError('');
@@ -338,12 +338,12 @@ function DeviceSettings({ notify }) {
   }
   const when = time => new Date(time).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   return <section className="device-settings"><h4>登录设备</h4>
-    {!sessions ? <p className="inline-note">正在读取登录设备…</p> : <ul className="device-list">{sessions.map(item => <li key={item.id}>
+    {!sessions ? (!error && <p className="inline-note">正在读取登录设备…</p>) : <ul className="device-list">{sessions.map(item => <li key={item.id}>
       <span><b>{deviceName(item.userAgent)}{item.current && <small className="me-tag">当前</small>}</b><small>{item.ip || '未知地址'} · 最近活跃 {when(item.lastSeen)}</small></span>
       {!item.current && <button type="button" className="text-button danger-text" disabled={busy} onClick={() => revoke({ id: item.id }, '该设备已下线')}>下线</button>}
     </li>)}</ul>}
     {sessions?.length > 1 && <button type="button" className="secondary-button" disabled={busy} onClick={() => revoke({ others: true }, '其他设备已全部下线')}>退出其他所有设备</button>}
-    {error && <p className="form-error" role="alert">{error}</p>}
+    {error && <div className="inline-error-row" role="alert"><p className="form-error">{error}</p><button type="button" className="secondary-button" onClick={load}>重试</button></div>}
   </section>;
 }
 
@@ -353,13 +353,14 @@ function StorageSettings({ cloud, onCleared, notify }) {
   const [confirmation, setConfirmation] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => { api('storage').then(setInfo).catch(error => setError(error.message)); }, []);
+  const load = () => { setError(''); api('storage').then(result => { setInfo(result); setError(''); }).catch(failure => setError(failure.message)); };
+  useEffect(() => { load(); }, []);
   const size = bytes => bytes === 0 ? '0 KB' : formatSize(bytes);
   async function clear() {
     if (busy || confirmation !== '清空') return;
     setBusy(true); setError('');
     try {
-      const result = await api('clear-history', { confirmation }, { signal: AbortSignal.timeout(120000) });
+      const result = await api('clear-history', { confirmation }, { timeout: 120000 });
       setInfo(result.storage); setConfirming(false); setConfirmation(''); await onCleared(result);
       notify(`记录已清空，释放 ${size(result.freedBytes)}`);
       if (!result.compacted || result.storage.pendingBytes) setError('聊天记录已删除，部分磁盘空间暂未释放，请稍后再次清理。');
@@ -367,10 +368,10 @@ function StorageSettings({ cloud, onCleared, notify }) {
     finally { setBusy(false); }
   }
   return <section className="storage-settings"><h4>聊天记录与存储</h4>
-    <p className="inline-note">{info ? `${info.messageCount} 条记录 · 聊天附件 ${size(info.attachmentBytes)} · 数据库 ${size(info.databaseBytes)}` : '正在统计空间占用…'}</p>
+    {(info || !error) && <p className="inline-note">{info ? `${info.messageCount} 条记录 · 聊天附件 ${size(info.attachmentBytes)} · 数据库 ${size(info.databaseBytes)}` : '正在统计空间占用…'}</p>}
     <p className="inline-note">清空整个空间所有会话的聊天记录及已发送的图片、视频，释放{cloud ? '服务器' : '创建空间的电脑'}上的存储。成员、头像和群聊会保留。</p>
     <button className="secondary-button storage-clear-button" disabled={!info || busy} onClick={() => setConfirming(true)}>清空空间聊天记录</button>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    {error && <div className="inline-error-row" role="alert"><p className="form-error">{error}</p>{!info && <button type="button" className="secondary-button" onClick={load}>重试</button>}</div>}
     {confirming && <Modal title="清空整个空间的聊天记录？" subtitle="所有成员的大厅、群聊和私聊记录都会删除，图片与视频文件也会删除。此操作无法恢复。" onClose={() => !busy && setConfirming(false)}>
       <label className="field-label" htmlFor="clear-history-confirm">输入“清空”以确认</label><input id="clear-history-confirm" value={confirmation} onChange={event => setConfirmation(event.target.value)} disabled={busy} autoComplete="off" />
       {error && <p className="form-error" role="alert">{error}</p>}

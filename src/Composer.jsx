@@ -1,15 +1,18 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile, Crop, EyeOff, Flame } from 'lucide-react';
-import EmojiPicker from './EmojiPicker';
 import { api, upload, uid, formatSize } from './api';
-import { Avatar, IconButton, PrivatePreview, ContextMenu, BotTag } from './components';
+import { Avatar, IconButton, PrivatePreview, ContextMenu, BotTag, LazyModal, LazySlot } from './components';
+import { lazyModule } from './ErrorBoundary';
+import { writeStorage } from './storage';
 import { previewText } from './history';
 import { matchFormats, applyFormat, insideCodeFence } from './slashCommands';
 import { isSendKey, modKey } from './chatPrefs';
 import { htmlToMarkdown } from './htmlToMarkdown';
 import { compressImage } from './imageTools';
 import { emojiFor, matchShortcodes } from './emojiShortcodes';
-import ImageEditor from './ImageEditor';
+
+const EmojiPicker = lazyModule(() => import('./EmojiPicker'));
+const ImageEditor = lazyModule(() => import('./ImageEditor'));
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
@@ -23,7 +26,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   const [dragging, setDragging] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   // 发图默认压缩大图，勾选「原图」时按原文件上传；选择记在本机。
-  const [sendOriginal, setSendOriginal] = useState(() => localStorage.getItem('linliao.sendOriginal') === '1');
+  const [sendOriginal, setSendOriginal] = useState(() => { try { return localStorage.getItem('linliao.sendOriginal') === '1'; } catch { return false; } });
   const [editingImage, setEditingImage] = useState(null);
   // 阅后即焚（只在私聊的主输入框）：开着没有和选的时长由 App 按会话记在内存里（换会话、多选、输入框重建都不会丢）；
   // 开着时这个会话发出的消息、表情都是阅后即焚，只能带图片和视频。
@@ -108,7 +111,22 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     setPicker(null);
     requestAnimationFrame(() => { const node = textarea.current; node?.focus(); node?.setSelectionRange(start + insert.length, start + insert.length); });
   }
-  useEffect(() => () => { for (const draft of Object.values(draftsRef.current)) for (const item of draft.files) URL.revokeObjectURL(item.url); }, []);
+  const mounted = useRef(true);
+  const liveFiles = useRef(new Set());
+  const uploads = useRef(new Map());
+  const originalSeq = useRef(0);
+  const abortUpload = id => { uploads.current.get(id)?.abort(); uploads.current.delete(id); };
+  const hasLiveFile = id => mounted.current && liveFiles.current.has(id);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      liveFiles.current.clear();
+      for (const controller of uploads.current.values()) controller.abort();
+      uploads.current.clear();
+      for (const draft of Object.values(draftsRef.current)) for (const item of draft.files) URL.revokeObjectURL(item.url);
+    };
+  }, []);
   // 较大的静态图片在本机缩成长边 720 像素的小图一起上传，聊天里先显示小图；失败时照常只用原图。
   async function makeThumbnail(file) {
     if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 150 * 1024 || !window.createImageBitmap) return null;
@@ -122,12 +140,32 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     return blob && blob.size < file.size ? new File([blob], 'thumbnail.webp', { type: blob.type }) : null;
   }
   async function uploadItem(item, roomId) {
+    if (!hasLiveFile(item.id)) return;
+    abortUpload(item.id);
+    const controller = new AbortController();
+    uploads.current.set(item.id, controller);
     update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, error: '', progress: 0 } : file) }));
     try {
-      const { attachment } = await upload(item.file, { roomId }, progress => update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, progress: Math.min(progress, 99) } : file) })));
-      try { const thumbnail = await makeThumbnail(item.file); if (thumbnail) await upload(thumbnail, { roomId, thumbnailFor: attachment.id }); } catch {}
+      const { attachment } = await upload(item.file, { roomId }, progress => {
+        if (controller.signal.aborted || !hasLiveFile(item.id)) return;
+        update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, progress: Math.min(progress, 99) } : file) }));
+      }, { signal: controller.signal });
+      if (controller.signal.aborted || !hasLiveFile(item.id)) return;
+      try {
+        const thumbnail = await makeThumbnail(item.file);
+        if (thumbnail && !controller.signal.aborted && hasLiveFile(item.id)) {
+          await upload(thumbnail, { roomId, thumbnailFor: attachment.id }, undefined, { signal: controller.signal });
+        }
+      } catch {}
+      if (controller.signal.aborted || !hasLiveFile(item.id)) return;
       update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, attachment, progress: 100 } : file) }));
-    } catch (error) { update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, error: error.message } : file) })); notify(error.message); }
+    } catch (error) {
+      if (controller.signal.aborted || error.name === 'AbortError' || !hasLiveFile(item.id)) return;
+      update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, error: error.message } : file) }));
+      notify(error.message);
+    } finally {
+      if (uploads.current.get(item.id) === controller) uploads.current.delete(item.id);
+    }
   }
   function addFiles(files) {
     if (!connected) return notify('连接恢复后再发送文件');
@@ -141,6 +179,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
       if (!file.size) { notify(`${file.name} 是空文件`); return false; }
       return true;
     }).map(file => ({ id: uid(), original: file, file, url: URL.createObjectURL(file), progress: 0 }));
+    for (const item of items) liveFiles.current.add(item.id);
     update(roomId, state => ({ ...state, files: [...state.files, ...items] }));
     for (const item of items) chooseVersion(item.original, sendOriginal).then(file => sendVersion(item, roomId, file));
   }
@@ -148,25 +187,33 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   const chooseVersion = (original, keepOriginal) => keepOriginal || !compressible(original) ? Promise.resolve(original) : compressImage(original).catch(() => original);
   // 换成另一个版本（压缩、原图或编辑后的）再上传。
   function sendVersion(item, roomId, file) {
-    let next = item;
-    if (file !== item.file) {
-      URL.revokeObjectURL(item.url);
-      next = { ...item, file, url: URL.createObjectURL(file), attachment: null, progress: 0, error: '' };
+    if (!hasLiveFile(item.id)) return;
+    abortUpload(item.id);
+    const current = draftsRef.current[roomId]?.files.find(entry => entry.id === item.id) || item;
+    let next = { ...current, edited: item.edited ?? current.edited };
+    if (file !== current.file) {
+      URL.revokeObjectURL(current.url);
+      next = { ...next, file, url: URL.createObjectURL(file), attachment: null, progress: 0, error: '' };
       update(roomId, state => ({ ...state, files: state.files.map(entry => entry.id === item.id ? { ...entry, file: next.file, url: next.url, attachment: null, progress: 0, error: '', edited: next.edited } : entry) }));
     }
     uploadItem(next, roomId);
   }
   async function toggleOriginal(value) {
     setSendOriginal(value);
-    try { localStorage.setItem('linliao.sendOriginal', value ? '1' : '0'); } catch {}
+    writeStorage('linliao.sendOriginal', value ? '1' : '0');
     const roomId = room.id;
+    const seq = ++originalSeq.current;
     for (const item of draftsRef.current[roomId]?.files || []) {
       if (item.edited || !item.original || !compressible(item.original)) continue;
       const file = await chooseVersion(item.original, value);
-      if (file !== item.file) sendVersion(item, roomId, file);
+      if (seq !== originalSeq.current || !hasLiveFile(item.id)) continue;
+      const latestItem = draftsRef.current[roomId]?.files.find(entry => entry.id === item.id);
+      if (latestItem && !latestItem.edited && file !== latestItem.file) sendVersion(latestItem, roomId, file);
     }
   }
   function removeFile(item) {
+    liveFiles.current.delete(item.id);
+    abortUpload(item.id);
     URL.revokeObjectURL(item.url);
     update(room.id, state => ({ ...state, files: state.files.filter(file => file.id !== item.id) }));
   }
@@ -224,7 +271,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     onQueue({ roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId: uid(), ...(replyTo ? { replyTo, ...(reply.quote ? { replyQuote: reply.quote } : {}) } : {}), ...(mentions.length ? { mentions } : {}), ...(spoilerIds.length ? { spoilerIds } : {}), ...(burnSeconds ? { burn: burnSeconds } : {}) },
       { text: snapshot.text, files: snapshot.files.map(file => file.file.name) });
     if (replyTo) onCancelReply?.();
-    for (const file of snapshot.files) URL.revokeObjectURL(file.url);
+    for (const file of snapshot.files) { liveFiles.current.delete(file.id); abortUpload(file.id); URL.revokeObjectURL(file.url); }
     update(roomId, () => empty);
   }
   const fitHeight = () => {
@@ -302,7 +349,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     </div>)}
       {draft.files.some(item => item.original && compressible(item.original)) && <label className="original-toggle" title="不勾选时，大图会压缩后再发送"><input type="checkbox" checked={sendOriginal} onChange={event => toggleOriginal(event.target.checked)} />原图</label>}
     </div>}
-    {editingImage && <ImageEditor file={editingImage.file} onClose={() => setEditingImage(null)} onDone={file => { const item = editingImage; setEditingImage(null); sendVersion({ ...item, edited: true }, room.id, file); }} />}
+    {editingImage && <LazyModal title="编辑图片" onClose={() => setEditingImage(null)}><ImageEditor file={editingImage.file} onClose={() => setEditingImage(null)} onDone={file => { const item = editingImage; setEditingImage(null); sendVersion({ ...item, edited: true }, room.id, file); }} /></LazyModal>}
     <div className="composer-row">
     {/* 附件统一收进回形针菜单：图片或视频、文件 */}
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
@@ -319,7 +366,10 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
         ...(onSchedule ? [{ id: 'schedule', label: '定时发送…', action: () => onSchedule(draft.text) }] : []),
       ] }); }}><Paperclip size={19} strokeWidth={1.7} /></button>
     {attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
-    {emojiOpen && <EmojiPicker onPick={insertText} onSticker={editing ? undefined : sendSticker} notify={notify} onClose={() => setEmojiOpen(false)} />}
+    {emojiOpen && <LazySlot fallback={<div className="emoji-picker" role="dialog" aria-label="选择表情"><p className="sticker-empty">正在加载表情…</p></div>}
+      errorFallback={retry => <div className="emoji-picker" role="dialog" aria-label="选择表情"><div className="inline-error-row" role="alert"><p className="form-error">表情面板加载失败</p><button type="button" className="secondary-button" onClick={retry}>重试</button><button type="button" className="text-button" onClick={() => setEmojiOpen(false)}>关闭</button></div></div>}>
+      <EmojiPicker onPick={insertText} onSticker={editing ? undefined : sendSticker} notify={notify} onClose={() => setEmojiOpen(false)} />
+    </LazySlot>}
     <div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
       {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，发送文件</span></div>}
       <textarea ref={textarea} aria-label="消息内容" placeholder={burnSeconds ? `发阅后即焚消息给 ${room.name}` : placeholder || `发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}

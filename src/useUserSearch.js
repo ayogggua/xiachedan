@@ -6,17 +6,20 @@ export default function useUserSearch(users = [], query = '', enabled = true, no
   const term = query.trim().toLowerCase();
   const [result, setResult] = useState({ term: '', ids: [], error: '' });
   useEffect(() => {
-    if (!enabled || !term) return;
-    let cancelled = false;
+    if (!enabled || !term) {
+      setResult(previous => previous.term || previous.ids.length || previous.error ? { term: '', ids: [], error: '' } : previous);
+      return;
+    }
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const response = await api(`users/search?q=${encodeURIComponent(term)}`);
-        if (!cancelled) setResult({ term, ids: response.users.map(user => user.id), error: '' });
+        const response = await api(`users/search?q=${encodeURIComponent(term)}`, undefined, { signal: controller.signal });
+        if (!controller.signal.aborted) setResult({ term, ids: response.users.map(user => user.id), error: '' });
       } catch (error) {
-        if (!cancelled) setResult({ term, ids: [], error: error.message });
+        if (!controller.signal.aborted) setResult({ term, ids: [], error: error.message });
       }
     }, 250);
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [term, enabled]);
   const remoteIds = new Set(enabled && result.term === term ? result.ids : []);
   return {

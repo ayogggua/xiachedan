@@ -18,12 +18,16 @@ export const socketUrl = () => {
 };
 
 export async function api(route, body, options = {}) {
+  const { signal: userSignal, timeout = 20000, headers: userHeaders, ...rest } = options;
+  const timeoutSignal = timeout > 0 ? AbortSignal.timeout(timeout) : null;
+  const signal = userSignal && timeoutSignal ? AbortSignal.any([userSignal, timeoutSignal]) : userSignal || timeoutSignal;
   const response = await fetch(endpoint(route), {
     credentials: mobileClient ? 'omit' : 'include',
-    signal: AbortSignal.timeout(20000),
     method: body === undefined ? 'GET' : 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Linliao': '1', 'X-Setup-Key': sessionStorage.getItem('linliao.setup') || '', ...mobileHeaders() },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }), ...options,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...rest,
+    signal,
+    headers: { 'Content-Type': 'application/json', 'X-Linliao': '1', 'X-Setup-Key': sessionStorage.getItem('linliao.setup') || '', ...mobileHeaders(), ...userHeaders },
   });
   const data = await response.json().catch(() => ({ error: '连接暂时不可用，请稍后重试' }));
   if (!response.ok) throw Object.assign(new Error(data.error || '连接暂时不可用'), { status: response.status });
@@ -33,18 +37,24 @@ export async function api(route, body, options = {}) {
   return data;
 }
 
-export function upload(file, query, onProgress) {
+export function upload(file, query, onProgress, { signal } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(Object.assign(new Error('已取消上传'), { name: 'AbortError' })); return; }
     const xhr = new XMLHttpRequest();
+    const abort = () => xhr.abort();
+    const cleanup = () => signal?.removeEventListener('abort', abort);
+    signal?.addEventListener('abort', abort, { once: true });
     xhr.open('POST', endpoint(`uploads?${new URLSearchParams(query)}`));
     xhr.withCredentials = !mobileClient;
     xhr.setRequestHeader('X-Linliao', '1');
     for (const [key, value] of Object.entries(mobileHeaders())) xhr.setRequestHeader(key, value);
     xhr.timeout = 10 * 60 * 1000;
     xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
-    xhr.onerror = () => reject(new Error('上传中断，请检查网络连接'));
-    xhr.ontimeout = () => reject(new Error('上传超时，请重试'));
+    xhr.onabort = () => { cleanup(); reject(Object.assign(new Error('已取消上传'), { name: 'AbortError' })); };
+    xhr.onerror = () => { cleanup(); reject(new Error('上传中断，请检查网络连接')); };
+    xhr.ontimeout = () => { cleanup(); reject(new Error('上传超时，请重试')); };
     xhr.onload = () => {
+      cleanup();
       try { const data = JSON.parse(xhr.responseText); xhr.status < 300 ? resolve(data) : reject(new Error(data.error)); }
       catch { reject(new Error('上传未完成，请重试')); }
     };

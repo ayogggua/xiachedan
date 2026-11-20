@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { readStorage } from './history';
+import { writeStorage } from './storage';
 
 // 主题色和消息字号：只保存在本机。主题色按深浅主题分别推算出按钮底色和文字色，保证对比度达标。
 export const ACCENTS = [['橙', null], ['蓝', '#3b82f6'], ['青', '#14b8a6'], ['绿', '#22a35a'], ['紫', '#8b5cf6'], ['粉', '#e8508f'], ['红', '#e5484d'], ['金', '#d4a017']];
@@ -30,7 +31,7 @@ export async function saveWallpaperImage(file) {
   canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
   const data = canvas.toDataURL('image/jpeg', 0.8);
-  localStorage.setItem(WALLPAPER_IMAGE, data);
+  if (!writeStorage(WALLPAPER_IMAGE, data)) throw new Error('storage full');
   return data;
 }
 
@@ -89,7 +90,7 @@ export default function useAppearance(skin) {
   const [stored, setStored] = useState(readAppearance);
   const current = skin === 'classic' ? stored.classic : stored;
   const { accent, wallpaper } = current, { fontSize } = stored;
-  useEffect(() => { localStorage.setItem('linliao.appearance', JSON.stringify(stored)); }, [stored]);
+  useEffect(() => { writeStorage('linliao.appearance', JSON.stringify(stored)); }, [stored]);
   useEffect(() => {
     const appearance = { accent, fontSize, wallpaper };
     applyAppearance(appearance);

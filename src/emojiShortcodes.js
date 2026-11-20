@@ -16,6 +16,13 @@ books 📚|bulb 💡|bell 🔔|mag 🔍|lock 🔒|key 🔑|alarm_clock ⏰|hourg
 check ✅|x ❌|warning ⚠️|question ❓|exclamation ❗|ok 🆗|new 🆕|rocket 🚀|bug 🐛|wrench 🔧|hammer 🔨|gear ⚙️|link 🔗|email 📧
 cat 🐱|dog 🐶|shrimp 🦐|crown 👑|dianzan 👍|zan 👍|xiaoku 😂|ku 😭|hao 👌|baoquan 🙏|aixin ❤️|huo 🔥|qingzhu 🎉|dengpao 💡|kafei ☕|jiayou 💪`;
 
+export const GROUPS = [
+  ['笑脸', '😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😌 😍 🥰 😘 😋 😛 😜 🤪 😎 🤓 🧐 🤔 🤨 😐 😑 😶 🙄 😏 😬 🤐 😴 😪 😮 😯 😲 🥱 😢 😭 😤 😡 🤯 😳 🥵 🥶 😱 😨 😰 😓 🤗 🤭 🫡 🤫 🤥 😷 🤒 🤕 🥳 🥺 🫠'],
+  ['手势', '👍 👎 👌 ✌️ 🤞 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ ✋ 🤚 🖐️ 🖖 👋 🤝 🙏 👏 🙌 👐 🤲 💪 ✍️ 🫶 👀 🧠'],
+  ['心情', '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 💔 ❣️ 💕 💯 💢 💥 💫 💦 💤 🔥 ✨ 🎉 🎊 🎈 🎁 🏆 🥇 ⭐ 🌟 ☀️ 🌈 ☔'],
+  ['日常', '☕ 🍵 🧋 🍺 🍻 🍰 🎂 🍉 🍎 🍜 🍚 🍔 🍕 🍟 🍗 🥟 🍱 🚗 🚕 🚇 ✈️ 🏠 🏢 💻 ⌨️ 🖥️ 📱 📷 📅 📌 📎 📝 📚 💡 🔔 🔍 🔒 🔑 ⏰ ⏳ 💰 📈 📉 ✅ ❌ ⚠️ ❓ ❗ 🆗 🆕 🚀'],
+].map(([name, list]) => [name, list.split(' ')]);
+
 export const SHORTCODES = LIST.trim().split(/[|\n]/).map(item => item.trim().split(' ')).filter(pair => pair.length === 2);
 const BY_NAME = new Map(SHORTCODES);
 export const emojiFor = name => BY_NAME.get(name.toLowerCase());

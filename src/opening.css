@@ -12,7 +12,7 @@
 .opening-arrival { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; background: #f6f3eb; color: #292622; animation: opening-arrival 5.8s both; }
 .opening-arrival img { width: 86px; height: 86px; filter: drop-shadow(0 8px 16px #903a1622); }
 .opening-arrival span { font: 600 22px/1.5 var(--font, sans-serif); letter-spacing: 5px; padding-left: 5px; }
-.opening-skip { position: absolute; right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); z-index: 2; min-width: 60px; min-height: 38px; padding: 8px 16px; border: 1px solid #ffffff35; border-radius: 20px; background: #071213b3; color: #fff; font: 500 13px/1.3 var(--font, sans-serif); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer; }
+.opening-skip { position: absolute; right: max(24px, env(safe-area-inset-right)); bottom: max(24px, var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px))); z-index: 2; min-width: 60px; min-height: 38px; padding: 8px 16px; border: 1px solid #ffffff35; border-radius: 20px; background: #071213b3; color: #fff; font: 500 13px/1.3 var(--font, sans-serif); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer; }
 .opening-skip:hover { background: #273e3de6; border-color: #ffffff70; }
 .opening-skip:focus-visible { outline: 2px solid #e6b17c; outline-offset: 4px; }
 @keyframes opening-orbit { 0% { transform: rotate(-25deg) translate(0, 0); } 36% { transform: rotate(-23deg) translate(-3%, -4%); } 74%, 100% { transform: rotate(-20deg) translate(-20%, -3%); } }
@@ -27,6 +27,6 @@
   .opening-cabin { object-fit: cover; }
   .opening-planet { width: 220vw; top: 30%; left: -40%; }
   .opening-arrival img { width: 72px; height: 72px; }
-  .opening-skip { right: 18px; bottom: max(22px, env(safe-area-inset-bottom)); }
+  .opening-skip { right: 18px; bottom: max(22px, var(--mobile-safe-bottom, env(safe-area-inset-bottom, 0px))); }
 }
 @media (prefers-reduced-motion: reduce) { .opening { display: none; } }

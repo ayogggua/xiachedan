@@ -43,16 +43,18 @@ export async function openPdf(file, notify) {
 export function TextPreviewDialog({ file, onClose }) {
   const [text, setText] = useState(null);
   const [error, setError] = useState('');
+  const [retryCount, setRetryCount] = useState(0);
   useEffect(() => {
     let alive = true;
+    setText(null); setError('');
     fetchFile(file).then(response => response.arrayBuffer()).then(buffer => { if (alive) setText(new TextDecoder('utf-8').decode(buffer)); }).catch(failure => alive && setError(failure.message));
     return () => { alive = false; };
-  }, [file.id]);
+  }, [file.id, retryCount]);
   const language = LANGUAGES[extension(file)] ?? '';
   const shown = text && text.length > SHOWN ? text.slice(0, SHOWN) : text;
   return <Modal title={file.name} subtitle={formatSize(file.size)} onClose={onClose}>
     <div className="file-preview">
-      {error ? <p className="form-error" role="alert">{error}</p> : text === null ? <p className="inline-note"><LoaderCircle className="spin" size={14} />正在读取…</p>
+      {error ? <div className="inline-error-row" role="alert"><p className="form-error">{error}</p><button type="button" className="secondary-button" onClick={() => setRetryCount(c => c + 1)}>重试</button></div> : text === null ? <p className="inline-note"><LoaderCircle className="spin" size={14} />正在读取…</p>
         : language === 'markdown' ? <div className="file-preview-markdown"><FormattedText text={shown} /></div> : <CodeBlock language={language} text={shown} />}
       {text && text.length > SHOWN && <p className="inline-note">文件较长，只显示前 {SHOWN.toLocaleString()} 个字符，完整内容请下载。</p>}
     </div>

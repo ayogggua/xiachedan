@@ -1,13 +1,128 @@
-.poker-dealer-machine { position: absolute; top: -28px; left: 50%; width: 210px; height: 119px; transform: translateX(-50%); z-index: 3; pointer-events: none; }
-.poker-dealer-machine > svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.poker-dealer-machine .dealer-linkage { transform-origin: 161px 110px; }
-.poker-dealer-machine[data-active="true"] .dealer-linkage { animation: dealer-sweep 1.2s cubic-bezier(.45,.05,.25,1) both; }
-.poker-dealer-machine[data-active="true"] .dealer-gear { transform-origin: 237px 26px; animation: dealer-turn 1.2s cubic-bezier(.45,.05,.25,1) both; }
-.poker-dealer-machine[data-active="true"] .dealer-gripper { transform-origin: 88px 83px; animation: dealer-grip 1.2s ease-in-out both; }
-.poker-table-engraving { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; border-radius: inherit; pointer-events: none; }
-.poker-card-ornament { display: block; width: 100%; height: 100%; overflow: hidden; border-radius: inherit; pointer-events: none; }
-@keyframes dealer-sweep { 0%, 100% { transform: rotate(0deg); } 35% { transform: rotate(-9deg) translate(-3px, 0); } 66% { transform: rotate(7deg) translate(1px, 0); } }
-@keyframes dealer-turn { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(65deg); } }
-@keyframes dealer-grip { 0%, 100% { transform: rotate(0deg); } 37% { transform: rotate(14deg); } 60% { transform: rotate(-6deg); } }
-@media (max-width: 640px) { .poker-dealer-machine { width: 150px; height: 85px; top: -18px; } }
-@media (prefers-reduced-motion: reduce) { .poker-dealer-machine *, .poker-dealer-machine[data-active="true"] * { animation: none !important; } }
+.poker-dealer-machine {
+  position: absolute;
+  top: 10px;
+  left: 16px;
+  width: 128px;
+  height: 66px;
+  transform: rotate(-4deg);
+  z-index: 4;
+  pointer-events: none;
+}
+
+.poker-dealer-machine > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.poker-dealer-machine .shoe-roller {
+  will-change: transform;
+  transition: transform 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.poker-dealer-machine .shoe-card-slip {
+  transform-origin: 154px 64px;
+  will-change: transform, opacity;
+  opacity: 0.72;
+}
+
+.poker-dealer-machine .shoe-mouth-glow {
+  opacity: 0.16;
+  transition: opacity 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.poker-dealer-machine[data-active="true"] .shoe-mouth-glow {
+  opacity: 0.34;
+}
+
+.poker-dealer-machine[data-active="true"] .shoe-roller {
+  animation: shoe-prime 680ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.poker-dealer-machine[data-dealing="true"] .shoe-roller {
+  animation: shoe-push 320ms cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
+.poker-dealer-machine[data-dealing="true"] .shoe-card-slip {
+  animation: shoe-eject 260ms cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
+.poker-dealer-machine[data-dealing="true"] .shoe-mouth-glow {
+  animation: shoe-glow-pulse 260ms ease-out infinite;
+}
+
+.poker-dealer-machine[data-dealing="true"] .shoe-led {
+  animation: shoe-led-flash 300ms ease-out infinite;
+}
+
+.poker-table-engraving {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.poker-card-ornament {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+@keyframes shoe-prime {
+  0% { transform: translateX(0); }
+  45% { transform: translateX(5px); }
+  100% { transform: translateX(2px); }
+}
+
+@keyframes shoe-push {
+  0%, 100% { transform: translateX(1px); }
+  45% { transform: translateX(7px); }
+}
+
+@keyframes shoe-eject {
+  0% { transform: translate3d(-4px, -1px, 0) scale(0.95); opacity: 0.55; }
+  55% { transform: translate3d(5px, 2px, 0) scale(1.02); opacity: 1; }
+  100% { transform: translate3d(8px, 3px, 0) scale(0.96); opacity: 0.3; }
+}
+
+@keyframes shoe-glow-pulse {
+  0%, 100% { opacity: 0.36; }
+  50% { opacity: 0.94; }
+}
+
+@keyframes shoe-led-flash {
+  0%, 100% { opacity: 0.72; }
+  50% { opacity: 1; }
+}
+
+@media (max-width: 1100px), (max-height: 700px) and (min-width: 761px) {
+  .poker-dealer-machine {
+    width: 102px;
+    height: 52px;
+    top: 6px;
+    left: 12px;
+    transform: rotate(-4deg);
+  }
+}
+
+@media (max-width: 760px) {
+  .poker-dealer-machine {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .poker-dealer-machine *,
+  .poker-dealer-machine[data-active="true"] *,
+  .poker-dealer-machine[data-dealing="true"] * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
