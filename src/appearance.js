@@ -48,10 +48,12 @@ function readable(rgb, background, toward, target = 4.5) {
 }
 const moreContrast = window.matchMedia('(prefers-contrast: more)');
 
-// 经典风格默认用绿色；选「橙」时存的是 null，按橙色推算。
+// 经典风格默认用绿色；PWA 默认用青色；选「橙」时存的是 null，按橙色推算。
 export const CLASSIC_ACCENT = '#22a35a';
+export const PWA_ACCENT = '#14b8a6';
 const DEFAULT_ACCENT = '#d9653f';
 const INK = [17, 17, 17];
+const isPwa = () => import.meta.env?.MODE === 'pwa' && (typeof window === 'undefined' || !window.desktop);
 
 export function applyAppearance({ accent, fontSize, wallpaper }) {
   const root = document.documentElement.style;
@@ -81,9 +83,18 @@ const validWallpaper = value => value === 'custom' || WALLPAPERS.some(([key]) =>
 export function readAppearance() {
   const saved = readStorage('linliao.appearance', {});
   const classic = saved.classic && typeof saved.classic === 'object' ? saved.classic : {};
-  return { accent: typeof saved.accent === 'string' ? saved.accent : null, fontSize: FONT_SIZES.some(([, size]) => size === saved.fontSize) ? saved.fontSize : 14,
+  const pwa = isPwa();
+  const hasAccent = 'accent' in saved;
+  const accent = hasAccent
+    ? (typeof saved.accent === 'string' ? saved.accent : (pwa && !saved.pwaDefault ? PWA_ACCENT : null))
+    : (pwa ? PWA_ACCENT : null);
+  return {
+    accent,
+    fontSize: FONT_SIZES.some(([, size]) => size === saved.fontSize) ? saved.fontSize : 14,
     wallpaper: validWallpaper(saved.wallpaper),
-    classic: { accent: 'accent' in classic ? typeof classic.accent === 'string' ? classic.accent : null : CLASSIC_ACCENT, wallpaper: validWallpaper(classic.wallpaper) } };
+    ...(pwa || saved.pwaDefault ? { pwaDefault: true } : {}),
+    classic: { accent: 'accent' in classic ? typeof classic.accent === 'string' ? classic.accent : null : CLASSIC_ACCENT, wallpaper: validWallpaper(classic.wallpaper) },
+  };
 }
 
 export default function useAppearance(skin) {

@@ -79,6 +79,7 @@
   .conversation-scroll { padding: 0 10px 16px; overflow-x: hidden; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .section-label { min-height: 36px; padding-left: 10px; }
   .conversation { min-height: 76px; padding: 11px 10px; border-radius: 15px; gap: 12px; }
+  .conversation:active:not(:disabled) { background: var(--fill-2); }
   .conversation::after { left: 70px; }
   .conversation .avatar, .conversation .room-avatar { width: 48px !important; height: 48px !important; border-radius: 15px; }
   .conversation .avatar > img { border-radius: inherit; }
