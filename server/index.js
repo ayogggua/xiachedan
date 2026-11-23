@@ -731,9 +731,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const userId of new Set([req.user.id, req.body.userId])) deliver({ type: 'arcade-changed' }, socket => socket.userId === userId);
     res.json({ wallet: arcadeBank.wallet(req.user.id), history: arcadeBank.history(req.user.id), canMint: arcadeBank.canMint(req.user) });
   });
-  for (const action of ['create', 'join', 'leave', 'ready', 'rebuy', 'stakes', 'newMatch', 'start', 'action', 'autoplay', 'say', 'invite', 'respond']) app.post(`/api/arcade/${action}`, (req, res) => {
+  for (const action of ['create', 'enter', 'join', 'leave', 'ready', 'rebuy', 'stakes', 'newMatch', 'start', 'action', 'autoplay', 'say', 'invite', 'respond']) app.post(`/api/arcade/${action}`, (req, res) => {
     rateLimit(req, 'arcade-action', 120);
     if (action === 'create') rateLimit(req, 'arcade-create', 6);
+    if (action === 'enter') rateLimit(req, 'arcade-enter', 10);
     if (action === 'invite') rateLimit(req, 'arcade-invite', 20);
     if (action === 'respond' && baccarat.hasInvitation(req.body?.invitationId)) {
       const result = baccarat.respond(req.user, req.body || {});

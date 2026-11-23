@@ -7,8 +7,16 @@ const RANKS = '23456789TJQKA';
 const SUITS = 'shdc';
 const PHASES = ['preflop', 'flop', 'turn', 'river'];
 const HAND_NAMES = ['高牌', '一对', '两对', '三条', '顺子', '同花', '葫芦', '四条', '同花顺'];
+const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ROOM_CODE_LENGTH = 6;
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const playing = table => PHASES.includes(table.phase);
+const parseVisibility = (value, fallback) => {
+  if (value === undefined) return fallback;
+  if (value !== 'public' && value !== 'private') throw fail('房间类型无效');
+  return value;
+};
+const normalizeRoomCode = value => (typeof value === 'string' ? value.trim().replace(/[\s-]+/g, '').toUpperCase() : '');
 const stakes = (smallBlind, handLimit = 0) => {
   if (!Number.isSafeInteger(smallBlind) || smallBlind < 1 || smallBlind > 1000000) throw fail('底分须为 1 至 1,000,000 之间的整数');
   if (!Number.isSafeInteger(handLimit) || handLimit < 0 || handLimit > 1000) throw fail('每场手数须为 0 至 1,000 之间的整数，0 表示不限');
@@ -75,6 +83,22 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
     if (!table) throw fail('牌桌已结束或不存在', 404);
     return table;
   };
+  const canAccess = (table, userId) => table.visibility === 'public'
+    || table.players.some(player => player.id === userId)
+    || table.authorizedIds.has(userId);
+  const requireAccess = (table, userId) => {
+    if (!canAccess(table, userId)) throw fail('这是私密牌桌，请通过邀请或房间口令进入', 403);
+    return table;
+  };
+  const generateRoomCode = () => {
+    const used = new Set([...tables.values()].map(item => item.roomCode).filter(Boolean));
+    for (let attempt = 0; attempt < 128; attempt++) {
+      let code = '';
+      for (let index = 0; index < ROOM_CODE_LENGTH; index++) code += ROOM_CODE_ALPHABET[randomInt(ROOM_CODE_ALPHABET.length)];
+      if (!used.has(code)) return code;
+    }
+    throw fail('生成房间口令失败，请稍后重试', 500);
+  };
   const requirePlayer = (table, userId) => {
     const player = table.players.find(item => item.id === userId && !item.leaving);
     if (!player) throw fail('请先加入这张牌桌', 403);
@@ -85,10 +109,27 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
     table.log.push({ id: randomUUID(), at: now(), text });
     if (table.log.length > 40) table.log.shift();
   };
-  const publish = table => {
+  const notifyTable = (table, event, extraRecipients = []) => {
+    const recipients = new Set(table.authorizedIds);
+    for (const player of table.players) recipients.add(player.id);
+    for (const userId of extraRecipients) recipients.add(userId);
+    for (const userId of recipients) notify(userId, event);
+  };
+  const publish = (table, { broadcastLobby = false, extraRecipients = [] } = {}) => {
     if (closed) return;
     if (table) { table.revision++; table.updatedAt = now(); }
-    changed({ type: 'arcade-changed', ...(table ? { id: table.id } : {}) });
+    if (!table) {
+      changed({ type: 'arcade-changed' });
+      return;
+    }
+    const statsDirty = Boolean(table.statsDirty);
+    table.statsDirty = false;
+    if (table.visibility === 'public') {
+      changed({ type: 'arcade-changed', id: table.id });
+      return;
+    }
+    notifyTable(table, { type: 'arcade-changed', id: table.id }, extraRecipients);
+    if (broadcastLobby || statsDirty) changed({ type: 'arcade-changed' });
   };
   const motion = (table, type, detail = {}) => {
     table.events.push({ id: ++table.eventSeq, handId: table.handId, at: now(), type, ...detail });
@@ -125,6 +166,7 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       const exiting = player.leaving || (!playing(table) && player.leaveAfterHand);
       if (!exiting || (playing(table) && player.inHand)) return true;
       if (player.leaveAfterHand && !player.leaving) log(table, `${player.name} 离开牌桌`);
+      if (player.leaving) table.authorizedIds.delete(player.id);
       bank.cashout(player.id); return false;
     });
     transferHost(table);
@@ -207,6 +249,7 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       player.ready = Boolean(player.ready && player.stack > 0 && !player.leaving && !player.leaveAfterHand && !pausedByAutoplay);
     }
     table.result = result;
+    table.statsDirty = true;
     table.phase = 'showdown'; table.turnSeat = null; table.currentBet = 0;
     if (matchComplete(table)) { table.autoContinue = false; for (const player of table.players) player.ready = false; }
     for (const winner of winners) log(table, `${table.players.find(player => player.id === winner.id).name} 赢得 ${winner.amount} 筹码${reason === 'showdown' ? ` · ${winner.hand}` : ''}`);
@@ -286,12 +329,12 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
     log(table, `${player.name} ${player.lastAction}`);
     progress(table, player.seat);
   };
-  const summary = table => ({ id: table.id, name: table.name, hostId: table.hostId, playerCount: table.players.filter(player => !player.leaving).length,
+  const summary = table => ({ id: table.id, name: table.name, visibility: table.visibility, hostId: table.hostId, playerCount: table.players.filter(player => !player.leaving).length,
     maxPlayers: MAX_PLAYERS, phase: table.phase, smallBlind: table.smallBlind, bigBlind: table.bigBlind, handNumber: table.handNumber,
     handLimit: table.handLimit, matchHandNumber: table.matchHandNumber, matchNumber: table.matchNumber, matchComplete: matchComplete(table) });
   const view = (table, userId) => {
     const online = onlineIds();
-    return { ...summary(table), buyIn: table.buyIn, handId: table.handId, revision: table.revision,
+    return { ...summary(table), roomCode: table.visibility === 'private' && canAccess(table, userId) ? table.roomCode : null, buyIn: table.buyIn, handId: table.handId, revision: table.revision,
       buttonSeat: table.buttonSeat, smallBlindSeat: table.smallBlindSeat, bigBlindSeat: table.bigBlindSeat,
       turnSeat: table.turnSeat, deadline: table.deadline, turnMs, nextHandAt: table.nextHandAt, autoContinue: table.autoContinue,
       board: [...table.board], events: [...table.events], messages: [...table.messages],
@@ -306,15 +349,16 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
     const seated = findMembership(user.id);
     const self = seated?.players.find(player => player.id === user.id);
     if (self) { self.lastSeen = now(); self.name = user.name; self.avatar = user.avatar; }
-    const table = id ? requireTable(id) : self && !self.leaving ? seated : null;
+    const table = id ? requireAccess(requireTable(id), user.id) : self && !self.leaving ? seated : null;
     const membership = seated && self ? {
       tableId: seated.id,
       tableName: seated.name,
+      visibility: seated.visibility,
       inHand: Boolean(playing(seated) && self.inHand),
       leaving: Boolean(self.leaving),
       leaveAfterHand: Boolean(self.leaveAfterHand),
     } : null;
-    return { tables: [...tables.values()].map(summary), table: table ? view(table, user.id) : null, membership,
+    return { tables: [...tables.values()].filter(item => item.visibility === 'public').map(summary), table: table ? view(table, user.id) : null, membership,
       wallet: bank.wallet(user.id), canMint: bank.canMint(user), invitations: pendingInvitations(user.id), serverTime: now() };
   };
   const addPlayer = (table, user, requestedSeat) => {
@@ -336,6 +380,7 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
     const stack = bank.moveSeat(user.id, table.id, table.buyIn, table.bigBlind);
     if (existing) {
       existing.players = existing.players.filter(player => player.id !== user.id);
+      existing.authorizedIds.delete(user.id);
       log(existing, `${user.name} 换桌`); cleanupLeavers(existing); publish(existing);
     }
     const autoReady = (playing(table) || table.autoContinue) && !matchComplete(table);
@@ -349,6 +394,7 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
     log(table, `${player.name} 离开牌桌`);
     transferHost(table);
     if (!playing(table) || !player.inHand) {
+      table.authorizedIds.delete(player.id);
       bank.cashout(player.id);
       table.players = table.players.filter(item => item !== player);
       cleanupLeavers(table);
@@ -398,7 +444,7 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
   return {
     state,
     invitations(user) { return { invitations: pendingInvitations(user.id), serverTime: now() }; },
-    create(user, { name, smallBlind = DEFAULT_SMALL_BLIND, handLimit = 0 } = {}) {
+    create(user, { name, smallBlind = DEFAULT_SMALL_BLIND, handLimit = 0, visibility = 'public' } = {}) {
       sweep();
       const existing = findMembership(user.id);
       const existingPlayer = existing?.players.find(item => item.id === user.id);
@@ -407,14 +453,34 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       }
       if (tables.size >= 64) throw fail('牌桌数量已满，请加入现有牌桌', 409);
       const limits = stakes(smallBlind, handLimit);
+      const nextVisibility = parseVisibility(visibility, 'public');
+      const roomCode = nextVisibility === 'private' ? generateRoomCode() : null;
       const table = { ...limits, id: randomUUID(), name: (typeof name === 'string' ? name.trim() : '').slice(0, 32) || `${user.name}的牌桌`.slice(0, 32),
+        visibility: nextVisibility, roomCode, authorizedIds: new Set(), statsDirty: false,
         hostId: user.id, phase: 'waiting', handId: null, handNumber: 0, matchHandNumber: 0, matchNumber: 1, revision: 0, buttonSeat: -1, smallBlindSeat: null, bigBlindSeat: null,
         turnSeat: null, deadline: null, board: [], deck: [], currentBet: 0, minRaise: limits.bigBlind, result: null, players: [], log: [], events: [], eventSeq: 0, messages: [], timer: null,
         autoContinue: false, nextHandAt: null, nextHandTimer: null, updatedAt: now() };
-      addPlayer(table, user); tables.set(table.id, table); publish(table);
+      addPlayer(table, user);
+      if (nextVisibility === 'private') table.authorizedIds.add(user.id);
+      tables.set(table.id, table); publish(table);
       return state(user, table.id);
     },
-    join(user, { id, seat } = {}) { const table = requireTable(id); addPlayer(table, user, seat); publish(table); return state(user, id); },
+    enter(user, { code } = {}) {
+      sweep();
+      const normalized = normalizeRoomCode(code);
+      if (!/^[A-Z0-9]{6}$/.test(normalized)) throw fail('请输入 6 位房间口令');
+      const table = [...tables.values()].find(item => item.visibility === 'private' && item.roomCode === normalized);
+      if (!table) throw fail('房间口令无效或牌桌已结束', 404);
+      table.authorizedIds.add(user.id);
+      return state(user, table.id);
+    },
+    join(user, { id, seat } = {}) {
+      const table = requireAccess(requireTable(id), user.id);
+      addPlayer(table, user, seat);
+      if (table.visibility === 'private') table.authorizedIds.add(user.id);
+      publish(table);
+      return state(user, id);
+    },
     leave(user, { id, mode = 'now' } = {}) {
       const table = requireTable(id), player = requirePlayer(table, user.id);
       if (!['now', 'after', 'cancel'].includes(mode)) throw fail('离桌方式无效');
@@ -450,17 +516,44 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       }
       scheduleNextHand(table); publish(table); return state(user, id);
     },
-    stakes(user, { id, smallBlind, handLimit } = {}) {
+    stakes(user, { id, smallBlind, handLimit, visibility, resetCode } = {}) {
       const table = requireTable(id); requirePlayer(table, user.id);
       if (table.hostId !== user.id) throw fail('只有桌主可以调整牌桌设置', 403);
       if (playing(table)) throw fail('本手结束后才能调整牌桌设置', 409);
+      if (resetCode !== undefined && typeof resetCode !== 'boolean') throw fail('重置口令参数无效');
       const limits = stakes(smallBlind === undefined ? table.smallBlind : smallBlind, handLimit === undefined ? table.handLimit : handLimit);
-      if (limits.smallBlind !== table.smallBlind || limits.handLimit !== table.handLimit) {
+      const nextVisibility = parseVisibility(visibility, table.visibility);
+      if (resetCode && nextVisibility !== 'private') throw fail('私密牌桌才能重置口令');
+      const limitsChanged = limits.smallBlind !== table.smallBlind || limits.handLimit !== table.handLimit;
+      const visibilityChanged = nextVisibility !== table.visibility;
+      const codeReset = Boolean(resetCode && !visibilityChanged && nextVisibility === 'private');
+      let revoked = [];
+      if (limitsChanged) {
         stopNextHand(table); table.autoContinue = false;
         Object.assign(table, limits); table.minRaise = limits.bigBlind;
         for (const player of table.players) player.ready = false;
         log(table, `桌主调整牌桌：盲注 ${limits.smallBlind}/${limits.bigBlind} · ${limits.handLimit ? `每场 ${limits.handLimit} 手` : '不限手数'}，请重新准备`);
-        publish(table);
+      }
+      if (visibilityChanged) {
+        table.visibility = nextVisibility;
+        if (nextVisibility === 'private') {
+          table.roomCode = generateRoomCode();
+          table.authorizedIds = new Set(table.players.filter(player => !player.leaving).map(player => player.id));
+          log(table, '桌主将牌桌设为私密，仅限邀请或房间口令进入');
+        } else {
+          table.roomCode = null;
+          table.authorizedIds.clear();
+          log(table, '桌主将牌桌设为公开，所有玩家可在大厅看到');
+        }
+      } else if (codeReset) {
+        const seatedIds = new Set(table.players.filter(player => !player.leaving).map(player => player.id));
+        revoked = [...table.authorizedIds].filter(userId => !seatedIds.has(userId));
+        table.roomCode = generateRoomCode();
+        table.authorizedIds = seatedIds;
+        log(table, '桌主已重置房间口令');
+      }
+      if (limitsChanged || visibilityChanged || codeReset) {
+        publish(table, { broadcastLobby: visibilityChanged, extraRecipients: revoked });
       }
       return state(user, id);
     },
@@ -527,7 +620,8 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       player.spokeAt = now();
       table.messages.push({ id: randomUUID(), requestId, userId: user.id, name: user.name, text: text.trim(), at: now() });
       if (table.messages.length > 40) table.messages.shift();
-      changed({ type: 'arcade-changed', id: table.id });
+      if (table.visibility === 'public') changed({ type: 'arcade-changed', id: table.id });
+      else notifyTable(table, { type: 'arcade-changed', id: table.id });
       return state(user, id);
     },
     invite(user, { id, userId } = {}) {
@@ -539,7 +633,7 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       pendingInvitations(userId);
       if ([...invitations.values()].some(invite => invite.userId === userId && invite.tableId === id)) return state(user, id);
       if (invitations.size >= 1000) throw fail('邀请过多，请稍后再试', 429);
-      const invite = { id: randomUUID(), userId, fromId: user.id, fromName: user.name, tableId: id, tableName: table.name, expiresAt: now() + 300000 };
+      const invite = { id: randomUUID(), userId, fromId: user.id, fromName: user.name, tableId: id, tableName: table.name, visibility: table.visibility, expiresAt: now() + 300000 };
       invitations.set(invite.id, invite); notify(userId, { type: 'arcade-invite', invitation: invite });
       return state(user, id);
     },
@@ -548,12 +642,29 @@ export function createPoker({ bank, getUser = () => null, notify = () => {}, cha
       const invite = invitations.get(invitationId);
       if (!invite || invite.userId !== user.id) throw fail('邀请已失效', 404);
       if (typeof accept !== 'boolean') throw fail('邀请操作无效');
-      if (accept) { const table = requireTable(invite.tableId); addPlayer(table, user); publish(table); }
+      if (accept) {
+        const table = requireTable(invite.tableId);
+        addPlayer(table, user);
+        if (table.visibility === 'private') table.authorizedIds.add(user.id);
+        publish(table);
+      }
       invitations.delete(invitationId);
       notify(user.id, { type: 'arcade-invitations-changed' });
       return state(user, accept ? invite.tableId : undefined);
     },
-    presence() { if (!closed && tables.size) changed({ type: 'arcade-changed' }); },
+    presence() {
+      if (closed || !tables.size) return;
+      if ([...tables.values()].some(table => table.visibility === 'public')) {
+        changed({ type: 'arcade-changed' });
+        return;
+      }
+      const recipients = new Set();
+      for (const table of tables.values()) {
+        for (const player of table.players) recipients.add(player.id);
+        for (const userId of table.authorizedIds) recipients.add(userId);
+      }
+      for (const userId of recipients) notify(userId, { type: 'arcade-changed' });
+    },
     close() { closed = true; clearInterval(sweeper); for (const table of tables.values()) { stopTimer(table); stopNextHand(table); } tables.clear(); },
   };
 }

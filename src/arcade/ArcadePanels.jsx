@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronDown, Coins, Search, Trophy, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronDown, Coins, Copy, Globe, Lock, RefreshCw, Search, SlidersHorizontal, Trophy, UserPlus, X } from 'lucide-react';
 import { api, uid } from '../api';
 import { Avatar } from '../components';
+import { copyText } from '../mobile/runtime';
 import { useIsMobile } from '../mobile/ui';
 import './arcade-panels.css';
 
@@ -31,14 +32,43 @@ export function InvitePanel({ table, onCommand, onClose, error, maxPlayers = 6 }
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState('');
+  const copyTimer = useRef(0);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
   const count = table.players?.length || 0;
   const full = Boolean(maxPlayers && count >= maxPlayers);
+  const copyCode = async () => {
+    if (!table.roomCode) return;
+    setCopyError('');
+    try {
+      await copyText(table.roomCode);
+      setCopied(true);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopyError('复制失败，请手动记录上方房间口令');
+    }
+  };
   const send = async () => {
     setBusy(true);
     if (await onCommand('invite', { id: table.id, userId: selected.id })) { setSent(`已邀请 ${selected.name}`); setSelected(null); }
     setBusy(false);
   };
-  return <Sheet title="邀请好友" icon={<UserPlus size={20} />} onClose={onClose}><p className="arcade-sheet-subtitle">{table.name} · {maxPlayers ? `${count} / ${maxPlayers} 人` : `当前 ${count} 人在桌`}</p>
+  return <Sheet title="邀请好友" icon={<UserPlus size={20} />} onClose={onClose}>
+    <p className="arcade-sheet-subtitle">{table.name}{table.visibility === 'private' ? ' · 私密牌桌' : ''} · {maxPlayers ? `${count} / ${maxPlayers} 人` : `当前 ${count} 人在桌`}</p>
+    {table.visibility === 'private' && table.roomCode && (
+      <div className="arcade-code-card">
+        <div className="arcade-code-meta">
+          <span><Lock size={13} />房间口令</span>
+          <strong>{table.roomCode}</strong>
+        </div>
+        <button type="button" className="arcade-secondary arcade-code-action" onClick={copyCode}>
+          {copied ? <><Check size={14} />已复制</> : <><Copy size={14} />复制口令</>}
+        </button>
+      </div>
+    )}
+    {copyError && <p className="arcade-panel-error" role="alert">{copyError}</p>}
     <People selected={selected} onSelect={setSelected} exclude={(table.players || []).map(player => player.id)} />
     {error && <p className="arcade-panel-error" role="alert">{error}</p>}
     {sent && <p className="arcade-panel-success" role="status">{sent}</p>}
@@ -49,22 +79,81 @@ export function InvitePanel({ table, onCommand, onClose, error, maxPlayers = 6 }
 export function StakesPanel({ table, onCommand, onClose, error }) {
   const [base, setBase] = useState(String(table.smallBlind));
   const [hands, setHands] = useState(String(table.handLimit));
+  const [visibility, setVisibility] = useState(table.visibility === 'private' ? 'private' : 'public');
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [copyError, setCopyError] = useState('');
+  const copyTimer = useRef(0);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
+  const canEdit = ['waiting', 'showdown'].includes(table.phase);
   const value = Number(base), limit = Number(hands), valid = Number.isSafeInteger(value) && value >= 1 && value <= 1000000 && hands !== '' && Number.isSafeInteger(limit) && limit >= 0 && limit <= 1000;
-  const save = async event => {
-    event.preventDefault(); if (!valid || busy) return;
-    setBusy(true); const ok = await onCommand('stakes', { id: table.id, smallBlind: value, handLimit: limit }); setBusy(false); if (ok) onClose();
+  const copyCode = async () => {
+    if (!table.roomCode) return;
+    setCopyError('');
+    try {
+      await copyText(table.roomCode);
+      setCopied(true);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopyError('复制失败，请手动记录上方房间口令');
+    }
   };
-  return <Sheet title="牌桌设置" icon={<Coins size={21} />} onClose={onClose}>
-    <form className="arcade-transfer-form" onSubmit={save}><label>底分（小盲注）<input aria-label="牌桌底分" type="number" min="1" max="1000000" step="1" value={base} onChange={event => setBase(event.target.value)} required /></label>
+  const resetCode = async () => {
+    if (busy || !canEdit || table.visibility !== 'private') return;
+    setBusy(true); setNotice(''); setCopyError('');
+    const ok = await onCommand('stakes', { id: table.id, resetCode: true });
+    setBusy(false);
+    if (ok) { setCopied(false); setNotice('房间口令已重置，旧口令将失效'); }
+  };
+  const save = async event => {
+    event.preventDefault(); if (!valid || busy || !canEdit) return;
+    setBusy(true); setNotice('');
+    const ok = await onCommand('stakes', { id: table.id, smallBlind: value, handLimit: limit, visibility });
+    setBusy(false); if (ok) onClose();
+  };
+  return <Sheet title="牌桌设置" icon={<SlidersHorizontal size={20} />} onClose={onClose}>
+    <form className="arcade-transfer-form" onSubmit={save}>
+      <div className="create-visibility-field">
+        <span className="create-field-label">房间类型</span>
+        <div className="visibility-picker" role="radiogroup" aria-label="房间类型">
+          <button type="button" role="radio" aria-checked={visibility === 'public'} disabled={busy || !canEdit} className={`visibility-option ${visibility === 'public' ? 'selected' : ''}`} onClick={() => setVisibility('public')}>
+            <span className="visibility-option-head"><Globe size={15} /><b>公开牌桌</b></span>
+            <small>大厅可见，所有成员可进入</small>
+          </button>
+          <button type="button" role="radio" aria-checked={visibility === 'private'} disabled={busy || !canEdit} className={`visibility-option ${visibility === 'private' ? 'selected' : ''}`} onClick={() => setVisibility('private')}>
+            <span className="visibility-option-head"><Lock size={15} /><b>私密牌桌</b></span>
+            <small>大厅隐藏，凭邀请或口令进入</small>
+          </button>
+        </div>
+      </div>
+      {table.visibility === 'private' && visibility === 'private' && table.roomCode && (
+        <div className="arcade-code-card compact">
+          <div className="arcade-code-meta">
+            <span><Lock size={13} />当前口令</span>
+            <strong>{table.roomCode}</strong>
+          </div>
+          <div className="arcade-code-buttons">
+            <button type="button" className="arcade-secondary arcade-code-action" onClick={copyCode}>{copied ? <><Check size={14} />已复制</> : <><Copy size={14} />复制</>}</button>
+            <button type="button" className="arcade-secondary arcade-code-action" disabled={busy || !canEdit} onClick={resetCode}><RefreshCw size={14} />重置</button>
+          </div>
+        </div>
+      )}
+      {visibility !== (table.visibility || 'public') && (
+        <p className="arcade-stat-note is-highlight">{visibility === 'private' ? '保存后将从大厅隐藏并生成新的房间口令，已在桌玩家不受影响。' : '保存后所有成员均可在大厅看到并进入该牌桌。'}</p>
+      )}
+      {notice && <p className="arcade-panel-success" role="status">{notice}</p>}
+      {copyError && <p className="arcade-panel-error" role="alert">{copyError}</p>}
+      <label>底分（小盲注）<input aria-label="牌桌底分" type="number" min="1" max="1000000" step="1" value={base} onChange={event => setBase(event.target.value)} required /></label>
       <div className="stake-presets">{[10, 50, 100, 500].map(amount => <button type="button" className={amount === value ? 'selected' : ''} key={amount} onClick={() => setBase(String(amount))}>{num(amount)}</button>)}</div>
       <div className="stake-preview"><span>小盲 / 大盲</span><b>{valid ? `${num(value)} / ${num(value * 2)}` : '—'}</b></div>
       <label>每场手数（0 为不限）<input aria-label="牌桌每场手数" type="number" min="0" max="1000" step="1" value={hands} onChange={event => setHands(event.target.value)} required /></label>
       <div className="stake-presets">{[0, 5, 10, 20].map(amount => <button type="button" className={amount === limit ? 'selected' : ''} key={amount} onClick={() => setHands(String(amount))}>{amount || '不限'}</button>)}</div>
-      <p className="arcade-stat-note">调整后所有玩家重新准备；已有桌上筹码不变。下一次买入按 100 个大盲计算，余额不足时使用剩余可用筹码。</p>
+      <p className="arcade-stat-note">调整底分或手数后所有玩家重新准备；仅切换公开/私密不影响准备状态。下一次买入按 100 个大盲计算，余额不足时使用剩余可用筹码。</p>
       <p className="arcade-stat-note">本场已打 {table.matchHandNumber} 手。达到设定手数后暂停发牌，可由桌主开启下一场；每手仍按标准德州的四轮下注进行。</p>
       {error && <p className="arcade-panel-error" role="alert">{error}</p>}
-      <button className="arcade-primary panel-submit" disabled={!valid || busy || !['waiting', 'showdown'].includes(table.phase)}>{busy ? '正在保存…' : '保存设置'}<Check size={16} /></button>
+      <button className="arcade-primary panel-submit" disabled={!valid || busy || !canEdit}>{busy ? '正在保存…' : '保存设置'}<Check size={16} /></button>
     </form>
   </Sheet>;
 }
