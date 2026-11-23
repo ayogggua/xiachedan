@@ -82,22 +82,26 @@
   text-align: center;
 }
 
-/* ── 主工作区：上半为弧形绒面赌桌，下半为五路单与筹码操作台 ── */
+/* ── 主工作区：上半为弧形绒面赌桌与五路单，底栏固定为筹码操作台 ── */
 .baccarat-workspace {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding: 8px 16px 10px;
+  padding: 8px 16px 8px;
   gap: 8px;
   overflow-y: auto;
 }
 
 .baccarat-stage {
   position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1 0 auto;
   display: flex;
+}
+
+.baccarat-cockpit-wrap {
+  flex-shrink: 0;
+  padding: 0 16px 10px;
 }
 
 .baccarat-felt {
@@ -1213,9 +1217,13 @@
   color: var(--club-text-3);
 }
 
-.cockpit-balance-btn .mechanical-counter {
+.cockpit-balance-btn strong {
+  font-family: var(--font-mono);
   font-size: 15px;
+  font-weight: 700;
   color: var(--club-brass-bright);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
 }
 
 .cockpit-bet-stat strong {
@@ -1943,23 +1951,147 @@
   to { opacity: 1; transform: scale(1); }
 }
 
+/* ── 桌面端矮屏自适应（如 MacBook / 720p / 桌面端窗口），保证注区与五路单完整展示不裁切 ── */
+@media (max-height: 860px) and (min-width: 761px) {
+  .baccarat-workspace {
+    padding: 6px 14px 6px;
+    gap: 6px;
+  }
+
+  .baccarat-cockpit-wrap {
+    padding: 0 14px 8px;
+  }
+
+  .baccarat-felt {
+    padding: 8px 16px 10px;
+    gap: 6px;
+    border-width: 4px;
+    border-radius: 18px;
+  }
+
+  .baccarat-shoe {
+    top: 4px !important;
+    left: 10px !important;
+    width: 96px !important;
+    height: 48px !important;
+  }
+
+  .baccarat-stage-top {
+    padding-left: 98px;
+  }
+
+  .baccarat-phase-banner {
+    min-height: 38px;
+    padding: 4px 12px;
+    gap: 1px;
+  }
+
+  .baccarat-phase-banner strong {
+    font-size: 13px;
+  }
+
+  .baccarat-duel {
+    padding: 0 6px;
+    gap: 12px;
+  }
+
+  .duel-side {
+    padding: 5px 12px 7px;
+    gap: 4px;
+  }
+
+  .duel-side-label b { font-size: 16px; }
+  .duel-points { min-width: 28px; height: 28px; font-size: 16px; }
+  .duel-cards { min-height: 74px; gap: 7px; }
+  .duel-cards .poker-card,
+  .duel-card-empty { width: 52px; height: 74px; }
+  .duel-card-wrap.is-third-card { margin-left: 10px; }
+  .duel-side.side-player .duel-card-wrap.is-third-card { margin-right: 10px; }
+
+  .baccarat-bet-board { gap: 6px; }
+  .baccarat-side-row { gap: 6px; }
+  .baccarat-main-row { gap: 8px; }
+  .baccarat-spot.is-side { min-height: 52px; padding: 5px 10px; }
+  .baccarat-spot.is-main { min-height: 66px; padding: 7px 13px; }
+  .spot-name { font-size: 14.5px; }
+  .baccarat-spot.is-main .spot-name { font-size: 19px; }
+  .spot-foot { margin-top: 3px; min-height: 18px; }
+  .spot-chips-area,
+  .baccarat-spot-chips { width: 44px; height: 36px; bottom: 6px; }
+
+  .baccarat-roadmap { padding: 6px 10px 7px; gap: 5px; }
+  .roadmap-pane-bead .road-grid { --road-cell-override: 16px; }
+  .roadmap-pane-big .road-grid { --road-cell-override: 13px; }
+  .derived-box .road-grid { --road-cell-override: 8px; }
+  .bead-disc { font-size: 9px; }
+
+  .baccarat-cockpit { padding: 6px 12px; }
+  .casino-chip-btn { width: 42px; height: 42px; }
+  .casino-chip-btn .chip-rim { width: 30px; height: 30px; font-size: 10px; }
+  .cockpit-btn,
+  .cockpit-deal-btn { min-height: 34px; }
+}
+
+@media (max-height: 720px) and (min-width: 761px) {
+  .baccarat-room-top {
+    padding-block: 4px !important;
+    min-height: 34px !important;
+  }
+
+  .baccarat-workspace {
+    padding: 4px 12px 4px;
+    gap: 5px;
+  }
+
+  .baccarat-cockpit-wrap {
+    padding: 0 12px 6px;
+  }
+
+  .baccarat-felt {
+    padding: 6px 14px 8px;
+    gap: 5px;
+  }
+
+  .baccarat-phase-banner {
+    min-height: 34px;
+    padding: 3px 10px;
+  }
+
+  .duel-cards { min-height: 58px; }
+  .duel-cards .poker-card,
+  .duel-card-empty { width: 42px; height: 58px; }
+  .baccarat-spot.is-side { min-height: 44px; padding: 4px 9px; }
+  .baccarat-spot.is-main { min-height: 54px; padding: 5px 12px; }
+  .baccarat-spot.is-main .spot-name { font-size: 17px; }
+  .baccarat-roadmap { padding: 5px 9px 5px; gap: 4px; }
+  .roadmap-pane-bead .road-grid { --road-cell-override: 13px; }
+  .roadmap-pane-big .road-grid { --road-cell-override: 10px; }
+  .derived-box .road-grid { --road-cell-override: 7px; }
+  .baccarat-cockpit { padding: 5px 10px; }
+  .casino-chip-btn { width: 38px; height: 38px; }
+  .casino-chip-btn .chip-rim { width: 27px; height: 27px; font-size: 9.5px; }
+}
+
 /* ── 移动端适配（<= 760px） ── */
 @media (max-width: 760px) {
   .baccarat-workspace {
-    padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
-    gap: 8px;
+    padding: 6px 8px 6px;
+    gap: 6px;
+  }
+
+  .baccarat-cockpit-wrap {
+    padding: 0 8px calc(6px + env(safe-area-inset-bottom, 0px));
   }
 
   .baccarat-stage {
-    min-height: 0;
     flex: 0 0 auto;
   }
 
   .baccarat-felt {
-    padding: 10px 10px 12px;
-    border-width: 4px;
-    border-radius: 18px;
-    gap: 8px;
+    padding: 8px 8px 10px;
+    border-width: 3px;
+    border-radius: 16px;
+    gap: 6px;
   }
 
   .baccarat-shoe {
@@ -1969,12 +2101,21 @@
   .baccarat-stage-top {
     grid-template-columns: 1fr;
     padding-left: 0;
-    gap: 6px;
+    gap: 5px;
   }
 
   .baccarat-shoe-meter {
     display: none;
   }
+
+  .baccarat-phase-banner {
+    min-height: 36px;
+    padding: 4px 10px;
+    gap: 2px;
+  }
+
+  .baccarat-phase-banner strong { font-size: 13px; }
+  .baccarat-phase-banner span { font-size: 11px; }
 
   .baccarat-players-strip {
     justify-content: flex-start;
@@ -1988,55 +2129,79 @@
   }
 
   .duel-side {
-    padding: 7px 6px 9px;
-    gap: 6px;
+    padding: 6px 6px 7px;
+    gap: 5px;
   }
 
-  .duel-side-label b { font-size: 15px; }
+  .duel-side-label b { font-size: 14.5px; }
   .duel-side-label small { display: none; }
-  .duel-points { min-width: 28px; height: 28px; font-size: 16px; padding: 0 6px; }
-  .duel-cards { gap: 4px; min-height: 70px; }
+  .duel-points { min-width: 26px; height: 26px; font-size: 15px; padding: 0 6px; }
+  .duel-cards { gap: 4px; min-height: 62px; }
   .duel-cards .poker-card,
-  .duel-card-empty { width: 46px; height: 66px; }
-  .duel-card-wrap.is-third-card { margin-left: 8px; }
-  .duel-side.side-player .duel-card-wrap.is-third-card { margin-right: 8px; }
-  .duel-center-divider { min-width: 34px; gap: 4px; }
-  .duel-vs { width: 26px; height: 26px; font-size: 10px; }
+  .duel-card-empty { width: 42px; height: 60px; }
+  .duel-card-wrap.is-third-card { margin-left: 7px; }
+  .duel-side.side-player .duel-card-wrap.is-third-card { margin-right: 7px; }
+  .duel-center-divider { min-width: 28px; gap: 3px; }
+  .duel-vs { width: 24px; height: 24px; font-size: 9.5px; }
   .duel-pot-box { display: none; }
 
-  .baccarat-side-row { gap: 5px; }
-  .baccarat-main-row { gap: 7px; }
-  .baccarat-spot { padding: 7px 8px; border-radius: 11px; }
-  .baccarat-spot.is-side { min-height: 64px; }
-  .baccarat-spot.is-main { min-height: 82px; padding: 9px 11px; }
-  .spot-name { font-size: 13.5px; }
-  .baccarat-spot.is-main .spot-name { font-size: 19px; }
-  .spot-odds { font-size: 10px; }
+  .baccarat-bet-board { gap: 5px; }
+  .baccarat-side-row { gap: 4px; }
+  .baccarat-main-row { gap: 6px; }
+  .baccarat-spot { padding: 6px 7px; border-radius: 10px; }
+  .baccarat-spot.is-side { min-height: 58px; }
+  .baccarat-spot.is-side .spot-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+  }
+  .baccarat-spot.is-main { min-height: 70px; padding: 8px 10px; }
+  .baccarat-spot.is-main .spot-head {
+    align-items: baseline;
+    gap: 5px;
+  }
+  .spot-name { font-size: 13px; white-space: nowrap; }
+  .baccarat-spot.is-main .spot-name { font-size: 18px; }
+  .spot-odds { font-size: 9.5px; white-space: nowrap; }
   .spot-en { display: none; }
-  .spot-chips-area { right: 4px; bottom: 16px; width: 40px; height: 34px; }
-  .baccarat-spot-chips { width: 40px; height: 34px; }
-  .spot-foot { flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-  .spot-my-bet { font-size: 10.5px; padding: 1px 6px; }
-  .spot-table-bet { font-size: 10px; }
+  .spot-chips-area { right: 3px; bottom: 8px; width: 34px; height: 28px; }
+  .baccarat-spot-chips { width: 34px; height: 28px; }
+  .spot-foot { flex-wrap: nowrap; gap: 4px; margin-top: 3px; min-height: 16px; overflow: hidden; }
+  .spot-my-bet { font-size: 10px; padding: 1px 5px; white-space: nowrap; }
+  .spot-my-placeholder { font-size: 10px; white-space: nowrap; }
+  .spot-table-bet { font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   .baccarat-roadmap.is-compact {
-    padding: 8px 9px;
-    gap: 6px;
+    padding: 7px 8px;
+    gap: 5px;
+  }
+
+  .roadmap-topbar {
+    gap: 5px;
+  }
+
+  .roadmap-stats {
+    gap: 4px;
+  }
+
+  .stat-pill {
+    padding: 1px 6px;
+    font-size: 10.5px;
   }
 
   .roadmap-mobile-tabs {
     display: flex;
     gap: 4px;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
   }
 
   .roadmap-mobile-tabs button {
     flex: 1;
-    height: 28px;
+    height: 26px;
     border-radius: 7px;
     border: 1px solid var(--club-line);
     background: rgba(255, 255, 255, 0.03);
-    font-size: 11.5px;
+    font-size: 11px;
     color: var(--club-text-2);
   }
 
@@ -2050,45 +2215,76 @@
   .baccarat-cockpit {
     flex-direction: column;
     align-items: stretch;
-    gap: 8px;
-    padding: 9px 10px;
+    gap: 6px;
+    padding: 7px 9px 8px;
+    border-radius: 12px;
   }
 
   .cockpit-wallet {
     justify-content: space-between;
+    gap: 8px;
+  }
+
+  .cockpit-balance-btn {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 9px;
+  }
+
+  .cockpit-balance-btn strong {
+    font-size: 14px;
+  }
+
+  .cockpit-bet-stat {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .cockpit-bet-stat strong {
+    font-size: 13.5px;
   }
 
   .cockpit-chip-tray {
     justify-content: space-between;
-    gap: 6px;
+    gap: 5px;
+    padding: 2px 0;
   }
 
   .casino-chip-btn {
-    width: 44px;
-    height: 44px;
+    width: 40px;
+    height: 40px;
   }
 
   .casino-chip-btn .chip-rim {
-    width: 31px;
-    height: 31px;
-    font-size: 10px;
+    width: 28px;
+    height: 28px;
+    font-size: 9.5px;
   }
 
   .cockpit-actions {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
+    grid-template-columns: repeat(4, minmax(0, auto)) minmax(92px, 1fr);
+    gap: 5px;
   }
 
   .cockpit-btn {
-    min-height: 38px;
-    padding: 0 6px;
-    font-size: 12px;
+    min-height: 36px;
+    padding: 0 7px;
+    font-size: 11.5px;
+    gap: 3px;
+  }
+
+  .cockpit-btn svg {
+    width: 13px;
+    height: 13px;
   }
 
   .cockpit-deal-btn {
-    grid-column: 1 / -1;
-    min-height: 42px;
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 12.5px;
   }
 
   .baccarat-squeeze-backdrop {

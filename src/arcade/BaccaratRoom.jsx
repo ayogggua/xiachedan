@@ -234,20 +234,22 @@ export default function BaccaratRoom({
   const lowCards = table.cardsRemaining <= table.cutAt + 12;
 
   const spotDefs = [
-    { id: 'playerPair', name: '闲对', en: 'PLAYER PAIR', odds: '1 : 11', group: 'side', tone: 'player' },
-    { id: 'tie', name: '和', en: 'TIE', odds: '1 : 8', group: 'side', tone: 'tie' },
+    { id: 'playerPair', name: '闲对', en: 'PLAYER PAIR', odds: mobile ? '1:11' : '1 : 11', group: 'side', tone: 'player' },
+    { id: 'tie', name: '和', en: 'TIE', odds: mobile ? '1:8' : '1 : 8', group: 'side', tone: 'tie' },
     ...(table.mode === 'no-commission'
-      ? [{ id: 'lucky6', name: '幸运 6', en: 'LUCKY 6', odds: '1 : 12 / 20', group: 'side', tone: 'gold' }]
+      ? [{ id: 'lucky6', name: '幸运6', en: 'LUCKY 6', odds: mobile ? '1:12/20' : '1 : 12 / 20', group: 'side', tone: 'gold' }]
       : []),
-    { id: 'bankerPair', name: '庄对', en: 'BANKER PAIR', odds: '1 : 11', group: 'side', tone: 'banker' },
+    { id: 'bankerPair', name: '庄对', en: 'BANKER PAIR', odds: mobile ? '1:11' : '1 : 11', group: 'side', tone: 'banker' },
   ];
   const mainDefs = [
-    { id: 'player', name: '闲', en: 'PLAYER', odds: '1 : 1', tone: 'player' },
+    { id: 'player', name: '闲', en: 'PLAYER', odds: mobile ? '1:1' : '1 : 1', tone: 'player' },
     {
       id: 'banker',
       name: '庄',
       en: 'BANKER',
-      odds: table.mode === 'no-commission' ? '免佣 1 : 1（6点 1:0.5）' : '1 : 0.95',
+      odds: table.mode === 'no-commission'
+        ? (mobile ? '免佣 · 6点1:0.5' : '免佣 1 : 1（6点 1:0.5）')
+        : (mobile ? '抽水 1:0.95' : '1 : 0.95'),
       tone: 'banker',
     },
   ];
@@ -518,12 +520,15 @@ export default function BaccaratRoom({
             compact={mobile}
             onExpand={mobile ? () => setRoadmapExpanded(true) : undefined}
           />
+        </div>
+      </div>
 
-          <div className="baccarat-cockpit">
+      <div className="baccarat-cockpit-wrap">
+        <div className="baccarat-cockpit">
             <div className="cockpit-wallet">
               <button type="button" className="cockpit-balance-btn" onClick={() => onPanel('wallet')}>
                 <span>通用余额</span>
-                <Counter value={balance} />
+                <strong aria-label={number(balance)}>{number(balance)}</strong>
               </button>
               <div className="cockpit-bet-stat">
                 <span>本局已押</span>
@@ -609,7 +614,6 @@ export default function BaccaratRoom({
                 </span>
               </button>
             </div>
-          </div>
         </div>
       </div>
 

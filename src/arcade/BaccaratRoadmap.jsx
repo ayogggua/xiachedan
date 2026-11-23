@@ -27,7 +27,7 @@ function RoadGrid({ cols, minCols, cellSize, className = '', children }) {
         style={{
           '--road-cols': totalCols,
           '--road-rows': ROWS,
-          '--cell-size': `${cellSize}px`,
+          '--cell-size': `var(--road-cell-override, ${cellSize}px)`,
         }}
       >
         {children}
