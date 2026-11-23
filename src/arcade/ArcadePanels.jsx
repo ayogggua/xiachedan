@@ -7,7 +7,7 @@ import './arcade-panels.css';
 
 const num = value => Number(value || 0).toLocaleString('zh-CN');
 const signed = value => `${value > 0 ? '+' : ''}${num(value)}`;
-const KINDS = { initial: '初始筹码', transfer: '转账', mint: '管理员发放', buyin: '牌桌买入', cashout: '离桌退回', hand: '牌局结算', recovery: '未完成牌局退回' };
+const KINDS = { initial: '初始筹码', transfer: '转账', mint: '管理员发放', buyin: '牌桌买入', cashout: '离桌退回', hand: '德州结算', baccarat: '百家乐结算', recovery: '未完成牌局退回' };
 
 function People({ selected, onSelect, exclude = [], includeSelf }) {
   const [query, setQuery] = useState('');
@@ -27,20 +27,22 @@ function People({ selected, onSelect, exclude = [], includeSelf }) {
   </div>;
 }
 
-export function InvitePanel({ table, onCommand, onClose, error }) {
+export function InvitePanel({ table, onCommand, onClose, error, maxPlayers = 6 }) {
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState('');
+  const count = table.players?.length || 0;
+  const full = Boolean(maxPlayers && count >= maxPlayers);
   const send = async () => {
     setBusy(true);
     if (await onCommand('invite', { id: table.id, userId: selected.id })) { setSent(`已邀请 ${selected.name}`); setSelected(null); }
     setBusy(false);
   };
-  return <Sheet title="邀请好友" icon={<UserPlus size={20} />} onClose={onClose}><p className="arcade-sheet-subtitle">{table.name} · {table.players.length} / 6 人</p>
-    <People selected={selected} onSelect={setSelected} exclude={table.players.map(player => player.id)} />
+  return <Sheet title="邀请好友" icon={<UserPlus size={20} />} onClose={onClose}><p className="arcade-sheet-subtitle">{table.name} · {maxPlayers ? `${count} / ${maxPlayers} 人` : `当前 ${count} 人在桌`}</p>
+    <People selected={selected} onSelect={setSelected} exclude={(table.players || []).map(player => player.id)} />
     {error && <p className="arcade-panel-error" role="alert">{error}</p>}
     {sent && <p className="arcade-panel-success" role="status">{sent}</p>}
-    <button className="arcade-primary panel-submit" disabled={!selected || busy || table.players.length >= 6} onClick={send}>发送邀请<ArrowRight size={16} /></button>
+    <button className="arcade-primary panel-submit" disabled={!selected || busy || full} onClick={send}>发送邀请<ArrowRight size={16} /></button>
   </Sheet>;
 }
 
@@ -83,8 +85,9 @@ export function Sheet({ title, icon, onClose, children, wide = false }) {
   </div>;
 }
 
-export function Leaderboard({ me, onClose }) {
+export function Leaderboard({ me, onClose, initialGame = 'poker' }) {
   const mobile = useIsMobile();
+  const [gameTab, setGameTab] = useState(initialGame === 'baccarat' ? 'baccarat' : 'poker');
   const [sort, setSort] = useState('net');
   const [rows, setRows] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -94,19 +97,26 @@ export function Leaderboard({ me, onClose }) {
     let alive = true;
     const load = () => {
       const ticket = ++serial.current;
-      api(`arcade/leaderboard?sort=${sort}`)
+      api(`arcade/leaderboard?game=${gameTab}&sort=${sort}`)
         .then(data => { if (alive && ticket === serial.current) { setRows(data.players); setError(''); } })
         .catch(error => { if (alive && ticket === serial.current) setError(error.message); });
     };
     load(); window.addEventListener('linliao:arcade-changed', load);
     return () => { alive = false; ++serial.current; window.removeEventListener('linliao:arcade-changed', load); };
-  }, [sort]);
+  }, [sort, gameTab]);
   const user = rows?.find(row => row.id === selected);
-  const statsFor = target => [
+  const statsFor = target => gameTab === 'baccarat' ? [
+    ['累计派彩', num(target.won)], ['累计下注', num(target.wagered)], ['最大单局净赢', signed(target.biggestWin)], ['和局退本', `${target.pushes} 局`], ['押庄胜', `${target.bankerWins} 局`], ['押闲胜', `${target.playerWins} 局`], ['押和胜', `${target.tieWins} 局`], ['押对子胜', `${target.pairWins} 局`], ['幸运 6 胜', `${target.lucky6Wins} 局`], ['最长连胜', `${target.bestStreak} 局`],
+  ] : [
     ['累计赢得', num(target.won)], ['累计投入', num(target.wagered)], ['最大单局净赢', signed(target.biggestWin)], ['平分底池', `${target.splits} 局`], ['摊牌', `${target.showdowns} 局`], ['弃牌', `${target.folds} 局`], ['全下', `${target.allIns} 局`], ['主动入池率', `${target.vpip}%`], ['加注局数', target.raises], ['最长连胜', `${target.bestStreak} 局`],
   ];
   return <Sheet title="牌桌排行榜" icon={<Trophy size={21} />} onClose={onClose} wide>
-    <div className="arcade-ranking-heading"><span>每一局，都有记录。</span><select aria-label="排行榜排序" value={sort} onChange={event => setSort(event.target.value)}><option value="net">净赢最多</option><option value="total">总筹码最多</option><option value="winRate">胜率最高</option><option value="hands">牌局最多</option><option value="won">累计赢得最多</option></select></div>
+    <div className="arcade-panel-tabs">
+      {[['poker', '德州扑克'], ['baccarat', '澳门百家乐']].map(([id, label]) => (
+        <button key={id} className={gameTab === id ? 'active' : ''} onClick={() => { setGameTab(id); setSelected(null); }}>{label}</button>
+      ))}
+    </div>
+    <div className="arcade-ranking-heading"><span>{gameTab === 'baccarat' ? '澳门百家乐战绩榜' : '无限注德州战绩榜'}</span><select aria-label="排行榜排序" value={sort} onChange={event => setSort(event.target.value)}><option value="net">净赢最多</option><option value="total">总筹码最多</option><option value="winRate">胜率最高</option><option value="hands">牌局最多</option><option value="won">{gameTab === 'baccarat' ? '累计派彩最多' : '累计赢得最多'}</option></select></div>
     {error && <p className="arcade-panel-error" role="alert">{error}</p>}
     {rows ? mobile ? <div className="arcade-ranking-cards">{rows.map(player => {
       const expanded = selected === player.id;
@@ -123,7 +133,7 @@ export function Leaderboard({ me, onClose }) {
     })}</div>
     : <div className="arcade-ranking-scroll"><table className="arcade-ranking"><thead><tr><th>排名 / 玩家</th><th>总筹码</th><th>净赢</th><th>胜率</th><th>获胜 / 局数</th></tr></thead><tbody>{rows.map(player => <tr key={player.id} className={player.id === me.id ? 'is-me' : ''}><td><button onClick={() => setSelected(player.id)} aria-label={`查看${player.name}的战绩`}><span className={`rank-number rank-${player.rank}`}>{String(player.rank).padStart(2, '0')}</span><Avatar user={player} size={30} /><b>{player.name}{player.id === me.id && <small>你</small>}</b></button></td><td>{num(player.total)}</td><td className={player.net > 0 ? 'positive' : player.net < 0 ? 'negative' : ''}>{signed(player.net)}</td><td>{player.hands ? `${player.winRate}%` : '—'}</td><td>{player.wins} / {player.hands}</td></tr>)}</tbody></table></div>
     : <p className="arcade-panel-empty">正在加载战绩…</p>}
-    <p className="arcade-stat-note">胜率按赢得底池的局数统计，平分计入获胜。总筹码包含账户余额和牌桌筹码；转账与发放不计入净赢。</p>
+    <p className="arcade-stat-note">{gameTab === 'baccarat' ? '胜率按单局净赢大于 0 的局数统计；和局退本不中断连胜。总筹码为游戏厅通用账户余额与牌桌在局筹码之和。' : '胜率按赢得底池的局数统计，平分计入获胜。总筹码包含账户余额和牌桌筹码；转账与发放不计入净赢。'}</p>
     {!mobile && user && <div className="arcade-stat-card"><header><Avatar user={user} size={36} /><b>{user.name}</b><button onClick={() => setSelected(null)} aria-label="收起战绩"><X size={17} /></button></header><dl>{statsFor(user).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></div>}
   </Sheet>;
 }

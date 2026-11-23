@@ -28,7 +28,7 @@ export function openStore(directory) {
     -- 游戏厅筹码只用于娱乐。balance 为可用余额，牌桌买入单独托管；全部使用整数。
     CREATE TABLE IF NOT EXISTS arcade_wallets (user_id TEXT PRIMARY KEY, balance INTEGER NOT NULL CHECK(balance >= 0), created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS arcade_escrow (user_id TEXT PRIMARY KEY, table_id TEXT NOT NULL, amount INTEGER NOT NULL CHECK(amount >= 0));
-    -- kind: initial 初始赠送；transfer 玩家转账；mint 总管理员发放；buyin 买入；cashout 离桌；hand 牌局结算；recovery 停机退回。
+    -- kind: initial 初始赠送；transfer 玩家转账；mint 总管理员发放；buyin 买入；cashout 离桌；hand 德州结算；baccarat 百家乐结算；recovery 停机退回。
     CREATE TABLE IF NOT EXISTS arcade_ledger (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, amount INTEGER NOT NULL, peer_id TEXT, actor_id TEXT, note TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS arcade_ledger_user ON arcade_ledger(user_id, created_at DESC);
     -- request_id 由客户端生成，防止重复提交造成重复扣款或发放。
@@ -40,6 +40,29 @@ export function openStore(directory) {
       vpip INTEGER NOT NULL DEFAULT 0, raises INTEGER NOT NULL DEFAULT 0, wagered INTEGER NOT NULL DEFAULT 0,
       won INTEGER NOT NULL DEFAULT 0, net INTEGER NOT NULL DEFAULT 0, biggest_win INTEGER NOT NULL DEFAULT 0,
       streak INTEGER NOT NULL DEFAULT 0, best_streak INTEGER NOT NULL DEFAULT 0
+    );
+    -- 百家乐在局下注托管：开牌前从通用总账户扣除并暂存，撤注退回，结算清除；停机未开牌自动退回总账户。不使用外键或枚举。
+    CREATE TABLE IF NOT EXISTS arcade_baccarat_escrow (
+      table_id TEXT NOT NULL, round_id TEXT NOT NULL, user_id TEXT NOT NULL,
+      amount INTEGER NOT NULL CHECK(amount >= 0), created_at INTEGER NOT NULL,
+      PRIMARY KEY (table_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS arcade_baccarat_escrow_user ON arcade_baccarat_escrow(user_id);
+    -- 百家乐已结算局记录：用于幂等防重结算。outcome 为字符串：banker 庄赢；player 闲赢；tie 和局。不使用外键或枚举。
+    CREATE TABLE IF NOT EXISTS arcade_baccarat_rounds (
+      id TEXT PRIMARY KEY, table_id TEXT NOT NULL, shoe_number INTEGER NOT NULL,
+      round_number INTEGER NOT NULL, outcome TEXT NOT NULL,
+      total_wagered INTEGER NOT NULL, total_payout INTEGER NOT NULL, finished_at INTEGER NOT NULL
+    );
+    -- 百家乐玩家战绩统计。不使用外键或枚举。
+    CREATE TABLE IF NOT EXISTS arcade_baccarat_stats (
+      user_id TEXT PRIMARY KEY, rounds INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0,
+      pushes INTEGER NOT NULL DEFAULT 0, wagered INTEGER NOT NULL DEFAULT 0,
+      won INTEGER NOT NULL DEFAULT 0, net INTEGER NOT NULL DEFAULT 0,
+      biggest_win INTEGER NOT NULL DEFAULT 0, streak INTEGER NOT NULL DEFAULT 0,
+      best_streak INTEGER NOT NULL DEFAULT 0, banker_wins INTEGER NOT NULL DEFAULT 0,
+      player_wins INTEGER NOT NULL DEFAULT 0, tie_wins INTEGER NOT NULL DEFAULT 0,
+      pair_wins INTEGER NOT NULL DEFAULT 0, lucky6_wins INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL,

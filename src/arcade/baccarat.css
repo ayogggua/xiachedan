@@ -1,0 +1,2167 @@
+/* 澳门百家乐牌桌 · 路单 · 咪牌交互（暗绿绒与拉丝黄铜俱乐部体系） */
+.baccarat-room {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: radial-gradient(ellipse 80% 60% at 50% 10%, rgba(21, 71, 52, 0.22), transparent 68%);
+}
+
+.baccarat-room-top {
+  gap: 12px;
+}
+
+.baccarat-room-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.baccarat-mode-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--club-brass-line);
+  background: rgba(202, 168, 96, 0.14);
+  color: var(--club-brass-bright) !important;
+  font-size: 11px !important;
+  font-weight: 600;
+}
+
+.baccarat-room-meta .is-low-shoe {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.baccarat-squeeze-toggle {
+  gap: 5px !important;
+  padding: 0 10px !important;
+  font-size: 12px !important;
+  font-weight: 600;
+  border: 1px solid var(--club-line) !important;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.baccarat-squeeze-toggle.is-on {
+  border-color: var(--club-brass-line) !important;
+  background: rgba(202, 168, 96, 0.16);
+  color: var(--club-brass-bright) !important;
+}
+
+.baccarat-wallet-pill {
+  gap: 6px !important;
+  padding: 0 10px !important;
+  border: 1px solid var(--club-brass-line-soft) !important;
+  background: rgba(202, 168, 96, 0.08);
+  color: var(--club-brass-bright) !important;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px !important;
+}
+
+.baccarat-chat-btn {
+  position: relative;
+}
+
+.baccarat-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #cf4c2d;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ── 主工作区：上半为弧形绒面赌桌，下半为五路单与筹码操作台 ── */
+.baccarat-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 8px 16px 10px;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.baccarat-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.baccarat-felt {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 20px 12px;
+  border-radius: 22px;
+  border: 5px solid #2b1d14;
+  background:
+    radial-gradient(ellipse 74% 66% at 50% 34%, #1a6349 0%, #114331 54%, #09261c 100%);
+  box-shadow:
+    inset 0 0 0 2px rgba(202, 168, 96, 0.34),
+    inset 0 18px 42px rgba(4, 14, 10, 0.45),
+    0 14px 32px rgba(4, 10, 8, 0.65);
+  overflow: hidden;
+}
+
+.baccarat-table-engraving {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.baccarat-felt-rim {
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 245, 214, 0.08);
+  pointer-events: none;
+}
+
+.baccarat-shoe {
+  top: 8px !important;
+  left: 14px !important;
+  width: 112px !important;
+  height: 58px !important;
+  opacity: 0.92;
+}
+
+/* ── 牌桌顶栏：靴牌余量 / 阶段状态与倒计时 / 同桌玩家 ── */
+.baccarat-stage-top {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(260px, 1.5fr) minmax(180px, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding-left: 112px;
+}
+
+.baccarat-shoe-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(8, 22, 16, 0.64);
+  border: 1px solid rgba(202, 168, 96, 0.24);
+  font-size: 11.5px;
+  color: var(--club-text-2);
+  width: fit-content;
+}
+
+.baccarat-shoe-meter .shoe-bar {
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.baccarat-shoe-meter .shoe-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #caa860, #f4d898);
+  transition: width 320ms var(--club-ease);
+}
+
+.baccarat-shoe-meter b {
+  color: var(--club-brass-bright);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.baccarat-phase-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 46px;
+  padding: 6px 16px;
+  border-radius: 12px;
+  background: rgba(8, 20, 15, 0.72);
+  border: 1px solid rgba(202, 168, 96, 0.34);
+  box-shadow: 0 8px 20px rgba(4, 10, 8, 0.36);
+  text-align: center;
+}
+
+.baccarat-phase-banner strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--club-brass-bright);
+  letter-spacing: 0.03em;
+}
+
+.baccarat-phase-banner span {
+  font-size: 11.5px;
+  color: var(--club-text-2);
+}
+
+.betting-timer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.betting-sec {
+  min-width: 34px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(202, 168, 96, 0.22);
+  color: #fde68a;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.betting-sec.is-urgent {
+  background: rgba(220, 38, 38, 0.34);
+  color: #fecaca;
+  animation: bac-pulse 650ms ease-in-out infinite;
+}
+
+.betting-progress {
+  width: 100%;
+  max-width: 220px;
+  height: 3px;
+  margin-top: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.betting-progress i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #caa860, #f5e2a9);
+  transition: width 240ms linear;
+}
+
+.settled-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.settled-headline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.settled-banner.outcome-banker strong { color: #fca5a5; }
+.settled-banner.outcome-player strong { color: #93c5fd; }
+.settled-banner.outcome-tie strong { color: #6ee7b7; }
+
+.settled-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.settled-tag.is-gold { background: rgba(245, 196, 81, 0.22); color: #fde68a; border: 1px solid rgba(245, 196, 81, 0.45); }
+.settled-tag.is-player { background: rgba(59, 130, 246, 0.24); color: #bfdbfe; }
+.settled-tag.is-banker { background: rgba(220, 38, 38, 0.26); color: #fecaca; }
+
+.settled-my-net {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+.settled-my-net.is-win { color: #34d399; }
+.settled-my-net.is-loss { color: #fca5a5; }
+.settled-my-net.is-push { color: var(--club-brass-hi); }
+
+.baccarat-players-strip {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.baccarat-seat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 4px;
+  border-radius: 999px;
+  background: rgba(9, 22, 17, 0.68);
+  border: 1px solid rgba(241, 246, 243, 0.1);
+  max-width: 122px;
+}
+
+.baccarat-seat-chip.is-me {
+  border-color: var(--club-brass-line);
+}
+
+.baccarat-seat-chip.has-bet {
+  background: rgba(16, 40, 30, 0.85);
+}
+
+.seat-chip-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.seat-chip-info b {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--club-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seat-chip-info small {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--club-text-3);
+}
+
+.seat-chip-info small.is-win { color: #34d399; font-weight: 700; }
+.seat-chip-info small.is-loss { color: #f87171; }
+
+.baccarat-seat-more {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(9, 22, 17, 0.72);
+  border: 1px solid var(--club-line);
+  font-size: 11px;
+  color: var(--club-text-2);
+}
+
+.baccarat-speech-toast {
+  position: absolute;
+  top: 66px;
+  right: 24px;
+  z-index: 8;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 280px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(12, 20, 17, 0.92);
+  border: 1px solid var(--club-brass-line);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+}
+
+.baccarat-speech-toast b {
+  color: var(--club-brass-bright);
+  flex-shrink: 0;
+}
+
+/* ── 闲 vs 庄 发牌对决区（含真实澳门第 3 张横牌） ── */
+.baccarat-duel {
+  position: relative;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 12px;
+}
+
+.duel-side {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px 9px;
+  border-radius: 14px;
+  background: rgba(6, 20, 14, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: border-color 240ms var(--club-ease), box-shadow 240ms var(--club-ease), background-color 240ms var(--club-ease);
+}
+
+.duel-side.side-player {
+  border-color: rgba(59, 130, 246, 0.28);
+}
+
+.duel-side.side-banker {
+  border-color: rgba(239, 68, 68, 0.28);
+}
+
+.duel-side.is-winner {
+  border-color: var(--club-brass-hi);
+  background: rgba(202, 168, 96, 0.11);
+  box-shadow: 0 0 28px rgba(226, 194, 122, 0.22), inset 0 0 0 1px rgba(244, 216, 152, 0.3);
+}
+
+.duel-side.is-squeezing {
+  border-color: rgba(244, 216, 152, 0.6);
+  box-shadow: 0 0 20px rgba(226, 194, 122, 0.18);
+}
+
+.duel-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 240px;
+}
+
+.duel-side-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.duel-side-label b {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.duel-side.side-player .duel-side-label b { color: #60a5fa; }
+.duel-side.side-banker .duel-side-label b { color: #f87171; }
+
+.duel-side-label small {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--club-text-3);
+}
+
+.duel-points {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: rgba(8, 22, 16, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--club-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.duel-points.has-val {
+  color: #fff;
+}
+
+.duel-side.side-player .duel-points.has-val {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(30, 64, 175, 0.45);
+}
+
+.duel-side.side-banker .duel-points.has-val {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(153, 27, 27, 0.48);
+}
+
+.duel-points.is-natural,
+.duel-points.is-winner {
+  border-color: var(--club-brass-bright) !important;
+  box-shadow: 0 0 14px rgba(244, 216, 152, 0.35);
+}
+
+.duel-cards {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 86px;
+}
+
+.duel-cards .poker-card {
+  width: 60px;
+  height: 85px;
+}
+
+.duel-card-wrap {
+  transition: transform 280ms var(--club-ease);
+}
+
+.duel-card-wrap.is-third-card {
+  margin-left: 12px;
+  transform: rotate(90deg);
+}
+
+.duel-side.side-player .duel-card-wrap.is-third-card {
+  order: -1;
+  margin-left: 0;
+  margin-right: 12px;
+}
+
+.duel-card-wrap.is-facedown .poker-card {
+  box-shadow: 0 6px 16px rgba(4, 10, 8, 0.52);
+}
+
+.duel-card-empty {
+  width: 60px;
+  height: 85px;
+  border-radius: 7px;
+  border: 1px dashed rgba(226, 194, 122, 0.24);
+  background: rgba(6, 22, 16, 0.26);
+}
+
+.duel-squeeze-badge {
+  position: absolute;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(14, 22, 18, 0.9);
+  border: 1px solid var(--club-brass-line);
+  color: var(--club-brass-bright);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.duel-center-divider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 72px;
+}
+
+.duel-vs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--club-brass-line);
+  background: rgba(9, 25, 18, 0.8);
+  color: var(--club-brass-hi);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.duel-pot-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 9px;
+  background: rgba(8, 22, 16, 0.72);
+  border: 1px solid rgba(202, 168, 96, 0.28);
+}
+
+.duel-pot-box small {
+  font-size: 10px;
+  color: var(--club-text-3);
+}
+
+.duel-pot-box .mechanical-counter {
+  font-size: 13px;
+  color: var(--club-brass-bright);
+}
+
+/* ── 澳门标准赌桌注区（闲对 / 和 / 幸运6 / 庄对 + 闲 / 庄） ── */
+.baccarat-bet-board {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.baccarat-side-row {
+  display: grid;
+  gap: 8px;
+}
+
+.baccarat-side-row.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.baccarat-side-row.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.baccarat-main-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.baccarat-spot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 9px 13px;
+  border-radius: 13px;
+  border: 1.5px solid rgba(226, 194, 122, 0.34);
+  background: rgba(8, 28, 20, 0.52);
+  text-align: left;
+  overflow: hidden;
+  transition: transform 120ms var(--club-ease), border-color 180ms var(--club-ease), background-color 180ms var(--club-ease), box-shadow 200ms var(--club-ease);
+}
+
+.baccarat-spot.is-side {
+  min-height: 64px;
+  padding: 7px 11px;
+}
+
+.baccarat-spot.is-main {
+  min-height: 82px;
+  padding: 9px 15px;
+}
+
+.baccarat-spot.tone-player {
+  border-color: rgba(96, 165, 250, 0.42);
+  background: linear-gradient(160deg, rgba(30, 64, 175, 0.24), rgba(9, 28, 24, 0.64));
+}
+
+.baccarat-spot.tone-banker {
+  border-color: rgba(248, 113, 113, 0.42);
+  background: linear-gradient(160deg, rgba(153, 27, 27, 0.26), rgba(14, 24, 20, 0.64));
+}
+
+.baccarat-spot.tone-tie {
+  border-color: rgba(52, 211, 153, 0.42);
+  background: linear-gradient(160deg, rgba(6, 95, 70, 0.28), rgba(8, 28, 20, 0.64));
+}
+
+.baccarat-spot.tone-gold {
+  border-color: rgba(244, 216, 152, 0.45);
+  background: linear-gradient(160deg, rgba(161, 114, 34, 0.24), rgba(12, 26, 20, 0.64));
+}
+
+.baccarat-spot:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: var(--club-brass-bright);
+  box-shadow: 0 10px 24px rgba(4, 11, 8, 0.48), inset 0 0 18px rgba(244, 216, 152, 0.08);
+}
+
+.baccarat-spot:active:not(:disabled) {
+  transform: translateY(0) scale(0.99);
+}
+
+.baccarat-spot:disabled {
+  opacity: 0.78;
+}
+
+.baccarat-spot.is-opposing {
+  opacity: 0.42;
+}
+
+.baccarat-spot.has-mine {
+  border-color: var(--club-brass-hi);
+  box-shadow: inset 0 0 0 1px rgba(244, 216, 152, 0.28);
+}
+
+.baccarat-spot.is-winner {
+  border-color: #fde68a !important;
+  box-shadow: 0 0 28px rgba(244, 216, 152, 0.42), inset 0 0 24px rgba(244, 216, 152, 0.22) !important;
+  opacity: 1 !important;
+}
+
+.baccarat-spot.is-push {
+  border-color: rgba(52, 211, 153, 0.7) !important;
+  opacity: 1 !important;
+}
+
+.spot-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  position: relative;
+  z-index: 2;
+}
+
+.spot-name {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--club-text);
+}
+
+.baccarat-spot.is-main .spot-name {
+  font-size: 22px;
+}
+
+.baccarat-spot.tone-player .spot-name { color: #93c5fd; }
+.baccarat-spot.tone-banker .spot-name { color: #fca5a5; }
+.baccarat-spot.tone-tie .spot-name { color: #6ee7b7; }
+.baccarat-spot.tone-gold .spot-name { color: #fde68a; }
+
+.spot-odds {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--club-text-2);
+}
+
+.spot-en {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: rgba(255, 248, 226, 0.08);
+  pointer-events: none;
+}
+
+.baccarat-spot.is-main .spot-en {
+  font-size: 18px;
+}
+
+.spot-chips-area {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  width: 52px;
+  height: 42px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.baccarat-spot-chips {
+  display: block;
+  width: 52px;
+  height: 42px;
+}
+
+.baccarat-spot-chips canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.spot-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  z-index: 2;
+  margin-top: 6px;
+  min-height: 20px;
+}
+
+.spot-my-bet {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(202, 168, 96, 0.24);
+  border: 1px solid var(--club-brass-line);
+  color: var(--club-brass-bright);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.spot-my-placeholder {
+  font-size: 11px;
+  color: var(--club-text-3);
+}
+
+.spot-table-bet {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--club-text-2);
+}
+
+.spot-result-tag {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.spot-result-tag.is-win {
+  background: #f5d380;
+  color: #1c1406;
+}
+
+.spot-result-tag.is-push {
+  background: rgba(52, 211, 153, 0.25);
+  border: 1px solid #34d399;
+  color: #a7f3d0;
+}
+
+/* ── 下半区：澳门五路单 + 筹码操控栏 ── */
+.baccarat-lower-deck {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.baccarat-roadmap {
+  border-radius: 14px;
+  border: 1px solid var(--club-brass-line-soft);
+  background: #101714;
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.roadmap-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.roadmap-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--club-line);
+  font-size: 11px;
+  color: var(--club-text-2);
+}
+
+.stat-pill b {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--club-text);
+}
+
+.stat-pill.is-banker { border-color: rgba(239, 68, 68, 0.34); color: #fca5a5; }
+.stat-pill.is-banker b { color: #f87171; }
+.stat-pill.is-player { border-color: rgba(59, 130, 246, 0.34); color: #93c5fd; }
+.stat-pill.is-player b { color: #60a5fa; }
+.stat-pill.is-tie { border-color: rgba(52, 211, 153, 0.34); color: #6ee7b7; }
+.stat-pill.is-tie b { color: #34d399; }
+.stat-pill.is-gold { border-color: var(--club-brass-line); color: var(--club-brass-bright); }
+.stat-pill.is-gold b { color: #fde68a; }
+
+.roadmap-ask-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ask-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--club-line);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--club-text-2);
+  transition: border-color 140ms var(--club-ease), background-color 140ms var(--club-ease);
+}
+
+.ask-btn.is-banker:hover,
+.ask-btn.is-banker.is-active {
+  border-color: rgba(239, 68, 68, 0.65);
+  background: rgba(185, 28, 28, 0.22);
+  color: #fecaca;
+}
+
+.ask-btn.is-player:hover,
+.ask-btn.is-player.is-active {
+  border-color: rgba(59, 130, 246, 0.65);
+  background: rgba(29, 78, 216, 0.22);
+  color: #bfdbfe;
+}
+
+.ask-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ask-bigeye,
+.ask-small,
+.ask-cockroach {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  position: relative;
+}
+
+.ask-bigeye {
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+}
+.ask-bigeye.red { border-color: #ef4444; }
+.ask-bigeye.blue { border-color: #3b82f6; }
+
+.ask-small {
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+}
+.ask-small.red { background: #ef4444; }
+.ask-small.blue { background: #3b82f6; }
+
+.ask-cockroach::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  width: 2px;
+  height: 9px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.16);
+  transform: rotate(38deg);
+}
+.ask-cockroach.red::after { background: #ef4444; }
+.ask-cockroach.blue::after { background: #3b82f6; }
+
+.roadmap-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--club-line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--club-text-2);
+}
+
+.roadmap-full-board {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  min-width: 0;
+}
+
+.roadmap-pane {
+  position: relative;
+  border-radius: 8px;
+  border: 1px solid rgba(202, 168, 96, 0.18);
+  background: #0b110f;
+  padding: 4px;
+  min-width: 0;
+}
+
+.road-pane-label {
+  position: absolute;
+  right: 6px;
+  bottom: 3px;
+  font-size: 9.5px;
+  color: rgba(202, 168, 96, 0.36);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.roadmap-right-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.roadmap-derived-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.derived-box {
+  position: relative;
+  border-radius: 8px;
+  border: 1px solid rgba(202, 168, 96, 0.16);
+  background: #0b110f;
+  padding: 3px 4px;
+  min-width: 0;
+}
+
+.derived-box > span {
+  position: absolute;
+  right: 5px;
+  bottom: 2px;
+  font-size: 9px;
+  color: rgba(202, 168, 96, 0.34);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.road-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.road-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--road-cols), var(--cell-size));
+  grid-template-rows: repeat(var(--road-rows), var(--cell-size));
+  width: fit-content;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.055) 1px, transparent 1px);
+  background-size: var(--cell-size) var(--cell-size);
+  border-right: 1px solid rgba(255, 255, 255, 0.055);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.road-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cell-size);
+  height: var(--cell-size);
+}
+
+.road-cell.is-ghost {
+  animation: bac-pulse 900ms ease-in-out infinite;
+}
+
+.bead-disc {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--cell-size) - 4px);
+  height: calc(var(--cell-size) - 4px);
+  border-radius: 50%;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.bead-cell.side-banker .bead-disc { background: #dc2626; }
+.bead-cell.side-player .bead-disc { background: #2563eb; }
+.bead-cell.side-tie .bead-disc { background: #059669; }
+
+.big-ring {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--cell-size) - 4px);
+  height: calc(var(--cell-size) - 4px);
+  border-radius: 50%;
+  border: 2.2px solid transparent;
+  font-size: 9px;
+  font-weight: 800;
+  color: #fde68a;
+}
+
+.big-cell.side-banker .big-ring { border-color: #ef4444; }
+.big-cell.side-player .big-ring { border-color: #3b82f6; }
+.big-cell.side-tie .big-ring { border-color: #10b981; }
+
+.tie-slash {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  font-weight: 800;
+  color: #34d399;
+}
+
+.tie-slash::before {
+  content: '';
+  position: absolute;
+  width: 2px;
+  height: 76%;
+  border-radius: 1px;
+  background: #10b981;
+  transform: rotate(42deg);
+}
+
+.pair-dot {
+  position: absolute;
+  width: 4.5px;
+  height: 4.5px;
+  border-radius: 50%;
+  border: 1px solid #0b110f;
+}
+
+.pair-dot.is-banker { top: 1px; left: 1px; background: #ef4444; }
+.pair-dot.is-player { bottom: 1px; right: 1px; background: #3b82f6; }
+
+.lucky6-mark {
+  position: absolute;
+  top: 0;
+  right: 1px;
+  font-size: 8px;
+  font-weight: 900;
+  color: #fde68a;
+  text-shadow: 0 1px 2px #000;
+}
+
+.derived-cell.kind-bigeye i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.6px solid currentColor;
+}
+.derived-cell.kind-small i {
+  width: 5.5px;
+  height: 5.5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.derived-cell.kind-cockroach i {
+  width: 1.8px;
+  height: 7px;
+  border-radius: 1px;
+  background: currentColor;
+  transform: rotate(38deg);
+}
+.derived-cell.color-red { color: #ef4444; }
+.derived-cell.color-blue { color: #3b82f6; }
+
+/* 迷你路单（大厅选台卡片内） */
+.mini-big-road {
+  border-radius: 6px;
+  border: 1px solid rgba(202, 168, 96, 0.18);
+  background: #0b110f;
+  padding: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.mini-big-road .big-ring {
+  width: 8px;
+  height: 8px;
+  border-width: 1.5px;
+}
+
+.mini-big-road .pair-dot {
+  width: 3px;
+  height: 3px;
+  border: 0;
+}
+
+/* ── 底部筹码与操控台 ── */
+.baccarat-cockpit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--club-brass-line-soft);
+  background: var(--club-surface);
+  box-shadow: inset 0 1px 0 rgba(255, 245, 214, 0.06);
+}
+
+.cockpit-wallet {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.cockpit-balance-btn,
+.cockpit-bet-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+}
+
+.cockpit-balance-btn {
+  padding: 4px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--club-brass-line-soft);
+  background: rgba(202, 168, 96, 0.08);
+}
+
+.cockpit-balance-btn:hover {
+  border-color: var(--club-brass-line);
+}
+
+.cockpit-balance-btn span,
+.cockpit-bet-stat span {
+  font-size: 10.5px;
+  color: var(--club-text-3);
+}
+
+.cockpit-balance-btn .mechanical-counter {
+  font-size: 15px;
+  color: var(--club-brass-bright);
+}
+
+.cockpit-bet-stat strong {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--club-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.cockpit-chip-tray {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 4px 2px;
+}
+
+.casino-chip-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 3px dashed rgba(248, 243, 232, 0.85);
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: transform 150ms var(--club-ease), box-shadow 150ms var(--club-ease), opacity 150ms var(--club-ease);
+}
+
+.casino-chip-btn .chip-rim {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #f8f2e4;
+  color: #1c1914;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.22);
+}
+
+.casino-chip-btn.tone-ivory { background: #d6cbb8; border-color: #2769b7; }
+.casino-chip-btn.tone-crimson { background: #c53030; }
+.casino-chip-btn.tone-sapphire { background: #2563eb; }
+.casino-chip-btn.tone-emerald { background: #15803d; }
+.casino-chip-btn.tone-amethyst { background: #7e22ce; }
+.casino-chip-btn.tone-obsidian { background: #1f1d1a; border-color: #e2c27a; }
+.casino-chip-btn.tone-obsidian .chip-rim { background: #2c261c; color: #fde68a; box-shadow: inset 0 0 0 1.5px #caa860; }
+
+.casino-chip-btn:hover {
+  transform: translateY(-3px);
+}
+
+.casino-chip-btn.is-selected {
+  transform: translateY(-5px) scale(1.06);
+  box-shadow: 0 0 0 2px #f4d898, 0 10px 20px rgba(0, 0, 0, 0.65);
+}
+
+.casino-chip-btn.is-low {
+  opacity: 0.45;
+}
+
+.cockpit-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.cockpit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 38px;
+  padding: 0 11px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.cockpit-deal-btn {
+  min-height: 38px;
+  padding: 0 15px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.cockpit-deal-btn.is-confirmed {
+  background: rgba(52, 211, 153, 0.22);
+  border-color: rgba(52, 211, 153, 0.55);
+  color: #a7f3d0;
+}
+
+/* ── 澳门经典咪牌台（Squeeze Stage） ── */
+.baccarat-squeeze-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  background: rgba(5, 13, 10, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: squeeze-fade-in 180ms var(--club-ease);
+}
+
+.baccarat-squeeze-stage {
+  width: min(640px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 22px 20px;
+  border-radius: 18px;
+  border: 1.5px solid var(--club-brass-line);
+  background:
+    radial-gradient(ellipse 80% 70% at 50% 42%, #185840 0%, #0d3225 65%, #081c15 100%);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.78), inset 0 1px 0 rgba(255, 245, 214, 0.14);
+}
+
+.squeeze-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.squeeze-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.squeeze-side-pill {
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.squeeze-side-pill.banker {
+  background: rgba(220, 38, 38, 0.28);
+  border: 1px solid rgba(248, 113, 113, 0.6);
+  color: #fecaca;
+}
+
+.squeeze-side-pill.player {
+  background: rgba(37, 99, 235, 0.28);
+  border: 1px solid rgba(96, 165, 250, 0.6);
+  color: #bfdbfe;
+}
+
+.squeeze-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.squeeze-meta strong {
+  font-size: 14px;
+  color: var(--club-text);
+}
+
+.squeeze-meta span {
+  font-size: 11.5px;
+  color: var(--club-text-2);
+}
+
+.squeeze-timer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(12, 22, 18, 0.8);
+  border: 1px solid var(--club-brass-line);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--club-brass-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.squeeze-timer.is-urgent {
+  border-color: #f87171;
+  color: #fecaca;
+  background: rgba(185, 28, 28, 0.35);
+}
+
+.squeeze-existing-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--club-text-2);
+}
+
+.squeeze-mini-cards {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.squeeze-mini-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #f7f1e1;
+  color: #182328;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.squeeze-mini-chip.is-red { color: #b91c1c; }
+.squeeze-mini-chip svg { width: 11px; height: 11px; }
+
+.squeeze-cards-arena {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 6px 0;
+  min-height: 0;
+}
+
+.squeeze-cards-arena.is-pair.is-rotated {
+  gap: 18px;
+}
+
+.squeeze-card-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.squeeze-card {
+  position: relative;
+  width: 170px;
+  height: 242px;
+  border-radius: 12px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 260ms var(--club-ease), width 260ms var(--club-ease), height 260ms var(--club-ease);
+}
+
+.squeeze-card.is-dragging {
+  cursor: grabbing;
+}
+
+.squeeze-card.is-revealed {
+  cursor: default;
+}
+
+.squeeze-card.is-rotated {
+  width: 242px;
+  height: 170px;
+}
+
+.squeeze-card-inner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 170px;
+  height: 242px;
+  transform: translate(-50%, -50%);
+  border-radius: 12px;
+  box-shadow: 0 18px 36px rgba(2, 8, 6, 0.72), 0 0 0 1px rgba(226, 194, 122, 0.32);
+  overflow: hidden;
+  transition: transform 260ms var(--club-ease);
+}
+
+.squeeze-card.is-rotated .squeeze-card-inner {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.squeeze-layer {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: clip-path 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.squeeze-card.is-dragging .squeeze-layer {
+  transition: none;
+}
+
+.squeeze-face {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(155deg, #fbf7ec 0%, #f1e8d4 100%);
+  border: 2px solid #d9caa8;
+  border-radius: 12px;
+  color: #192428;
+}
+
+.squeeze-face.red { color: #b8232c; }
+
+.squeeze-corner {
+  position: absolute;
+  top: 8px;
+  left: 9px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 800;
+  transition: opacity 150ms ease;
+}
+
+.squeeze-corner svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+}
+
+.squeeze-corner.bottom {
+  top: auto;
+  left: auto;
+  right: 9px;
+  bottom: 8px;
+  transform: rotate(180deg);
+}
+
+.squeeze-face.is-masked .squeeze-corner {
+  opacity: 0;
+}
+
+.squeeze-thumb-mask {
+  position: absolute;
+  width: 34px;
+  height: 48px;
+  border-radius: 8px;
+  background: radial-gradient(circle at 40% 40%, rgba(202, 168, 96, 0.24), rgba(145, 118, 66, 0.14));
+  border: 1px dashed rgba(168, 134, 68, 0.35);
+  pointer-events: none;
+}
+
+.squeeze-thumb-mask.top { top: 6px; left: 6px; }
+.squeeze-thumb-mask.bottom { bottom: 6px; right: 6px; }
+
+.squeeze-face .card-pips {
+  position: absolute;
+  inset: 14% 16%;
+}
+
+.squeeze-face .card-pips svg {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+}
+
+.squeeze-face .card-pips.ace svg {
+  width: 58px;
+  height: 58px;
+}
+
+.squeeze-face .card-portrait {
+  position: absolute;
+  inset: 11% 14%;
+  width: 72%;
+  height: 78%;
+}
+
+.squeeze-drag-cue {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(8, 20, 15, 0.86);
+  border: 1px solid rgba(226, 194, 122, 0.5);
+  color: #f4d898;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.squeeze-cast-shadow {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.squeeze-cast-shadow.dir-up { background: linear-gradient(180deg, rgba(4, 10, 8, 0.62) 0%, transparent 100%); }
+.squeeze-cast-shadow.dir-down { background: linear-gradient(0deg, rgba(4, 10, 8, 0.62) 0%, transparent 100%); }
+.squeeze-cast-shadow.dir-left { background: linear-gradient(90deg, rgba(4, 10, 8, 0.62) 0%, transparent 100%); }
+.squeeze-cast-shadow.dir-right { background: linear-gradient(270deg, rgba(4, 10, 8, 0.62) 0%, transparent 100%); }
+
+.squeeze-curl-lip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.55);
+}
+
+.squeeze-curl-lip.dir-up {
+  background: linear-gradient(180deg, #0b2a1f 0%, #17523c 42%, #e6cf95 86%, #f8f3e6 100%);
+  border-bottom: 1.5px solid #fffdf6;
+}
+.squeeze-curl-lip.dir-down {
+  background: linear-gradient(0deg, #0b2a1f 0%, #17523c 42%, #e6cf95 86%, #f8f3e6 100%);
+  border-top: 1.5px solid #fffdf6;
+}
+.squeeze-curl-lip.dir-left {
+  background: linear-gradient(90deg, #0b2a1f 0%, #17523c 42%, #e6cf95 86%, #f8f3e6 100%);
+  border-right: 1.5px solid #fffdf6;
+}
+.squeeze-curl-lip.dir-right {
+  background: linear-gradient(270deg, #0b2a1f 0%, #17523c 42%, #e6cf95 86%, #f8f3e6 100%);
+  border-left: 1.5px solid #fffdf6;
+}
+
+.squeeze-slot-bar {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.squeeze-flip-one {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--club-brass-line);
+  background: rgba(12, 24, 19, 0.72);
+  color: var(--club-brass-bright);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.squeeze-flip-one:hover {
+  background: rgba(202, 168, 96, 0.22);
+}
+
+.squeeze-slot-revealed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: rgba(8, 22, 16, 0.85);
+  border: 1px solid rgba(244, 216, 152, 0.38);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: #fff;
+}
+
+.squeeze-slot-revealed svg { width: 13px; height: 13px; }
+.squeeze-slot-revealed svg.is-red { color: #f87171; }
+.squeeze-slot-revealed small { color: var(--club-brass-hi); margin-left: 3px; }
+
+.squeeze-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(202, 168, 96, 0.2);
+}
+
+.squeeze-tools,
+.squeeze-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.squeeze-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 9px;
+  border: 1px solid var(--club-line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--club-text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.squeeze-tool-btn.is-active {
+  border-color: var(--club-brass-line);
+  background: rgba(202, 168, 96, 0.16);
+  color: var(--club-brass-bright);
+}
+
+.squeeze-live-pts {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(8, 20, 15, 0.78);
+  border: 1px solid var(--club-brass-line);
+  color: var(--club-brass-bright);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.squeeze-live-pts.is-natural {
+  background: rgba(245, 196, 81, 0.24);
+  color: #fef08a;
+}
+
+.squeeze-reveal-all {
+  min-height: 36px;
+  padding: 0 16px;
+  font-size: 13px;
+}
+
+/* ── 规则与本靴记录 ── */
+.baccarat-rules-popover {
+  width: min(500px, calc(100vw - 40px)) !important;
+  max-height: min(76vh, 620px);
+  overflow-y: auto;
+}
+
+.baccarat-rules-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--club-text-2);
+}
+
+.baccarat-rules-body h4 {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--club-brass-bright);
+}
+
+.baccarat-rules-body p {
+  margin: 0 0 6px;
+}
+
+.baccarat-rules-body strong {
+  color: var(--club-text);
+}
+
+.baccarat-rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 12px;
+  border: 1px solid var(--club-line);
+}
+
+.baccarat-rules-table th,
+.baccarat-rules-table td {
+  padding: 6px 8px;
+  border: 1px solid var(--club-line);
+  text-align: left;
+}
+
+.baccarat-rules-table th {
+  background: rgba(202, 168, 96, 0.12);
+  color: var(--club-brass-bright);
+  font-weight: 600;
+}
+
+.baccarat-log-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.baccarat-log-meta {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--club-line);
+  font-size: 12px;
+  color: var(--club-text-2);
+}
+
+.baccarat-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.baccarat-log-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--club-line);
+  font-size: 12.5px;
+  color: var(--club-text);
+}
+
+.baccarat-log-list li time {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--club-text-3);
+}
+
+.baccarat-log-list li.empty {
+  justify-content: center;
+  color: var(--club-text-3);
+}
+
+/* ── 大厅选台列表中的百家乐牌桌卡片 ── */
+.baccarat-lobby-room {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px !important;
+  text-align: left;
+}
+
+.baccarat-lobby-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.baccarat-lobby-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.baccarat-lobby-title strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--club-text);
+}
+
+.baccarat-lobby-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--club-text-2);
+}
+
+.baccarat-lobby-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+}
+
+.baccarat-lobby-stats .c-b { color: #f87171; }
+.baccarat-lobby-stats .c-p { color: #60a5fa; }
+.baccarat-lobby-stats .c-t { color: #34d399; }
+
+.baccarat-lobby-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+/* ── 全部游戏目录：澳门百家乐卡片专属酒红金艺饰 ── */
+.arcade-game-card.is-baccarat {
+  background:
+    radial-gradient(ellipse 75% 90% at 86% 36%, rgba(138, 34, 42, 0.42), rgba(16, 25, 22, 0.96) 68%),
+    #131c19;
+}
+
+.arcade-game-card.is-baccarat .feature-art {
+  background: radial-gradient(ellipse 80% 80% at 62% 52%, rgba(136, 30, 38, 0.56) 0%, rgba(28, 44, 36, 0.56) 66%, rgba(10, 26, 20, 0.38) 100%);
+}
+
+@keyframes bac-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@keyframes squeeze-fade-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ── 移动端适配（<= 760px） ── */
+@media (max-width: 760px) {
+  .baccarat-workspace {
+    padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+  }
+
+  .baccarat-stage {
+    min-height: 0;
+    flex: 0 0 auto;
+  }
+
+  .baccarat-felt {
+    padding: 10px 10px 12px;
+    border-width: 4px;
+    border-radius: 18px;
+    gap: 8px;
+  }
+
+  .baccarat-shoe {
+    display: none;
+  }
+
+  .baccarat-stage-top {
+    grid-template-columns: 1fr;
+    padding-left: 0;
+    gap: 6px;
+  }
+
+  .baccarat-shoe-meter {
+    display: none;
+  }
+
+  .baccarat-players-strip {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .baccarat-duel {
+    grid-template-columns: 1fr auto 1fr;
+    gap: 6px;
+    padding: 0;
+  }
+
+  .duel-side {
+    padding: 7px 6px 9px;
+    gap: 6px;
+  }
+
+  .duel-side-label b { font-size: 15px; }
+  .duel-side-label small { display: none; }
+  .duel-points { min-width: 28px; height: 28px; font-size: 16px; padding: 0 6px; }
+  .duel-cards { gap: 4px; min-height: 70px; }
+  .duel-cards .poker-card,
+  .duel-card-empty { width: 46px; height: 66px; }
+  .duel-card-wrap.is-third-card { margin-left: 8px; }
+  .duel-side.side-player .duel-card-wrap.is-third-card { margin-right: 8px; }
+  .duel-center-divider { min-width: 34px; gap: 4px; }
+  .duel-vs { width: 26px; height: 26px; font-size: 10px; }
+  .duel-pot-box { display: none; }
+
+  .baccarat-side-row { gap: 5px; }
+  .baccarat-main-row { gap: 7px; }
+  .baccarat-spot { padding: 7px 8px; border-radius: 11px; }
+  .baccarat-spot.is-side { min-height: 64px; }
+  .baccarat-spot.is-main { min-height: 82px; padding: 9px 11px; }
+  .spot-name { font-size: 13.5px; }
+  .baccarat-spot.is-main .spot-name { font-size: 19px; }
+  .spot-odds { font-size: 10px; }
+  .spot-en { display: none; }
+  .spot-chips-area { right: 4px; bottom: 16px; width: 40px; height: 34px; }
+  .baccarat-spot-chips { width: 40px; height: 34px; }
+  .spot-foot { flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .spot-my-bet { font-size: 10.5px; padding: 1px 6px; }
+  .spot-table-bet { font-size: 10px; }
+
+  .baccarat-roadmap.is-compact {
+    padding: 8px 9px;
+    gap: 6px;
+  }
+
+  .roadmap-mobile-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+
+  .roadmap-mobile-tabs button {
+    flex: 1;
+    height: 28px;
+    border-radius: 7px;
+    border: 1px solid var(--club-line);
+    background: rgba(255, 255, 255, 0.03);
+    font-size: 11.5px;
+    color: var(--club-text-2);
+  }
+
+  .roadmap-mobile-tabs button.active {
+    border-color: var(--club-brass-line);
+    background: rgba(202, 168, 96, 0.16);
+    color: var(--club-brass-bright);
+    font-weight: 600;
+  }
+
+  .baccarat-cockpit {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 9px 10px;
+  }
+
+  .cockpit-wallet {
+    justify-content: space-between;
+  }
+
+  .cockpit-chip-tray {
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .casino-chip-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .casino-chip-btn .chip-rim {
+    width: 31px;
+    height: 31px;
+    font-size: 10px;
+  }
+
+  .cockpit-actions {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .cockpit-btn {
+    min-height: 38px;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+
+  .cockpit-deal-btn {
+    grid-column: 1 / -1;
+    min-height: 42px;
+  }
+
+  .baccarat-squeeze-backdrop {
+    position: fixed;
+    padding: 10px;
+  }
+
+  .baccarat-squeeze-stage {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .squeeze-cards-arena {
+    gap: 12px;
+    min-height: 196px;
+  }
+
+  .squeeze-cards-arena.is-pair.is-rotated {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .squeeze-card {
+    width: 136px;
+    height: 194px;
+  }
+
+  .squeeze-card.is-rotated {
+    width: 194px;
+    height: 136px;
+  }
+
+  .squeeze-card-inner {
+    width: 136px;
+    height: 194px;
+  }
+
+  .squeeze-face .card-pips svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .squeeze-face .card-pips.ace svg {
+    width: 44px;
+    height: 44px;
+  }
+
+  .squeeze-corner {
+    font-size: 16px;
+  }
+
+  .baccarat-lobby-room {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .baccarat-lobby-right {
+    justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .betting-sec.is-urgent,
+  .road-cell.is-ghost,
+  .baccarat-squeeze-backdrop {
+    animation: none;
+  }
+  .baccarat-spot,
+  .casino-chip-btn,
+  .squeeze-card,
+  .squeeze-card-inner,
+  .squeeze-layer {
+    transition: none;
+  }
+}

@@ -2,9 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { ArrowRight, ChevronRight, CircleHelp, Coins, Plus, RefreshCw, Trophy, Users } from 'lucide-react';
 import { Avatar } from '../components';
 import { Sheet } from './ArcadePanels';
+import { MiniBigRoad } from './BaccaratRoadmap';
 
-const games = [{ id: 'poker', name: '德州扑克', caption: 'TEXAS HOLD’EM', players: '2–6 人' }];
+const games = [
+  { id: 'poker', name: '德州扑克', caption: 'TEXAS HOLD’EM', players: '2–6 人', tag: '无限注' },
+  { id: 'baccarat', name: '澳门百家乐', caption: 'MACAU BACCARAT', players: '随时上桌', tag: '8 副牌 · 咪牌' },
+];
 const phases = { waiting: '等待入座', preflop: '牌局进行中', flop: '牌局进行中', turn: '牌局进行中', river: '牌局进行中', showdown: '本手结算' };
+const baccaratPhases = { open: '开放下注', betting: '下注倒计时', dealing: '派牌 / 咪牌中', settled: '本局结算' };
 const number = value => Number(value || 0).toLocaleString('zh-CN');
 
 function CreateTable({ game, me, connected, inHand, onCommand, onClose }) {
@@ -34,7 +39,26 @@ function CreateTable({ game, me, connected, inHand, onCommand, onClose }) {
   </Sheet>;
 }
 
-export default function ArcadeLobby({ game, me, connected, table, selectedGame, creating = false, onCreating, onSelect, onView, onReturn, onCommand, onPanel, onRules, art, roomIcon }) {
+export default function ArcadeLobby({
+  game,
+  baccarat,
+  me,
+  connected,
+  table,
+  selectedGame,
+  creating = false,
+  onCreating,
+  onSelect,
+  onView,
+  onViewBaccarat,
+  onReturn,
+  onCommand,
+  onPanel,
+  onRules,
+  art,
+  baccaratArt,
+  roomIcon,
+}) {
   const [localCreating, setLocalCreating] = useState(false);
   const isCreating = onCreating ? creating : localCreating;
   const setCreating = onCreating || setLocalCreating;
@@ -43,25 +67,147 @@ export default function ArcadeLobby({ game, me, connected, table, selectedGame, 
   const seatedId = membership && !membership.leaving ? membership.tableId : null;
   const inHand = Boolean(membership?.inHand);
   const rooms = game.tables || [];
+  const baccaratRooms = baccarat?.tables || game.baccaratTables || [];
+  const baccaratPlayersTotal = baccaratRooms.reduce((sum, item) => sum + (item.playerCount || 0), 0);
+  const activeWallet = (selectedGame === 'baccarat' ? baccarat?.wallet : null) || game.wallet;
+
+  const headingMeta = selectedGame === 'baccarat'
+    ? { eyebrow: 'MACAU BACCARAT', title: '澳门百家乐' }
+    : selectedGame === 'poker'
+      ? { eyebrow: 'TEXAS HOLD’EM', title: '德州扑克' }
+      : { eyebrow: '', title: '全部游戏' };
+
   return <>
     <main className={`arcade-lobby ${selectedGame ? 'poker-lobby' : 'game-catalog'}`}>
-      <div className="arcade-lobby-heading"><div>{selectedGame && <span className="arcade-eyebrow">TEXAS HOLD’EM</span>}<h2>{selectedGame ? '德州扑克' : '全部游戏'}</h2></div>
-        <div className="arcade-lobby-tools">{selectedGame && <button onClick={() => onPanel('rank')}><Trophy size={17} />排行榜</button>}<button className="arcade-balance-button" onClick={() => onPanel('wallet')}><Coins size={18} /><span><small>可用筹码</small><b>{number(game.wallet?.balance)}</b></span></button><Avatar user={me} size={34} /></div>
+      <div className="arcade-lobby-heading">
+        <div>
+          {headingMeta.eyebrow && <span className="arcade-eyebrow">{headingMeta.eyebrow}</span>}
+          <h2>{headingMeta.title}</h2>
+        </div>
+        <div className="arcade-lobby-tools">
+          {selectedGame && <button onClick={() => onPanel('rank')}><Trophy size={17} />排行榜</button>}
+          <button className="arcade-balance-button" onClick={() => onPanel('wallet')}>
+            <Coins size={18} />
+            <span><small>可用筹码</small><b>{number(activeWallet?.balance)}</b></span>
+          </button>
+          <Avatar user={me} size={34} />
+        </div>
       </div>
-      {!selectedGame ? <div className="arcade-game-grid">{games.map(item => <article key={item.id} className="arcade-feature arcade-game-card">
-        <div className="feature-copy"><span className="arcade-eyebrow">{item.caption}</span><h2>{item.name}</h2><div className="feature-meta"><span><Users size={15} />{item.players}</span><span>无限注</span></div></div>
-        <div className="feature-art" aria-hidden="true">{item.id === 'poker' && art}</div>
-        <div className="game-card-footer"><span>{seatedId ? <><i />已入座</> : membership?.leaving ? <><i />本手结算中</> : `${rooms.length} 张牌桌`}</span><button onClick={() => onSelect(item.id)} aria-label={`进入${item.name}`}>进入游戏<ArrowRight size={18} /></button></div>
-      </article>)}</div> : <section className="arcade-tables">
-        <div className="tables-heading"><h3>正在开放的牌桌<span>{rooms.length}</span></h3><div className="poker-lobby-actions"><button className="arcade-text" onClick={game.refresh} aria-label="刷新牌桌"><RefreshCw size={16} /></button><button className="arcade-primary" disabled={game.busy || !connected || inHand} onClick={() => setCreating(true)}><Plus size={16} />开桌</button></div></div>
-        {seatedId && !rooms.some(room => room.id === seatedId) && <button className="return-table" onClick={() => table?.id === seatedId ? onReturn() : onView(seatedId)}><span className="return-room-name"><i /><b>{membership.tableName}</b></span><span>返回牌桌<ArrowRight size={15} /></span></button>}
-        <div className="room-list">{rooms.length ? rooms.map(room => {
-          const seated = seatedId === room.id;
-          return <button className={`arcade-room ${seated ? 'is-seated' : ''}`} key={room.id} onClick={() => seated && table?.id === room.id ? onReturn() : onView(room.id)}><span className="room-suit">{roomIcon}</span><span className="room-info"><strong title={room.name}>{room.name}</strong><small>盲注 {room.smallBlind} / {room.bigBlind} · {room.matchComplete ? '本场结束' : phases[room.phase]}{seated && ' · 已入座'}</small></span><span className="room-seats"><Users size={15} />{room.playerCount} / {room.maxPlayers}</span><ChevronRight size={18} /></button>;
-        }) : <div className="rooms-empty"><span className="empty-table-icon">{roomIcon}</span><h4>还没有牌桌</h4><p>点击开桌，邀请好友一起玩。</p></div>}</div>
-      </section>}
-      <footer className="arcade-lobby-footer"><span>筹码仅供娱乐，不可充值或兑换</span>{selectedGame && <button className="arcade-text" onClick={onRules}><CircleHelp size={15} />玩法规则</button>}</footer>
+
+      {!selectedGame ? (
+        <div className="arcade-game-grid">
+          {games.map(item => {
+            const isBac = item.id === 'baccarat';
+            return (
+              <article key={item.id} className={`arcade-feature arcade-game-card ${isBac ? 'is-baccarat' : ''}`}>
+                <div className="feature-copy">
+                  <span className="arcade-eyebrow">{item.caption}</span>
+                  <h2>{item.name}</h2>
+                  <div className="feature-meta">
+                    <span><Users size={15} />{item.players}</span>
+                    <span>{item.tag}</span>
+                  </div>
+                </div>
+                <div className="feature-art" aria-hidden="true">{isBac ? baccaratArt : art}</div>
+                <div className="game-card-footer">
+                  <span>
+                    {isBac
+                      ? (baccaratPlayersTotal > 0 ? <><i />{baccaratRooms.length} 张荷官台 · {baccaratPlayersTotal} 人在桌</> : `${baccaratRooms.length || 4} 张系统荷官台`)
+                      : (seatedId ? <><i />已入座</> : membership?.leaving ? <><i />本手结算中</> : `${rooms.length} 张牌桌`)}
+                  </span>
+                  <button onClick={() => onSelect(item.id)} aria-label={`进入${item.name}`}>进入游戏<ArrowRight size={18} /></button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : selectedGame === 'baccarat' ? (
+        <section className="arcade-tables">
+          <div className="tables-heading">
+            <h3>系统荷官牌桌<span>{baccaratRooms.length}</span></h3>
+            <div className="poker-lobby-actions">
+              <button className="arcade-text" onClick={() => baccarat?.refresh?.()} aria-label="刷新牌桌">
+                <RefreshCw size={16} />
+              </button>
+            </div>
+          </div>
+          <div className="room-list">
+            {baccaratRooms.map(room => (
+              <button
+                key={room.id}
+                type="button"
+                className="arcade-room baccarat-lobby-room"
+                onClick={() => onViewBaccarat(room.id)}
+              >
+                <div className="baccarat-lobby-main">
+                  <div className="baccarat-lobby-title">
+                    <strong>{room.name}</strong>
+                    <span className="baccarat-mode-badge">{room.mode === 'no-commission' ? '免佣 · 幸运6' : '传统抽水 5%'}</span>
+                  </div>
+                  <div className="baccarat-lobby-meta">
+                    <span>限红 {number(room.minBet)} – {number(room.maxBet)}</span>
+                    <span>第 {room.shoeNumber} 靴 · 余 {room.cardsRemaining} 张</span>
+                    <span>{baccaratPhases[room.phase] || '开放下注'}</span>
+                  </div>
+                  <div className="baccarat-lobby-stats">
+                    <span className="c-b">庄 {room.stats?.banker || 0}</span>
+                    <span className="c-p">闲 {room.stats?.player || 0}</span>
+                    <span className="c-t">和 {room.stats?.tie || 0}</span>
+                  </div>
+                </div>
+                <div className="baccarat-lobby-right">
+                  <MiniBigRoad history={room.recentHistory || []} />
+                  <span className="room-seats"><Users size={15} />{room.playerCount || 0}</span>
+                  <ChevronRight size={18} />
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : (
+        <section className="arcade-tables">
+          <div className="tables-heading">
+            <h3>正在开放的牌桌<span>{rooms.length}</span></h3>
+            <div className="poker-lobby-actions">
+              <button className="arcade-text" onClick={game.refresh} aria-label="刷新牌桌"><RefreshCw size={16} /></button>
+              <button className="arcade-primary" disabled={game.busy || !connected || inHand} onClick={() => setCreating(true)}><Plus size={16} />开桌</button>
+            </div>
+          </div>
+          {seatedId && !rooms.some(room => room.id === seatedId) && (
+            <button className="return-table" onClick={() => table?.id === seatedId ? onReturn() : onView(seatedId)}>
+              <span className="return-room-name"><i /><b>{membership.tableName}</b></span>
+              <span>返回牌桌<ArrowRight size={15} /></span>
+            </button>
+          )}
+          <div className="room-list">
+            {rooms.length ? rooms.map(room => {
+              const seated = seatedId === room.id;
+              return (
+                <button className={`arcade-room ${seated ? 'is-seated' : ''}`} key={room.id} onClick={() => seated && table?.id === room.id ? onReturn() : onView(room.id)}>
+                  <span className="room-suit">{roomIcon}</span>
+                  <span className="room-info">
+                    <strong title={room.name}>{room.name}</strong>
+                    <small>盲注 {room.smallBlind} / {room.bigBlind} · {room.matchComplete ? '本场结束' : phases[room.phase]}{seated && ' · 已入座'}</small>
+                  </span>
+                  <span className="room-seats"><Users size={15} />{room.playerCount} / {room.maxPlayers}</span>
+                  <ChevronRight size={18} />
+                </button>
+              );
+            }) : (
+              <div className="rooms-empty">
+                <span className="empty-table-icon">{roomIcon}</span>
+                <h4>还没有牌桌</h4>
+                <p>点击开桌，邀请好友一起玩。</p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+      <footer className="arcade-lobby-footer">
+        <span>通用总账户筹码 · 仅供娱乐，不可充值或兑换</span>
+        {selectedGame && <button className="arcade-text" onClick={onRules}><CircleHelp size={15} />玩法规则</button>}
+      </footer>
     </main>
-    {isCreating && <CreateTable game={game} me={me} connected={connected} inHand={inHand} onCommand={onCommand} onClose={() => setCreating(false)} />}
+    {isCreating && selectedGame === 'poker' && <CreateTable game={game} me={me} connected={connected} inHand={inHand} onCommand={onCommand} onClose={() => setCreating(false)} />}
   </>;
 }

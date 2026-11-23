@@ -14,6 +14,7 @@ import { fetchPreview } from './linkPreview.js';
 import { createVapidKeys, sendPush, validEndpoint, validKeys, vapidPublicKey } from './webpush.js';
 import { createBots } from './bots.js';
 import { createPoker } from './poker.js';
+import { createBaccarat } from './baccarat.js';
 import { createArcadeBank } from './arcadeBank.js';
 import { URL_PATTERN, attachmentLabel, cutMasked, looseText, maskSpoilers, plainText, previewText, quotable } from '../shared/preview.js';
 import { isPresetAvatar } from '../shared/avatars.js';
@@ -695,12 +696,21 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     canMint: user => cloud ? user.role === 'super_admin' : user.id === ownerId() });
   const poker = createPoker({ bank: arcadeBank, getUser: userById, changed: event => broadcast(event), onlineIds,
     notify: (userId, event) => deliver(event, socket => socket.userId === userId) });
+  const baccarat = createBaccarat({ bank: arcadeBank, getUser: userById, changed: event => broadcast(event), onlineIds,
+    notify: (userId, event) => deliver(event, socket => socket.userId === userId) });
+  const allArcadeInvitations = user => ({
+    invitations: [...poker.invitations(user).invitations, ...baccarat.invitations(user).invitations],
+    serverTime: Date.now(),
+  });
   app.get('/api/arcade/state', (req, res) => {
     rateLimit(req, 'arcade-state', 360);
-    res.json(poker.state(req.user, req.query.id));
+    res.json({ ...poker.state(req.user, req.query.id), baccaratTables: baccarat.listSummaries() });
   });
-  app.get('/api/arcade/invitations', (req, res) => { rateLimit(req, 'arcade-invitations', 120); res.json(poker.invitations(req.user)); });
-  app.get('/api/arcade/leaderboard', (req, res) => { rateLimit(req, 'arcade-rank', 120); res.json({ players: arcadeBank.leaderboard(req.query.sort, req.user) }); });
+  app.get('/api/arcade/invitations', (req, res) => { rateLimit(req, 'arcade-invitations', 120); res.json(allArcadeInvitations(req.user)); });
+  app.get('/api/arcade/leaderboard', (req, res) => {
+    rateLimit(req, 'arcade-rank', 120);
+    res.json({ players: arcadeBank.leaderboard(req.query.sort, req.user, req.query.game === 'baccarat' ? 'baccarat' : 'poker') });
+  });
   app.get('/api/arcade/wallet', (req, res) => {
     rateLimit(req, 'arcade-wallet', 120);
     res.json({ wallet: arcadeBank.wallet(req.user.id), history: arcadeBank.history(req.user.id), canMint: arcadeBank.canMint(req.user) });
@@ -725,8 +735,25 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     rateLimit(req, 'arcade-action', 120);
     if (action === 'create') rateLimit(req, 'arcade-create', 6);
     if (action === 'invite') rateLimit(req, 'arcade-invite', 20);
-    res.status(action === 'create' ? 201 : 200).json(poker[action](req.user, req.body || {}));
+    if (action === 'respond' && baccarat.hasInvitation(req.body?.invitationId)) {
+      const result = baccarat.respond(req.user, req.body || {});
+      return res.json({ ...result, invitations: allArcadeInvitations(req.user).invitations });
+    }
+    const result = poker[action](req.user, req.body || {});
+    if (action === 'respond') result.invitations = allArcadeInvitations(req.user).invitations;
+    res.status(action === 'create' ? 201 : 200).json(result);
   });
+  app.get('/api/arcade/baccarat/state', (req, res) => {
+    rateLimit(req, 'arcade-baccarat-state', 360);
+    res.json(baccarat.state(req.user, req.query.id));
+  });
+  for (const action of ['bet', 'rebet', 'double', 'undo', 'clear', 'deal', 'reveal', 'squeeze', 'leave', 'say', 'invite']) {
+    app.post(`/api/arcade/baccarat/${action}`, (req, res) => {
+      rateLimit(req, 'arcade-baccarat-action', 240);
+      if (action === 'invite') rateLimit(req, 'arcade-invite', 20);
+      res.json(baccarat[action](req.user, req.body || {}));
+    });
+  }
   app.get('/api/state', (req, res) => res.json({ ...stateFor(req.user), ...(cloud ? auth.mobileAccess(req) : {}) }));
   // 查找聊天对象与是否加入大厅无关；账号仅支持完整匹配，响应不返回手机号或邮箱；非好友不暴露在线状态。
   app.get('/api/users/search', (req, res) => {
@@ -2548,11 +2575,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       ws.on('close', () => {
         sockets.delete(ws);
         if (!closing && ![...sockets].some(socket => socket.userId === ws.userId)) stmt('INSERT INTO user_profiles (user_id,last_seen) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen').run(ws.userId, Date.now());
-        if (!closing) { broadcastUsers(); poker.presence(); }
+        if (!closing) { broadcastUsers(); poker.presence(); baccarat.presence(); }
       });
       ws.send(JSON.stringify({ type: 'ready' }));
       broadcastUsers();
       poker.presence();
+      baccarat.presence();
     });
   });
   // 启动时：停机期间到点的阅后即焚消息马上销毁，还在倒计时的重新计时。
@@ -2576,7 +2604,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   }, 30000);
   heartbeat.unref();
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); }); }
-  catch (error) { poker.close(); clearInterval(heartbeat); clearInterval(scheduler); wss.close(); db.close(); throw error; }
+  catch (error) { poker.close(); baccarat.close(); clearInterval(heartbeat); clearInterval(scheduler); wss.close(); db.close(); throw error; }
   const address = `http://127.0.0.1:${server.address().port}`;
   return { server, address, setupUrl: `${address}/#setup=${setupKey}`, close: async () => {
     if (closing) return;
@@ -2584,6 +2612,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const timer of burnTimers.values()) clearTimeout(timer);
     bots.close();
     poker.close();
+    baccarat.close();
     clearInterval(heartbeat);
     clearInterval(scheduler);
     for (const socket of sockets) socket.terminate();

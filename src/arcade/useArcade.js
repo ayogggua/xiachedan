@@ -34,7 +34,11 @@ export default function useArcade() {
     let debounce;
     const sync = () => { clearTimeout(debounce); debounce = setTimeout(refresh, 60); };
     const wake = () => { if (document.visibilityState === 'visible') sync(); };
-    const joined = event => { selected.current = event.detail?.id || ''; sync(); };
+    const joined = event => {
+      if (event.detail?.game === 'baccarat') return;
+      selected.current = event.detail?.id || '';
+      sync();
+    };
     refresh();
     const poll = setInterval(wake, 5000);
     window.addEventListener('linliao:arcade-changed', sync);

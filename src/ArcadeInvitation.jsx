@@ -34,7 +34,12 @@ export default function ArcadeInvitation({ userId, onOpen, hidden = false }) {
       if (!alive.current) return;
       ++serial.current;
       setInvitations(result.invitations || []);
-      if (accept) { onOpen(); window.dispatchEvent(new CustomEvent('linliao:arcade-joined', { detail: { id: result.table?.id } })); }
+      if (accept) {
+        const detail = { id: result.table?.id, game: result.game || invite.game || 'poker', at: Date.now() };
+        window.__linliaoArcadePendingJoin = detail;
+        onOpen();
+        window.dispatchEvent(new CustomEvent('linliao:arcade-joined', { detail }));
+      }
     } catch (failure) { if (alive.current) setError(failure.message); }
     finally { if (alive.current) setBusy(false); }
   };
