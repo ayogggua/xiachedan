@@ -17,15 +17,19 @@ export default function useArcade() {
       if (live.current && ticket === serial.current) { setData(next); setError(''); }
     } catch (error) {
       if (live.current && ticket === serial.current) {
-        if (error.status === 404 && selected.current) {
+        if ((error.status === 404 || error.status === 403) && selected.current) {
           selected.current = '';
           try {
             const fallback = await api('arcade/state');
-            if (live.current && ticket === serial.current) { setData(fallback); setError(''); return; }
+            if (live.current && ticket === serial.current) {
+              setData(fallback);
+              setError(error.status === 403 ? error.message : '');
+              return;
+            }
           } catch {}
         }
         setError(error.message);
-        if (error.status === 404) { selected.current = ''; setData(previous => previous && { ...previous, table: null }); }
+        if (error.status === 404 || error.status === 403) { selected.current = ''; setData(previous => previous && { ...previous, table: null }); }
       }
     } finally { if (live.current && ticket === serial.current) setLoading(false); }
   }, []);
@@ -68,5 +72,6 @@ export default function useArcade() {
     selected.current = '';
     refresh();
   }, [refresh]);
-  return { ...data, loading, busy, error, refresh, command, inspect, clearSelection };
+  const clearError = useCallback(() => setError(''), []);
+  return { ...data, loading, busy, error, clearError, refresh, command, inspect, clearSelection };
 }

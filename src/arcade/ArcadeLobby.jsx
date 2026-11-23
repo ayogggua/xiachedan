@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, ChevronRight, CircleHelp, Coins, Plus, RefreshCw, Trophy, Users } from 'lucide-react';
+import { ArrowRight, ChevronRight, CircleHelp, Coins, Globe, KeyRound, Lock, Plus, RefreshCw, Trophy, Users } from 'lucide-react';
 import { Avatar } from '../components';
 import { Sheet } from './ArcadePanels';
 import { MiniBigRoad } from './BaccaratRoadmap';
@@ -13,7 +13,7 @@ const baccaratPhases = { open: '开放下注', betting: '下注倒计时', deali
 const number = value => Number(value || 0).toLocaleString('zh-CN');
 
 function CreateTable({ game, me, connected, inHand, onCommand, onClose }) {
-  const [name, setName] = useState(''), [base, setBase] = useState('10'), [hands, setHands] = useState('0');
+  const [name, setName] = useState(''), [base, setBase] = useState('10'), [hands, setHands] = useState('0'), [visibility, setVisibility] = useState('public');
   const smallBlind = Number(base), handLimit = Number(hands);
   const validBase = base !== '' && Number.isSafeInteger(smallBlind) && smallBlind >= 1 && smallBlind <= 1000000;
   const validHands = hands !== '' && Number.isSafeInteger(handLimit) && handLimit >= 0 && handLimit <= 1000;
@@ -21,20 +21,73 @@ function CreateTable({ game, me, connected, inHand, onCommand, onClose }) {
   const disabled = game.busy || !connected || inHand || !validBase || !validHands || (game.wallet?.total || 0) < smallBlind * 2;
   const submit = async event => {
     event.preventDefault(); if (disabled) return;
-    if (await onCommand('create', { name: name.trim() || `${me.name}的牌桌`, smallBlind, handLimit })) onClose();
+    if (await onCommand('create', { name: name.trim() || `${me.name}的牌桌`, smallBlind, handLimit, visibility })) onClose();
   };
   return <Sheet title="创建牌桌" icon={<Plus size={20} />} onClose={onClose}>
     <form className="create-table-form" onSubmit={submit}>
       <label htmlFor="arcade-room-name">牌桌名称<input id="arcade-room-name" maxLength={32} value={name} placeholder={`${me.name}的牌桌`} onChange={event => setName(event.target.value)} /></label>
+      <div className="create-visibility-field">
+        <span className="create-field-label">房间类型</span>
+        <div className="visibility-picker" role="radiogroup" aria-label="房间类型">
+          <button type="button" role="radio" aria-checked={visibility === 'public'} className={`visibility-option ${visibility === 'public' ? 'selected' : ''}`} onClick={() => setVisibility('public')}>
+            <span className="visibility-option-head"><Globe size={15} /><b>公开牌桌</b></span>
+            <small>大厅可见，所有成员可进入</small>
+          </button>
+          <button type="button" role="radio" aria-checked={visibility === 'private'} className={`visibility-option ${visibility === 'private' ? 'selected' : ''}`} onClick={() => setVisibility('private')}>
+            <span className="visibility-option-head"><Lock size={15} /><b>私密牌桌</b></span>
+            <small>大厅隐藏，凭邀请或口令进入</small>
+          </button>
+        </div>
+      </div>
       <div className="create-table-fields">
         <label htmlFor="arcade-base">底分（小盲注）<input id="arcade-base" type="number" inputMode="numeric" min="1" max="1000000" step="1" required value={base} onChange={event => setBase(event.target.value)} /></label>
         <label htmlFor="arcade-hands">每场手数（0 为不限）<input id="arcade-hands" type="number" inputMode="numeric" min="0" max="1000" step="1" required value={hands} onChange={event => setHands(event.target.value)} /></label>
       </div>
       <div className="stake-presets" aria-label="底分预设">{[10, 50, 100, 500].map(amount => <button type="button" className={smallBlind === amount ? 'selected' : ''} key={amount} onClick={() => setBase(String(amount))}>{amount}</button>)}</div>
       <div className="stake-presets create-hands-presets" aria-label="手数预设">{[0, 5, 10, 20].map(count => <button type="button" className={handLimit === count ? 'selected' : ''} key={count} onClick={() => setHands(String(count))}>{count ? `${count} 手` : '不限手数'}</button>)}</div>
-      <dl className="create-table-summary"><div><dt>牌桌买入</dt><dd>{validBase ? number(buyIn) : '—'}</dd></div><div><dt>小盲 / 大盲</dt><dd>{validBase ? `${number(smallBlind)} / ${number(smallBlind * 2)}` : '—'}</dd></div></dl>
+      <dl className="create-table-summary">
+        <div><dt>牌桌买入</dt><dd>{validBase ? number(buyIn) : '—'}</dd></div>
+        <div><dt>小盲 / 大盲</dt><dd>{validBase ? `${number(smallBlind)} / ${number(smallBlind * 2)}` : '—'}</dd></div>
+        <div><dt>房间可见性</dt><dd className="is-text">{visibility === 'private' ? '私密 · 建房后生成口令' : '公开 · 大厅可见'}</dd></div>
+      </dl>
       {game.error && <p className="arcade-panel-error" role="alert">{game.error}</p>}
       <button className="arcade-primary" disabled={disabled}>创建并入座<ArrowRight size={17} /></button>
+    </form>
+  </Sheet>;
+}
+
+function JoinPrivateTable({ game, connected, onCommand, onClose }) {
+  const [code, setCode] = useState('');
+  const normalized = code.trim().replace(/[\s-]+/g, '').toUpperCase();
+  const valid = /^[A-Z0-9]{6}$/.test(normalized);
+  const disabled = game.busy || !connected || !valid;
+  const submit = async event => {
+    event.preventDefault();
+    if (disabled) return;
+    if (await onCommand('enter', { code: normalized })) onClose();
+  };
+  return <Sheet title="口令进房" icon={<KeyRound size={20} />} onClose={onClose}>
+    <form className="create-table-form join-private-form" onSubmit={submit}>
+      <label htmlFor="arcade-room-code">
+        房间口令
+        <input
+          id="arcade-room-code"
+          className="room-code-input"
+          value={code}
+          maxLength={12}
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck={false}
+          placeholder="输入 6 位房间口令"
+          onChange={event => {
+            if (game.error) game.clearError?.();
+            setCode(event.target.value.toUpperCase());
+          }}
+        />
+      </label>
+      <p className="join-private-hint">私密牌桌不在大厅展示，输入好友分享的 6 位房间口令即可进入对应牌桌。</p>
+      {game.error && <p className="arcade-panel-error" role="alert">{game.error}</p>}
+      <button className="arcade-primary" disabled={disabled}>进入牌桌<ArrowRight size={17} /></button>
     </form>
   </Sheet>;
 }
@@ -48,6 +101,8 @@ export default function ArcadeLobby({
   selectedGame,
   creating = false,
   onCreating,
+  joining = false,
+  onJoining,
   onSelect,
   onView,
   onViewBaccarat,
@@ -60,9 +115,16 @@ export default function ArcadeLobby({
   roomIcon,
 }) {
   const [localCreating, setLocalCreating] = useState(false);
+  const [localJoining, setLocalJoining] = useState(false);
   const isCreating = onCreating ? creating : localCreating;
   const setCreating = onCreating || setLocalCreating;
-  useEffect(() => setCreating(false), [selectedGame, setCreating]);
+  const isJoining = onJoining ? joining : localJoining;
+  const setJoining = onJoining || setLocalJoining;
+  useEffect(() => { setCreating(false); setJoining(false); }, [selectedGame, setCreating, setJoining]);
+  const openCreating = () => { game.clearError?.(); setCreating(true); };
+  const closeCreating = () => { game.clearError?.(); setCreating(false); };
+  const openJoining = () => { game.clearError?.(); setJoining(true); };
+  const closeJoining = () => { game.clearError?.(); setJoining(false); };
   const membership = game.membership;
   const seatedId = membership && !membership.leaving ? membership.tableId : null;
   const inHand = Boolean(membership?.inHand);
@@ -113,7 +175,7 @@ export default function ArcadeLobby({
                   <span>
                     {isBac
                       ? (baccaratPlayersTotal > 0 ? <><i />{baccaratRooms.length} 张荷官台 · {baccaratPlayersTotal} 人在桌</> : `${baccaratRooms.length || 4} 张系统荷官台`)
-                      : (seatedId ? <><i />已入座</> : membership?.leaving ? <><i />本手结算中</> : `${rooms.length} 张牌桌`)}
+                      : (seatedId ? <><i />已入座</> : membership?.leaving ? <><i />本手结算中</> : `${rooms.length} 张公开牌桌`)}
                   </span>
                   <button onClick={() => onSelect(item.id)} aria-label={`进入${item.name}`}>进入游戏<ArrowRight size={18} /></button>
                 </div>
@@ -167,15 +229,20 @@ export default function ArcadeLobby({
       ) : (
         <section className="arcade-tables">
           <div className="tables-heading">
-            <h3>正在开放的牌桌<span>{rooms.length}</span></h3>
+            <h3>公开牌桌<span>{rooms.length}</span></h3>
             <div className="poker-lobby-actions">
               <button className="arcade-text" onClick={game.refresh} aria-label="刷新牌桌"><RefreshCw size={16} /></button>
-              <button className="arcade-primary" disabled={game.busy || !connected || inHand} onClick={() => setCreating(true)}><Plus size={16} />开桌</button>
+              <button className="arcade-secondary" disabled={game.busy || !connected} onClick={openJoining}><KeyRound size={15} />口令进房</button>
+              <button className="arcade-primary" disabled={game.busy || !connected || inHand} onClick={openCreating}><Plus size={16} />开桌</button>
             </div>
           </div>
           {seatedId && !rooms.some(room => room.id === seatedId) && (
             <button className="return-table" onClick={() => table?.id === seatedId ? onReturn() : onView(seatedId)}>
-              <span className="return-room-name"><i /><b>{membership.tableName}</b></span>
+              <span className="return-room-name">
+                <i />
+                <b>{membership.tableName}</b>
+                {membership.visibility === 'private' && <em className="room-visibility-badge"><Lock size={11} />私密</em>}
+              </span>
               <span>返回牌桌<ArrowRight size={15} /></span>
             </button>
           )}
@@ -196,8 +263,8 @@ export default function ArcadeLobby({
             }) : (
               <div className="rooms-empty">
                 <span className="empty-table-icon">{roomIcon}</span>
-                <h4>还没有牌桌</h4>
-                <p>点击开桌，邀请好友一起玩。</p>
+                <h4>还没有公开牌桌</h4>
+                <p>点击开桌创建公开或私密牌桌，或通过口令进入好友的私密牌桌。</p>
               </div>
             )}
           </div>
@@ -208,6 +275,7 @@ export default function ArcadeLobby({
         {selectedGame && <button className="arcade-text" onClick={onRules}><CircleHelp size={15} />玩法规则</button>}
       </footer>
     </main>
-    {isCreating && selectedGame === 'poker' && <CreateTable game={game} me={me} connected={connected} inHand={inHand} onCommand={onCommand} onClose={() => setCreating(false)} />}
+    {isCreating && selectedGame === 'poker' && <CreateTable game={game} me={me} connected={connected} inHand={inHand} onCommand={onCommand} onClose={closeCreating} />}
+    {isJoining && selectedGame === 'poker' && <JoinPrivateTable game={game} connected={connected} onCommand={onCommand} onClose={closeJoining} />}
   </>;
 }

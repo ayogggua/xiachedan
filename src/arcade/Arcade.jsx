@@ -1,8 +1,9 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Bot, Check, CircleHelp, Coins, Eye, EyeOff, Hand, History, LogOut, MessageSquare, Minus, MoreHorizontal, Plus, RefreshCw, Send, Trophy, UserPlus, Volume2, VolumeX, X, Zap } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bot, Check, CircleHelp, Coins, Copy, Eye, EyeOff, Hand, History, Lock, LogOut, MessageSquare, Minus, MoreHorizontal, Plus, RefreshCw, Send, SlidersHorizontal, Trophy, UserPlus, Volume2, VolumeX, X, Zap } from 'lucide-react';
 import { ArcadeIcon } from '../ArcadeEntry';
 import { Avatar } from '../components';
 import { haptic } from '../chatPrefs';
+import { copyText } from '../mobile/runtime';
 import { useIsMobile } from '../mobile/ui';
 import useArcade from './useArcade';
 import useBaccarat from './useBaccarat';
@@ -64,8 +65,8 @@ const QUICK_PHRASES = ['好牌', '我想想', '快点出牌', '稳住', '厉害�
 function Rules({ onClose, mobile = false }) {
   const paragraphs = <>
     <p>每人 2 张底牌，与 5 张公共牌组成最好的 5 张牌。翻牌前、翻牌、转牌、河牌依次下注。</p>
-    <p>每桌底分为小盲注，大盲注为底分的 2 倍；桌主可在开桌或两局之间调整。最小加注幅度等于本轮上一次完整加注；筹码不足可全下，按实际投入分配边池。</p>
-    <p>同花顺 ＞ 四条 ＞ 葫芦 ＞ 同花 ＞ 顺子 ＞ 三条 ＞ 两对 ＞ 一对 ＞ 高牌。A 可组成 A2345；花色不分大小，同牌平分。</p>
+    <p>每桌底分为小盲注，大盲注为底分的 2 倍；开桌时可选择公开或私密，私密牌桌不在大厅展示，可通过牌桌内邀请好友或 6 位房间口令进入。桌主可在两局之间调整底分、手数与公开/私密状态。</p>
+    <p>最小加注幅度等于本轮上一次完整加注；筹码不足可全下，按实际投入分配边池。同花顺 ＞ 四条 ＞ 葫芦 ＞ 同花 ＞ 顺子 ＞ 三条 ＞ 两对 ＞ 一对 ＞ 高牌。A 可组成 A2345；花色不分大小，同牌平分。</p>
     <p>首手随机定庄，每手庄家顺时针轮转；两人单挑时庄家兼小盲，翻牌前先行动，翻牌后由大盲先行动。同一场结算后 5 秒自动继续，中途入座默认下一手自动加入，可随时暂停参与。达到设定手数后结束，再开一场延续庄家轮转。</p>
     <p>每次行动 40 秒；超时进入托管，可过牌时自动过牌，否则弃牌；本手结束后托管会自动暂停下局参与，回到牌桌点击「继续参与」即可恢复。</p>
     <p>每个账号初始 200,000 筹码。牌桌买入从账户扣除，离桌退回剩余筹码；未参与本手可随时离桌或换桌，局中可预约本局后离桌或立即离桌（本手结算后自动退回筹码）。筹码仅供娱乐，不可充值或兑换。</p>
@@ -119,13 +120,13 @@ function Actions({ table, me, busy, connected, onCommand, wallet, onStakes, onPr
   };
   if (seatedSelf?.leaving) return <div className="poker-waiting"><div><strong>已离桌，等待本手结算</strong><span>本手结束后剩余筹码会自动退回账户，之后可重新入座或换桌</span></div><div className="waiting-stack">本桌筹码<strong>{number(seatedSelf.stack)}</strong></div></div>;
   if (!own) return <div className="poker-waiting"><span>正在观战 · {table.players.filter(player => !player.leaving).length} / 6 人</span><button className="arcade-primary" disabled={locked || table.players.length >= 6} onClick={() => onCommand('join', { id: table.id })}>加入牌桌<ArrowRight size={16} /></button></div>;
-  if (table.matchComplete && !activeHand(table)) return <div className="poker-waiting"><div><strong>本场结束</strong><span>已完成 {table.matchHandNumber} 手 · 筹码已结算</span></div>{table.hostId === me.id ? <div className="waiting-buttons"><button className="arcade-secondary" disabled={locked} onClick={onStakes}>底分 / 手数</button><button className="arcade-primary" disabled={locked} onClick={() => onCommand('newMatch', { id: table.id })}>再开一场<ArrowRight size={16} /></button></div> : <span>等待桌主开启下一场</span>}</div>;
+  if (table.matchComplete && !activeHand(table)) return <div className="poker-waiting"><div><strong>本场结束</strong><span>已完成 {table.matchHandNumber} 手 · 筹码已结算</span></div>{table.hostId === me.id ? <div className="waiting-buttons"><button className="arcade-secondary" disabled={locked} onClick={onStakes}>牌桌设置</button><button className="arcade-primary" disabled={locked} onClick={() => onCommand('newMatch', { id: table.id })}>再开一场<ArrowRight size={16} /></button></div> : <span>等待桌主开启下一场</span>}</div>;
   if (!activeHand(table)) {
     const available = table.players.filter(player => !player.leaving && !player.leaveAfterHand && player.stack > 0);
     const allReady = available.filter(player => player.ready).length >= 2;
     const countdown = table.nextHandAt ? Math.min(5, Math.max(0, Math.ceil((table.nextHandAt - now) / 1000))) : null;
     return <div className={`poker-waiting ${countdown !== null ? 'is-countdown' : ''}`}><div><strong>{countdown !== null ? `${countdown} 秒后自动发下一手` : table.autoContinue ? '等待玩家继续参与' : '牌桌已就绪。'}</strong><span>{table.autoContinue && own.ready ? '本场连续进行，可在发牌前暂停参与或离桌' : available.length < 2 ? '等待至少 2 位玩家入座' : `${available.filter(player => player.ready).length} / ${available.length} 人已准备`}</span></div>
-      <div className="waiting-buttons">{table.hostId === me.id && <button className="arcade-secondary" disabled={locked} onClick={onStakes}>底分 / 手数</button>}<button className="arcade-secondary" disabled={locked || buyIn <= 0} onClick={() => onCommand('rebuy', { id: table.id, amount: buyIn })}>买入 {number(buyIn)}</button>{own.stack > 0 && <button className={own.ready ? 'arcade-secondary' : 'arcade-primary'} disabled={locked} onClick={() => onCommand('ready', { id: table.id, ready: !own.ready })}>{own.ready && <Check size={16} />}{table.autoContinue ? own.ready ? '暂停参与' : '继续参与' : own.ready ? '取消准备' : '准备'}</button>}
+      <div className="waiting-buttons">{table.hostId === me.id && <button className="arcade-secondary" disabled={locked} onClick={onStakes}>牌桌设置</button>}<button className="arcade-secondary" disabled={locked || buyIn <= 0} onClick={() => onCommand('rebuy', { id: table.id, amount: buyIn })}>买入 {number(buyIn)}</button>{own.stack > 0 && <button className={own.ready ? 'arcade-secondary' : 'arcade-primary'} disabled={locked} onClick={() => onCommand('ready', { id: table.id, ready: !own.ready })}>{own.ready && <Check size={16} />}{table.autoContinue ? own.ready ? '暂停参与' : '继续参与' : own.ready ? '取消准备' : '准备'}</button>}
         {!table.autoContinue && table.hostId === me.id && <button className="arcade-primary start-hand" disabled={locked || !allReady} onClick={() => onCommand('start', { id: table.id })}>开始发牌<ArrowRight size={16} /></button>}</div>
     </div>;
   }
@@ -227,6 +228,9 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
   const [browsing, setBrowsing] = useState(!enterTable);
   const [selectedGame, setSelectedGame] = useState(null);
   const [creatingTable, setCreatingTable] = useState(false);
+  const [joiningTable, setJoiningTable] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const copyCodeTimer = useRef(0);
   const baccarat = useBaccarat(selectedGame === 'baccarat');
   useEffect(() => { if (enterTable) setBrowsing(false); }, [enterTable]);
   const [rules, setRules] = useState(false);
@@ -250,8 +254,8 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
   const baccaratLeaveRef = useRef(baccarat.leaveTable);
   baccaratLeaveRef.current = baccarat.leaveTable;
   const backRef = useRef(() => {});
-  const layersRef = useRef({ confirmLeave: false, tableChatOpen: false, tableMenuOpen: false, raiseOpen: false, creatingTable: false, panel: '', rules: false, history: false });
-  layersRef.current = { confirmLeave, tableChatOpen, tableMenuOpen, raiseOpen, creatingTable, panel, rules, history };
+  const layersRef = useRef({ confirmLeave: false, tableChatOpen: false, tableMenuOpen: false, raiseOpen: false, creatingTable: false, joiningTable: false, panel: '', rules: false, history: false });
+  layersRef.current = { confirmLeave, tableChatOpen, tableMenuOpen, raiseOpen, creatingTable, joiningTable, panel, rules, history };
   useEffect(() => {
     const serverTime = (selectedGame === 'baccarat' ? baccarat.serverTime : null) || game.serverTime;
     if (serverTime) offset.current = serverTime - Date.now();
@@ -268,6 +272,7 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
       if (layers.tableMenuOpen) { setTableMenuOpen(false); return true; }
       if (layers.raiseOpen) { setRaiseOpen(false); setWagerPreview(null); return true; }
       if (layers.creatingTable) { setCreatingTable(false); return true; }
+      if (layers.joiningTable) { setJoiningTable(false); return true; }
       if (layers.panel) { setPanel(''); return true; }
       if (layers.rules) { setRules(false); return true; }
       if (layers.history) { setHistory(false); return true; }
@@ -288,6 +293,7 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
     window.addEventListener('linliao:back', onBack, true);
     return () => {
       unmounting.current = true;
+      clearTimeout(copyCodeTimer.current);
       baccaratLeaveRef.current?.();
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('linliao:back', onBack, true);
@@ -406,8 +412,18 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
     if (action === 'leave') {
       setConfirmLeave(false);
       if (next && !next.table) { setBrowsing(true); setSelectedGame('poker'); }
-    } else if (next && ['create', 'join'].includes(action)) { setSelectedGame('poker'); setBrowsing(false); }
+    } else if (next && ['create', 'join', 'enter'].includes(action)) { setSelectedGame('poker'); setBrowsing(false); }
     return Boolean(next);
+  };
+  useEffect(() => { setCopiedCode(false); }, [table?.id, table?.roomCode]);
+  const copyRoomCode = async () => {
+    if (!table?.roomCode) return;
+    try {
+      await copyText(table.roomCode);
+      setCopiedCode(true);
+      clearTimeout(copyCodeTimer.current);
+      copyCodeTimer.current = setTimeout(() => setCopiedCode(false), 1800);
+    } catch {}
   };
   const view = async id => { setSelectedGame('poker'); await game.inspect(id); setBrowsing(false); };
   const mySeat = seatedSelf?.seat ?? 0;
@@ -448,6 +464,7 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
       else if (tableMenuOpen) setTableMenuOpen(false);
       else if (raiseOpen) { setRaiseOpen(false); setWagerPreview(null); }
       else if (creatingTable) setCreatingTable(false);
+      else if (joiningTable) setJoiningTable(false);
       else if (panel) setPanel('');
       else if (rules) setRules(false);
       else if (history) setHistory(false);
@@ -458,7 +475,7 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
       {mobile && showPoker ? <header className="mobile-poker-header">
         <button type="button" className="arcade-back" onClick={back} aria-label="返回德州大厅"><ArrowLeft size={20} /></button>
         <div className="mobile-poker-title">
-          <h1 id="arcade-title">{table.name}</h1>
+          <h1 id="arcade-title">{table.visibility === 'private' && <Lock size={13} className="mobile-private-icon" aria-label="私密牌桌" />}<span>{table.name}</span></h1>
           <p><i className={`mobile-net-dot ${connected ? '' : 'offline'}`} />盲注 {table.smallBlind}/{table.bigBlind} · 第{table.matchNumber}场 {table.matchHandNumber}{table.handLimit ? `/${table.handLimit}` : ''}手</p>
         </div>
         <div className="mobile-poker-actions">
@@ -514,6 +531,8 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
             selectedGame={selectedGame}
             creating={creatingTable}
             onCreating={setCreatingTable}
+            joining={joiningTable}
+            onJoining={setJoiningTable}
             onSelect={setSelectedGame}
             onView={view}
             onViewBaccarat={viewBaccarat}
@@ -525,21 +544,33 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
             art={<><div className="feature-orbit" /><div className="hero-card card-one"><Card card="As" /></div><div className="hero-card card-two"><Card card="Ah" /></div><div className="hero-chip-stack"><Chips amount={500} /></div></>}
             baccaratArt={<><div className="feature-orbit" /><div className="hero-card card-one"><Card card="9h" /></div><div className="hero-card card-two"><Card card="Ks" /></div><div className="hero-chip-stack"><Chips amount={1000} /></div></>}
           />
-        ) : <main className="poker-room">{!mobile && <div className="poker-room-top"><div><span className="poker-live-dot" /><b>德州扑克</b><span>盲注 {table.smallBlind} / {table.bigBlind}</span><span>第 {table.matchNumber} 场 · {table.matchHandNumber}{table.handLimit ? ` / ${table.handLimit}` : ''} 手{!table.handLimit && ' · 不限'}</span></div><div className="poker-tools"><button onClick={() => setPanel('rank')} aria-label="排行榜"><Trophy size={17} /></button><button onClick={() => setPanel('wallet')} aria-label="我的筹码"><Coins size={17} /></button>{own && <button onClick={() => setPanel('invite')} aria-label="邀请好友进房"><UserPlus size={17} /></button>}<button onClick={toggleSound} aria-label={sound ? '关闭游戏声音' : '开启游戏声音'} aria-pressed={sound}>{sound ? <Volume2 size={17} /> : <VolumeX size={17} />}</button><button className="privacy-toggle-btn" onClick={togglePrivacy} aria-pressed={privacyMode} aria-label={privacyMode ? '关闭防窥模式（新局默认明牌）' : '开启防窥模式（新局默认盖牌）'} title={privacyMode ? '防窥模式已开启：新局自动盖牌，点击关闭并翻开当前底牌' : '开启防窥模式：立即盖住当前底牌，且新局自动盖牌'}>{privacyMode ? <EyeOff size={17} /> : <Eye size={17} />}</button><button onClick={() => setHistory(value => !value)} aria-label="本局记录" aria-pressed={history}><History size={17} /></button><button onClick={() => setRules(value => !value)} aria-label="玩法规则" aria-pressed={rules}><CircleHelp size={17} /></button>{own && <button className="leave-table" disabled={game.busy || !connected} aria-pressed={own.leaveAfterHand} title={own.leaveAfterHand ? '取消本局后离桌' : leavingInHand ? '离桌或预约本局后离桌' : '离桌并退回筹码'} onClick={() => own.leaveAfterHand ? command('leave', { id: table.id, mode: 'cancel' }) : setConfirmLeave(true)}><LogOut size={16} /><span>{own.leaveAfterHand ? '取消离桌' : '离桌'}</span></button>}</div></div>}
+        ) : <main className="poker-room">{!mobile && <div className="poker-room-top"><div><span className="poker-live-dot" /><b>德州扑克</b>{table.visibility === 'private' && <span className="poker-private-badge"><Lock size={11} />私密</span>}{table.visibility === 'private' && table.roomCode && <button type="button" className={`poker-room-code ${copiedCode ? 'is-copied' : ''}`} onClick={copyRoomCode} title="点击复制房间口令"><span>口令</span><b>{table.roomCode}</b>{copiedCode ? <Check size={12} /> : <Copy size={12} />}</button>}<span>盲注 {table.smallBlind} / {table.bigBlind}</span><span>第 {table.matchNumber} 场 · {table.matchHandNumber}{table.handLimit ? ` / ${table.handLimit}` : ''} 手{!table.handLimit && ' · 不限'}</span></div><div className="poker-tools"><button onClick={() => setPanel('rank')} aria-label="排行榜"><Trophy size={17} /></button><button onClick={() => setPanel('wallet')} aria-label="我的筹码"><Coins size={17} /></button>{own && <button onClick={() => { game.clearError?.(); setPanel('invite'); }} aria-label="邀请好友进房"><UserPlus size={17} /></button>}{own && table.hostId === me.id && <button onClick={() => { game.clearError?.(); setPanel('stakes'); }} disabled={game.busy || !connected || activeHand(table)} aria-label="牌桌设置" title={activeHand(table) ? '本手结束后可调整牌桌设置' : '牌桌设置'}><SlidersHorizontal size={17} /></button>}<button onClick={toggleSound} aria-label={sound ? '关闭游戏声音' : '开启游戏声音'} aria-pressed={sound}>{sound ? <Volume2 size={17} /> : <VolumeX size={17} />}</button><button className="privacy-toggle-btn" onClick={togglePrivacy} aria-pressed={privacyMode} aria-label={privacyMode ? '关闭防窥模式（新局默认明牌）' : '开启防窥模式（新局默认盖牌）'} title={privacyMode ? '防窥模式已开启：新局自动盖牌，点击关闭并翻开当前底牌' : '开启防窥模式：立即盖住当前底牌，且新局自动盖牌'}>{privacyMode ? <EyeOff size={17} /> : <Eye size={17} />}</button><button onClick={() => setHistory(value => !value)} aria-label="本局记录" aria-pressed={history}><History size={17} /></button><button onClick={() => setRules(value => !value)} aria-label="玩法规则" aria-pressed={rules}><CircleHelp size={17} /></button>{own && <button className="leave-table" disabled={game.busy || !connected} aria-pressed={own.leaveAfterHand} title={own.leaveAfterHand ? '取消本局后离桌' : leavingInHand ? '离桌或预约本局后离桌' : '离桌并退回筹码'} onClick={() => own.leaveAfterHand ? command('leave', { id: table.id, mode: 'cancel' }) : setConfirmLeave(true)}><LogOut size={16} /><span>{own.leaveAfterHand ? '取消离桌' : '离桌'}</span></button>}</div></div>}
         <div className="poker-layout"><section ref={stage} className={`poker-stage ${table.phase === 'showdown' ? 'settled' : ''}`} aria-label="德州扑克牌桌"><div className="poker-ambient" /><div className="poker-felt"><TableEngraving /><div className="felt-stitch" /><div className="felt-label">虾扯蛋 <span>POKER CLUB</span></div><div className="board-area"><span className="street-label">{PHASE[table.phase]}</span><div className="pot-rack" data-pot-anchor><Chips unit={table.smallBlind} amount={table.phase === 'showdown' ? 0 : Math.max(0, table.pot - table.players.reduce((sum, player) => sum + player.bet, 0))} /></div><div className="poker-pot" key={`${table.handId}-${table.pot}`}><span>底池</span><strong>{number(table.pot)}</strong></div><div className="community-cards">{Array.from({ length: 5 }, (_, i) => table.board[i] ? <Card key={`${table.handId}-${i}`} card={table.board[i]} index={i} boardIndex={i} /> : <div className="card-placeholder" key={`empty-${i}`}><Suit suit={i % 2 ? 'h' : 's'} /></div>)}</div>{table.phase === 'waiting' && <p className="board-hint">入座，准备，开始一局。</p>}{table.phase === 'showdown' && winners.length > 0 && <div className="poker-result" role="status" key={table.handId}><strong>{winners.map(winner => winner.name || table.players.find(player => player.id === winner.id)?.name || '玩家').join('、')} {winners.length > 1 ? '分享底池' : '赢得底池'}</strong><span>{table.result.reason === 'fold' ? '其他玩家弃牌' : [...new Set(winners.map(winner => winner.hand).filter(Boolean))].join(' · ')}</span></div>}</div></div>
           <DealerArm phase={table.phase} handId={table.handId} />
           <div className="poker-deck" data-deal-origin aria-hidden="true"><Card back small /><Card back small /></div>
           <div className="poker-scoreboard"><div><span>盲注 {table.smallBlind} / {table.bigBlind}</span><b>{table.matchComplete ? '本场结束' : PHASE[table.phase]}</b></div><div><span>底池总额</span><Counter value={table.pot} /><i className="street-lights">{[0, 1, 2, 3].map(i => <em key={i} className={['preflop', 'flop', 'turn', 'river', 'showdown'].indexOf(table.phase) >= i ? 'on' : ''} />)}</i></div></div>
           {Array.from({ length: 6 }, (_, position) => { const seat = (position + mySeat) % 6; const player = table.players.find(item => item.seat === seat); const isMine = player?.id === me.id; return <Seat key={seat} position={position} player={player} table={table} me={me} busy={game.busy || Boolean(seatedSelf) || !connected} onJoin={() => command('join', { id: table.id, seat })} now={now} preview={wagerPreview?.handId === table.handId && wagerPreview?.seat === seat && table.actions?.canAct ? wagerPreview.amount : 0} coveredCards={isMine ? effectiveCovered : undefined} peekingCards={isMine ? effectivePeeking : undefined} onToggleCover={isMine ? toggleCardCover : undefined} onPeekChange={isMine ? setCardPeek : undefined} />; })}
-          <div className="table-motion-layer" aria-hidden="true" /><span className="table-id">{table.id.slice(0, 8).toUpperCase()}</span>
+          <div className="table-motion-layer" aria-hidden="true" /><span className="table-id">{table.roomCode || table.id.slice(0, 8).toUpperCase()}</span>
         </section>{mobile && history && <div className="poker-ledger-backdrop" onClick={() => setHistory(false)} />}<aside className={`poker-ledger ${history ? 'show-ledger' : ''}`}>{mobile && <span className="arcade-sheet-grabber" aria-hidden="true" />}<div className="ledger-heading"><h3>本局记录</h3><button className="mobile-ledger-close" onClick={() => setHistory(false)} aria-label="收起记录"><X size={17} /></button></div><div className="ledger-pot"><span>底池总额</span><strong>{number(table.pot)}</strong><small>{table.players.filter(player => player.inHand && !player.folded).length} 人仍在本局</small></div><ol>{[...(table.log || [])].reverse().slice(0, 20).map(entry => <li key={entry.id}><span>{entry.text}</span><time>{new Date(entry.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></li>)}</ol>{table.result?.pots?.length > 1 && <div className="side-pots">{table.result.pots.map((pot, index) => <div key={index}><span>{index ? `边池 ${index}` : '主池'}</span><b>{number(pot.amount)}</b></div>)}</div>}<div className="ledger-footer">2–6 人 · 虚拟筹码</div></aside></div>
-        <TableChat table={table} own={own} busy={game.busy || !connected} onCommand={command} mobile={mobile} mobileOpen={tableChatOpen} onMobileClose={() => setTableChatOpen(false)} /><Actions table={table} me={me} busy={game.busy} connected={connected} onCommand={command} wallet={game.wallet} onStakes={() => setPanel('stakes')} onPreview={setWagerPreview} now={now} mobile={mobile} raiseOpen={raiseOpen} setRaiseOpen={setRaiseOpen} />
+        <TableChat table={table} own={own} busy={game.busy || !connected} onCommand={command} mobile={mobile} mobileOpen={tableChatOpen} onMobileClose={() => setTableChatOpen(false)} /><Actions table={table} me={me} busy={game.busy} connected={connected} onCommand={command} wallet={game.wallet} onStakes={() => { game.clearError?.(); setPanel('stakes'); }} onPreview={setWagerPreview} now={now} mobile={mobile} raiseOpen={raiseOpen} setRaiseOpen={setRaiseOpen} />
       </main>}
       {mobile && showPoker && tableMenuOpen && <Sheet title="牌桌菜单" icon={<MoreHorizontal size={20} />} onClose={() => setTableMenuOpen(false)}>
+        {table.visibility === 'private' && table.roomCode && (
+          <div className="arcade-code-card compact mobile-menu-code">
+            <div className="arcade-code-meta">
+              <span><Lock size={13} />私密房间口令</span>
+              <strong>{table.roomCode}</strong>
+            </div>
+            <button type="button" className="arcade-secondary arcade-code-action" onClick={copyRoomCode}>
+              {copiedCode ? <><Check size={14} />已复制</> : <><Copy size={14} />复制口令</>}
+            </button>
+          </div>
+        )}
         <div className="mobile-poker-menu-grid">
           <button type="button" onClick={() => { setTableMenuOpen(false); setPanel('rank'); }}><Trophy size={20} /><span>排行榜</span></button>
           <button type="button" onClick={() => { setTableMenuOpen(false); setPanel('wallet'); }}><Coins size={20} /><span>我的筹码</span></button>
-          {own && <button type="button" onClick={() => { setTableMenuOpen(false); setPanel('invite'); }}><UserPlus size={20} /><span>邀请好友</span></button>}
+          {own && <button type="button" onClick={() => { setTableMenuOpen(false); game.clearError?.(); setPanel('invite'); }}><UserPlus size={20} /><span>邀请好友</span></button>}
+          {own && table.hostId === me.id && <button type="button" disabled={game.busy || !connected || activeHand(table)} onClick={() => { setTableMenuOpen(false); game.clearError?.(); setPanel('stakes'); }}><SlidersHorizontal size={20} /><span>牌桌设置</span></button>}
           <button type="button" onClick={() => { setTableMenuOpen(false); setHistory(true); }}><History size={20} /><span>本局记录</span></button>
           <button type="button" onClick={() => { setTableMenuOpen(false); setRules(true); }}><CircleHelp size={20} /><span>玩法规则</span></button>
           <button type="button" className={sound ? 'active' : undefined} onClick={toggleSound}>{sound ? <Volume2 size={20} /> : <VolumeX size={20} />}<span>{sound ? '声音已开' : '声音已关'}</span></button>
@@ -565,10 +596,10 @@ export default function Arcade({ me, connected, onClose, enterTable = false }) {
           <LogOut size={17} /><span>切换牌桌</span>
         </button>
       </Sheet>}
-      {panel === 'stakes' && showPoker && table && <StakesPanel table={table} onCommand={command} error={game.error} onClose={() => setPanel('')} />}
+      {panel === 'stakes' && showPoker && table && <StakesPanel table={table} onCommand={command} error={game.error} onClose={() => { game.clearError?.(); setPanel(''); }} />}
       {panel === 'rank' && <Leaderboard me={me} initialGame={selectedGame === 'baccarat' ? 'baccarat' : 'poker'} onClose={() => setPanel('')} />}
       {panel === 'wallet' && <WalletPanel me={me} onClose={() => setPanel('')} onChanged={refreshAll} />}
-      {panel === 'invite' && showPoker && table && <InvitePanel table={table} error={game.error} onCommand={command} onClose={() => setPanel('')} maxPlayers={6} />}
+      {panel === 'invite' && showPoker && table && <InvitePanel table={table} error={game.error} onCommand={command} onClose={() => { game.clearError?.(); setPanel(''); }} maxPlayers={6} />}
       {panel === 'invite' && showBaccarat && baccaratTable && <InvitePanel table={baccaratTable} error={baccarat.error} onCommand={baccarat.command} onClose={() => setPanel('')} maxPlayers={0} />}
       {rules && (selectedGame === 'baccarat' ? <BaccaratRules mobile={mobile} onClose={() => setRules(false)} /> : <Rules mobile={mobile} onClose={() => setRules(false)} />)}
       {confirmLeave && own && <div className="arcade-confirm" onClick={event => { if (event.target === event.currentTarget) setConfirmLeave(false); }}><div ref={confirmLeaveRef} role="alertdialog" aria-modal="true" aria-labelledby="leave-title"><h3 id="leave-title">离开牌桌？</h3><p>{leavingInHand ? own.allIn ? '你已全下，本手仍会正常结算。你可以现在退出牌桌，或等本手结束后自动离桌，筹码都会在结算后自动退回账户。' : own.folded ? '你已弃牌。你可以现在退出牌桌，或等本手结束后自动离桌，剩余筹码会在结算后自动退回账户。' : '选择「本局后离桌」可打完这一手并在结算后自动退回筹码；选择「立即离桌」会退出牌桌，轮到你时自动过牌或弃牌，本手结算后退回剩余筹码。' : `离桌后，剩余 ${number(own.stack)} 筹码会立即退回账户。`}</p><div><button className="arcade-secondary" onClick={() => setConfirmLeave(false)}>继续玩</button>{leavingInHand ? leavingSettling ? <><button className="arcade-secondary" disabled={game.busy} onClick={() => command('leave', { id: table.id, mode: 'after' })}>本局后离桌</button><button className="arcade-primary" disabled={game.busy} onClick={() => command('leave', { id: table.id, mode: 'now' })}>立即离桌</button></> : <><button className="arcade-secondary" disabled={game.busy} onClick={() => command('leave', { id: table.id, mode: 'now' })}>立即离桌</button><button className="arcade-primary" disabled={game.busy} onClick={() => command('leave', { id: table.id, mode: 'after' })}>本局后离桌</button></> : <button className="arcade-primary" disabled={game.busy} onClick={() => command('leave', { id: table.id, mode: 'now' })}>确认离桌</button>}</div></div></div>}

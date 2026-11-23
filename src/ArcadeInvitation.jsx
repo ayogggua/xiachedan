@@ -45,7 +45,7 @@ export default function ArcadeInvitation({ userId, onOpen, hidden = false }) {
   };
   if (!invite || hidden) return null;
   return createPortal(<aside className="arcade-invitation" aria-label="牌桌邀请" role="status">
-    <ArcadeIcon size={25} /><div><b>{invite.fromName} 邀请你一起玩</b><span>{invite.tableName}</span>{error && <small role="alert">{error}</small>}</div>
+    <ArcadeIcon size={25} /><div><b>{invite.fromName} 邀请你一起玩</b><span>{invite.tableName}{invite.visibility === 'private' ? ' · 私密牌桌' : ''}</span>{error && <small role="alert">{error}</small>}</div>
     <button className="arcade-invitation-accept" disabled={busy} onClick={() => respond(true)}>加入牌桌</button>
     <button aria-label="谢绝牌桌邀请" disabled={busy} onClick={() => respond(false)}><X size={17} /></button>
   </aside>, portal);

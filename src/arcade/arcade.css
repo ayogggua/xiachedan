@@ -681,6 +681,51 @@
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
+.poker-room-top .poker-private-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--club-brass-line);
+  background: rgba(202, 168, 96, 0.14);
+  color: var(--club-brass-bright) !important;
+  font-size: 11px !important;
+  font-weight: 600;
+}
+.poker-room-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid var(--club-brass-line);
+  background: rgba(202, 168, 96, 0.1);
+  color: var(--club-brass-bright);
+  font-size: 11px;
+  transition: border-color 140ms var(--club-ease), background-color 140ms var(--club-ease), color 140ms var(--club-ease);
+}
+.poker-room-code:hover {
+  border-color: var(--club-brass-hi);
+  background: rgba(202, 168, 96, 0.18);
+}
+.poker-room-code > span {
+  color: var(--club-text-2);
+}
+.poker-room-code > b {
+  font: 700 11.5px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--club-brass-bright);
+}
+.poker-room-code.is-copied {
+  border-color: rgba(52, 211, 153, 0.48);
+  background: rgba(21, 71, 52, 0.45);
+  color: #a7f3d0;
+}
+.poker-room-code.is-copied > b {
+  color: #a7f3d0;
+}
 .poker-tools {
   display: flex;
   gap: 4px;
@@ -2232,13 +2277,23 @@
     gap: 1px;
   }
   .mobile-poker-title h1 {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     font-size: 15px;
     font-weight: 660;
     line-height: 1.25;
     color: var(--club-text);
-    white-space: nowrap;
+    min-width: 0;
+  }
+  .mobile-poker-title h1 > span {
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mobile-private-icon {
+    color: var(--club-brass-bright);
+    flex-shrink: 0;
   }
   .mobile-poker-title p {
     display: flex;
